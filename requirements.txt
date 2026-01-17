@@ -1,0 +1,24 @@
+# WhatsApp Voice Calling with Gemini Live - Python Implementation
+# Using versions with pre-built Windows wheels
+
+# Web framework
+fastapi==0.109.0
+uvicorn==0.27.0
+
+# WebRTC - specific version with Windows wheels
+aiortc==1.5.0
+
+# HTTP client
+httpx==0.26.0
+
+# WebSocket client
+websockets==12.0
+
+# Audio processing
+numpy==1.26.3
+
+# Environment and utilities
+python-dotenv==1.0.0
+
+# Logging
+loguru==0.7.2
