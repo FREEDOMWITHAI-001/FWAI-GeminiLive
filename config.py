@@ -20,11 +20,28 @@ class Config(BaseModel):
     port: int = int(os.getenv("PORT", "3000"))
     debug: bool = os.getenv("DEBUG", "false").lower() == "true"
 
+    # Active call provider: "whatsapp", "plivo", "exotel"
+    call_provider: str = os.getenv("CALL_PROVIDER", "whatsapp")
+
     # WhatsApp API settings
     phone_number_id: str = os.getenv("PHONE_NUMBER_ID", "")
     meta_access_token: str = os.getenv("META_ACCESS_TOKEN", "")
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "my_super_secret_token_123")
     whatsapp_api_version: str = "v21.0"
+
+    # Plivo API settings
+    plivo_auth_id: str = os.getenv("PLIVO_AUTH_ID", "")
+    plivo_auth_token: str = os.getenv("PLIVO_AUTH_TOKEN", "")
+    plivo_phone_number: str = os.getenv("PLIVO_PHONE_NUMBER", "")
+    plivo_callback_url: str = os.getenv("PLIVO_CALLBACK_URL", "")
+
+    # Exotel API settings
+    exotel_api_key: str = os.getenv("EXOTEL_API_KEY", "")
+    exotel_api_token: str = os.getenv("EXOTEL_API_TOKEN", "")
+    exotel_sid: str = os.getenv("EXOTEL_SID", "")
+    exotel_caller_id: str = os.getenv("EXOTEL_CALLER_ID", "")
+    exotel_app_id: str = os.getenv("EXOTEL_APP_ID", "")
+    exotel_callback_url: str = os.getenv("EXOTEL_CALLBACK_URL", "")
 
     # Google Gemini settings
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
@@ -62,14 +79,38 @@ class Config(BaseModel):
         return f"{self.whatsapp_api_url}/messages"
 
     def validate_config(self) -> list[str]:
-        """Validate required configuration values"""
+        """Validate required configuration values based on active provider"""
         errors = []
-        if not self.phone_number_id:
-            errors.append("PHONE_NUMBER_ID is required")
-        if not self.meta_access_token:
-            errors.append("META_ACCESS_TOKEN is required")
+
+        # Always required
         if not self.google_api_key:
             errors.append("GOOGLE_API_KEY is required")
+
+        # Provider-specific validation
+        if self.call_provider == "whatsapp":
+            if not self.phone_number_id:
+                errors.append("PHONE_NUMBER_ID is required for WhatsApp")
+            if not self.meta_access_token:
+                errors.append("META_ACCESS_TOKEN is required for WhatsApp")
+
+        elif self.call_provider == "plivo":
+            if not self.plivo_auth_id:
+                errors.append("PLIVO_AUTH_ID is required for Plivo")
+            if not self.plivo_auth_token:
+                errors.append("PLIVO_AUTH_TOKEN is required for Plivo")
+            if not self.plivo_phone_number:
+                errors.append("PLIVO_PHONE_NUMBER is required for Plivo")
+
+        elif self.call_provider == "exotel":
+            if not self.exotel_api_key:
+                errors.append("EXOTEL_API_KEY is required for Exotel")
+            if not self.exotel_api_token:
+                errors.append("EXOTEL_API_TOKEN is required for Exotel")
+            if not self.exotel_sid:
+                errors.append("EXOTEL_SID is required for Exotel")
+            if not self.exotel_caller_id:
+                errors.append("EXOTEL_CALLER_ID is required for Exotel")
+
         return errors
 
 

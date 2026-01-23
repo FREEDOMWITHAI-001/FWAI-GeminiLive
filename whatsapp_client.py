@@ -35,6 +35,7 @@ class WhatsAppClient:
             API response with call_id and other details
         """
         payload = {
+            "messaging_product": "whatsapp",
             "to": phone_number,
             "type": "audio",
             "audio": {
@@ -58,8 +59,10 @@ class WhatsAppClient:
                 logger.info(f"Call initiated successfully: {result}")
                 return {"success": True, **result}
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error making call: {e.response.text}")
-            return {"success": False, "error": str(e), "details": e.response.text}
+            error_details = e.response.text
+            logger.error(f"HTTP error making call: {error_details}")
+            logger.error(f"Request payload was: {payload}")
+            return {"success": False, "error": str(e), "details": error_details}
         except Exception as e:
             logger.error(f"Error making call: {e}")
             return {"success": False, "error": str(e)}
