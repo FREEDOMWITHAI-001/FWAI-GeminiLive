@@ -1,18 +1,23 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Python-based Voice AI Agent using **Plivo for phone calls** and **Gemini 2.5 Live for AI + native TTS**. This avoids expensive third-party TTS services (like Amazon Polly) by using Gemini's native voice output.
+**FWAI Voice AI Agent** - Real-time voice AI using Plivo (telephony) + Google Gemini 2.0 Live (AI + native TTS).
 
-## Commands
+Key features:
+- Session preloading for ultra-low latency (~100ms first audio)
+- Tool calling during live calls (WhatsApp, SMS, callbacks)
+- Bidirectional audio streaming via WebSocket
+- Automatic call transcription
+
+## Quick Commands
 
 ```bash
-# Create virtual environment and install
+# Setup
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
+source venv/bin/activate
 pip install -r requirements.txt
 
 # Run server
@@ -20,341 +25,166 @@ python run.py
 
 # Expose via ngrok (required for Plivo callbacks)
 ngrok http 3001
+
+# Make a test call
+curl -X POST http://localhost:3001/plivo/make-call \
+  -H "Content-Type: application/json" \
+  -d '{"phoneNumber": "+919876543210", "contactName": "Test"}'
 ```
 
 ## Project Structure
 
 ```
 FWAI_WebRTC_Gemini/
+├── run.py                          # Entry point
+├── prompts.json                    # AI agent prompts
+├── .env                            # Configuration
 ├── src/
-│   ├── __init__.py
-│   ├── app.py                      # FastAPI server with all endpoints
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py               # Configuration management
-│   │   └── audio_processor.py      # Audio format conversion
+│   ├── app.py                      # FastAPI server (all endpoints)
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── plivo_gemini_stream.py  # Plivo + Gemini Live bridge (MAIN)
-│   │   ├── gemini_live_tts.py      # Gemini Live TTS utility
-│   │   ├── gemini_agent.py         # Legacy Gemini WebSocket client
-│   │   └── whatsapp_client.py      # WhatsApp Business API client
-│   ├── handlers/
-│   │   ├── __init__.py
-│   │   └── webrtc_handler.py       # WebRTC handling (legacy)
+│   │   └── plivo_gemini_stream.py  # MAIN: Plivo ↔ Gemini bridge
+│   ├── tools/
+│   │   ├── __init__.py             # Tool registry
+│   │   ├── send_whatsapp.py        # WhatsApp tool
+│   │   ├── send_sms.py             # SMS tool
+│   │   └── schedule_callback.py    # Callback tool
 │   └── adapters/
-│       ├── plivo_adapter.py        # Plivo API adapter
-│       └── ...                     # Other adapters
-├── transcripts/                    # Call transcripts (if enabled)
-├── audio_cache/                    # Generated audio files
-├── logs/                           # Application logs
-├── .env                            # Environment configuration
-├── requirements.txt
-└── run.py                          # Entry point
+│       └── plivo_adapter.py        # Plivo API client
+├── transcripts/                    # Call transcripts
+└── logs/                           # Application logs
 ```
 
-## Architecture
+## Key Files to Know
 
-### High-Level Flow: Plivo + Gemini 2.5 Live
-
-```
-┌─────────────┐     mulaw 8kHz      ┌─────────────────┐     WebSocket      ┌─────────────────┐
-│   Caller    │ ←──────────────────→│     Plivo       │ ←─────────────────→│     Server      │
-│  (Phone)    │                     │   (Stream WS)   │                    │  (FastAPI WS)   │
-└─────────────┘                     └─────────────────┘                    └────────┬────────┘
-                                                                                    │
-                                                                           PCM 16kHz (in)
-                                                                           PCM 24kHz (out)
-                                                                                    │
-                                                                                    ↓
-                                                                           ┌─────────────────┐
-                                                                           │  Gemini 2.5     │
-                                                                           │  Live API       │
-                                                                           │  (native TTS)   │
-                                                                           └─────────────────┘
-```
-
-### Inbound Call Flow (User Calls You)
-
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 INBOUND CALL FLOW                                         │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-
-  USER'S PHONE                    PLIVO CLOUD                     YOUR SERVER
-      │                              │                                 │
-      │  1. User dials your          │                                 │
-      │     Plivo number             │                                 │
-      │─────────────────────────────>│                                 │
-      │                              │                                 │
-      │                              │  2. POST /plivo/answer          │
-      │                              │────────────────────────────────>│
-      │                              │                                 │
-      │                              │  3. Return <Stream> XML         │
-      │                              │<────────────────────────────────│
-      │                              │                                 │
-      │  4. "Connected to AI..."     │                                 │
-      │<─────────────────────────────│                                 │
-      │     (Polly TTS - brief)      │                                 │
-      │                              │                                 │
-      │                              │  5. WebSocket connects          │
-      │                              │     /plivo/stream/{uuid}        │
-      │                              │════════════════════════════════>│
-      │                              │                                 │
-      │                              │                    6. Create Gemini Live session
-      │                              │                       PlivoGeminiSession
-      │                              │                                 │
-      │  7. AI Greeting              │                                 │
-      │<═════════════════════════════│<════════════════════════════════│
-      │  "Hello! I'm Vishnu..."      │         (Gemini Native TTS)     │
-      │                              │                                 │
-      │  8. Bidirectional audio conversation                           │
-      │<═════════════════════════════>│<══════════════════════════════>│
-      │                              │                                 │
-```
-
-### Outbound Call Flow (You Call User)
-
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                                OUTBOUND CALL FLOW                                         │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-
-  YOUR CLIENT                    YOUR SERVER                    PLIVO CLOUD                USER
-      │                              │                              │                        │
-      │ 1. POST /plivo/make-call     │                              │                        │
-      │ {phoneNumber: "+91..."}      │                              │                        │
-      │─────────────────────────────>│                              │                        │
-      │                              │                              │                        │
-      │                              │ 2. plivo_adapter.make_call() │                        │
-      │                              │     POST to Plivo API        │                        │
-      │                              │─────────────────────────────>│                        │
-      │                              │                              │                        │
-      │                              │ 3. {call_uuid: "abc123"}     │                        │
-      │                              │<─────────────────────────────│                        │
-      │                              │                              │                        │
-      │ 4. {success: true,           │                              │  5. Plivo dials user  │
-      │     call_uuid: "abc123"}     │                              │───────────────────────>│
-      │<─────────────────────────────│                              │                        │
-      │                              │                              │  📱 Phone rings...    │
-      │                              │                              │                        │
-      │                              │                              │  6. User answers      │
-      │                              │                              │<───────────────────────│
-      │                              │                              │                        │
-      │                              │ 7. POST /plivo/answer        │                        │
-      │                              │<─────────────────────────────│                        │
-      │                              │                              │                        │
-      │                              │ 8. Return <Stream> XML       │                        │
-      │                              │─────────────────────────────>│                        │
-      │                              │                              │                        │
-      │                              │                              │  9. "Connected..."    │
-      │                              │                              │───────────────────────>│
-      │                              │                              │     (Polly - brief)   │
-      │                              │                              │                        │
-      │                              │ 10. WebSocket connects       │                        │
-      │                              │<═════════════════════════════│                        │
-      │                              │                              │                        │
-      │                              │ 11. Gemini Live session      │                        │
-      │                              │     AI greeting audio        │                        │
-      │                              │═════════════════════════════>│═══════════════════════>│
-      │                              │                              │  🔊 "Hello! I'm..."   │
-      │                              │                              │                        │
-      │                              │ 12. Bidirectional conversation                        │
-      │                              │<════════════════════════════>│<══════════════════════>│
-      │                              │                              │                        │
-```
-
-### Key Point: Both Flows Converge
-
-```
-INBOUND:   User calls → Plivo → /plivo/answer ─────┐
-                                                   │
-                                                   ▼
-                                        ┌─────────────────────┐
-                                        │   /plivo/answer     │
-                                        │   Returns <Stream>  │
-                                        └──────────┬──────────┘
-                                                   │
-OUTBOUND:  /plivo/make-call → Plivo API →          │
-           User answers → Plivo → /plivo/answer ───┘
-                                                   │
-                                                   ▼
-                                        ┌─────────────────────┐
-                                        │ /plivo/stream/{uuid}│
-                                        │     WebSocket       │
-                                        └──────────┬──────────┘
-                                                   │
-                                                   ▼
-                                        ┌─────────────────────┐
-                                        │ PlivoGeminiSession  │
-                                        │ Gemini 2.5 Live     │
-                                        │ Native Audio (Kore) │
-                                        └─────────────────────┘
-```
-
-## Audio Format Conversions
-
-| Direction | Source Format | Target Format | Conversion |
-|-----------|--------------|---------------|------------|
-| Caller → Gemini | mulaw 8kHz | PCM 16kHz 16-bit | `audioop.ulaw2lin()` + `ratecv()` |
-| Gemini → Caller | PCM 24kHz 16-bit | mulaw 8kHz | `ratecv()` + `audioop.lin2ulaw()` |
-
-## Key Modules
-
-| Module | Purpose |
-|--------|---------|
-| `src/app.py` | FastAPI server with Plivo endpoints |
-| `src/services/plivo_gemini_stream.py` | **Main bridge** - Plivo audio ↔ Gemini Live |
-| `src/adapters/plivo_adapter.py` | Plivo API client for outbound calls |
-| `src/core/config.py` | Configuration and environment variables |
+| File | Purpose |
+|------|---------|
+| `src/app.py` | FastAPI server with all Plivo endpoints |
+| `src/services/plivo_gemini_stream.py` | Core bridge - preloading, audio streaming, tools |
+| `prompts.json` | System prompts for AI agent |
+| `src/tools/__init__.py` | Tool registry and executor |
 
 ## API Endpoints
 
-### Plivo + Gemini Live (NEW)
+### For External Integration (n8n, Zapier, etc.)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/plivo/make-call` | POST | **Outbound call** - Initiates call via Plivo API |
-| `/plivo/answer` | POST | Returns `<Stream>` XML (both inbound & outbound) |
-| `/plivo/stream/{call_uuid}` | WebSocket | Bidirectional audio stream |
-| `/plivo/stream-status` | POST | Status callbacks from Plivo |
-| `/plivo/hangup` | POST | Call hangup callback |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `POST /plivo/make-call` | POST | Initiate outbound call |
+| `GET /calls` | GET | List active calls |
+| `POST /calls/{id}/terminate` | POST | End a call |
 
-### Legacy (WhatsApp WebRTC)
+### Plivo Webhooks (configured in Plivo console)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/make-call` | POST | WhatsApp WebRTC outbound (legacy) |
-| `/webhook` | GET/POST | WhatsApp message webhook |
-| `/call-events` | GET/POST | WhatsApp call events |
+| Endpoint | Purpose |
+|----------|---------|
+| `/plivo/answer` | Returns Stream XML when call connects |
+| `/plivo/stream/{uuid}` | WebSocket for bidirectional audio |
+| `/plivo/hangup` | Call ended callback |
 
-## Making an Outbound Call
+## Architecture
 
-```bash
-# Using the new Plivo + Gemini Live endpoint
-curl -X POST https://your-ngrok-url/plivo/make-call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "phoneNumber": "+919876543210",
-    "contactName": "John Doe"
-  }'
+```
+POST /plivo/make-call
+    │
+    ├──► Plivo API initiates call
+    │
+    └──► PRELOAD Gemini session (while phone rings)
+         │
+         └──► Generate greeting audio (stored)
 
-# Response
-{
-  "success": true,
-  "call_uuid": "abc123-def456",
-  "message": "Call initiated to +919876543210. Waiting for user to answer."
-}
+User answers
+    │
+    └──► /plivo/answer → <Stream> XML → WebSocket connects
+         │
+         └──► Send preloaded audio INSTANTLY
+              │
+              └──► Bidirectional conversation begins
 ```
 
-## Key Classes
+## Audio Flow
 
-- **`PlivoGeminiSession`** - Manages a single call session bridging Plivo and Gemini Live
-  - Uses `async with client.aio.live.connect()` for proper session management
-  - Handles audio conversion between mulaw (Plivo) and PCM (Gemini)
-  - Queues audio for smooth streaming
+- **User → Gemini**: PCM L16 16kHz via Plivo WebSocket
+- **Gemini → User**: PCM L16 24kHz via Plivo WebSocket
 
-- **`PlivoAdapter`** - Plivo API client
-  - `make_call()` - Initiates outbound calls
-  - `terminate_call()` - Ends active calls
-  - `get_call_details()` - Retrieves call information
+Buffer size: 320 bytes (20ms chunks) for low latency.
 
-## Session Lifecycle
+## Tool Calling
 
-1. **Initiation**:
-   - Inbound: User calls your Plivo number
-   - Outbound: `POST /plivo/make-call` triggers Plivo API
-2. **Answer**: Plivo hits `/plivo/answer` when call connects
-3. **Stream**: Server returns `<Stream>` XML → Plivo connects WebSocket
-4. **Gemini**: `PlivoGeminiSession` creates Gemini Live 2.5 connection
-5. **Greeting**: Gemini sends AI greeting (native TTS - Kore voice)
-6. **Conversation**: Bidirectional audio: Plivo ↔ Server ↔ Gemini
-7. **Hangup**: User ends call → "stop" event → session cleanup
+Tools are declared in `plivo_gemini_stream.py`:
+
+```python
+TOOL_DECLARATIONS = [
+    {"name": "send_whatsapp", ...},
+    {"name": "send_sms", ...},
+    {"name": "schedule_callback", ...}
+]
+```
+
+Execution: `src/tools/__init__.py` → `execute_tool(name, phone, **args)`
 
 ## Environment Variables
 
-```env
-# Plivo
-PLIVO_AUTH_ID=<Plivo Console>
-PLIVO_AUTH_TOKEN=<Plivo Console>
-PLIVO_FROM_NUMBER=<Your Plivo Number>
-PLIVO_CALLBACK_URL=<ngrok URL>
+Required:
+- `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_FROM_NUMBER`
+- `PLIVO_CALLBACK_URL` (ngrok URL)
+- `GOOGLE_API_KEY`
 
-# Google
-GOOGLE_API_KEY=<Google Cloud / AI Studio>
+For WhatsApp tool:
+- `META_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`
 
-# Optional
-TTS_VOICE=Kore
-ENABLE_TRANSCRIPTS=true
-DEBUG=true
+## Logs
+
+- Application: `logs/whatsapp_voice.log`
+- Transcripts: `transcripts/{call_uuid}.txt`
+
+## Common Tasks
+
+### Change AI Voice
+Edit `plivo_gemini_stream.py`:
+```python
+"voice_name": "Charon"  # Options: Charon, Kore, Puck, etc.
 ```
 
-## Important Notes
-
-1. **Gemini Live requires `async with`** - The `client.aio.live.connect()` returns an async context manager, not an awaitable. Always use `async with`.
-
-2. **Audio sample rates matter**:
-   - Plivo streams: mulaw 8kHz
-   - Gemini input: PCM 16kHz 16-bit mono
-   - Gemini output: PCM 24kHz 16-bit mono
-
-3. **ngrok required** - Plivo needs a public URL for WebSocket connections. Run `ngrok http 3001` and update `PLIVO_CALLBACK_URL`.
-
-4. **Plivo Stream XML format**:
-```xml
-<Response>
-    <Speak voice="Polly.Aditi">Connected to AI Assistant. Please wait.</Speak>
-    <Stream streamTimeout="86400" keepCallAlive="true" bidirectional="true"
-            contentType="audio/x-mulaw;rate=8000"
-            statusCallbackUrl="{status_url}">{stream_url}</Stream>
-</Response>
+### Change AI Prompt
+Edit `prompts.json`:
+```json
+{
+  "FWAI_Core": {
+    "prompt": "Your system prompt here..."
+  }
+}
 ```
 
-5. **Both inbound and outbound use same Gemini flow** - After `/plivo/answer`, the flow is identical for both call directions.
+### Add New Tool
+1. Create `src/tools/new_tool.py` (extend BaseTool)
+2. Add to `TOOL_DECLARATIONS` in `plivo_gemini_stream.py`
+
+### Adjust Latency
+Edit `plivo_gemini_stream.py`:
+```python
+BUFFER_SIZE = 320  # Lower = less latency, more CPU
+```
+
+## Troubleshooting
+
+| Issue | Check |
+|-------|-------|
+| No audio | Verify ngrok URL in `.env`, check WebSocket logs |
+| High latency | Check for "PRELOAD COMPLETE" in logs |
+| WhatsApp not sending | Verify `META_ACCESS_TOKEN` and `WHATSAPP_PHONE_ID` |
+| Call not connecting | Check Plivo credits and webhook configuration |
 
 ## Session Continuation Notes
 
-When continuing work on this project in a new Claude Code session:
+After restarting work:
 
-### 1. Start the Server
+1. Check if ngrok is running: `curl http://localhost:4040/api/tunnels`
+2. If ngrok URL changed, update `PLIVO_CALLBACK_URL` in `.env`
+3. Restart server: `python run.py`
+4. Check logs: `tail -f logs/whatsapp_voice.log`
 
-
-### 2. Verify ngrok is Running
-
-
-### 3. Update PLIVO_CALLBACK_URL
-If ngrok URL changed, update :
-
-
-### 4. Test a Call
-{"detail":[{"type":"json_invalid","loc":["body",1],"msg":"JSON decode error","input":{},"ctx":{"error":"Expecting property name enclosed in double quotes"}}]}
-
-### 5. Check Logs
-
-
-### Current Working Configuration
-
-- **Model:**  (supports bidiGenerateContent)
-- **Audio Format:** L16 16kHz (input) / L16 24kHz (output)
-- **Voice:** Kore (Indian English)
-- **Prompt:** FWAI Sales Agent (Vishnu) from 
-
-### Known Issues & Solutions
-
-1. **"Model not found for bidiGenerateContent"**
-   - Use  model
-   - NOT  or 
-
-2. **No audio after "Connected to AI"**
-   - Check Google Live API connection in logs
-   - Verify  message received
-   - Ensure 
-
-3. **Call not connecting**
-   - Check ngrok is running
-   - Verify PLIVO_CALLBACK_URL matches ngrok URL
-   - Check Plivo account has credits
-
-4. **High latency**
-   - Reduce BUFFER_SIZE in plivo_gemini_stream.py
-   - Current optimized value: 4800
+Current working config:
+- Model: `gemini-2.0-flash-exp`
+- Voice: `Charon` (Male)
+- Audio: L16 16kHz input, L16 24kHz output
+- Server port: 3001

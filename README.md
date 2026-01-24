@@ -1,252 +1,357 @@
-# WhatsApp Voice Calling with Gemini Live
+# FWAI Voice AI Agent
 
-AI Voice Agent for WhatsApp Business Voice Calls using Google Gemini Live.
+Real-time Voice AI Agent using **Plivo for telephony** and **Google Gemini 2.0 Live** for conversational AI with native TTS.
 
-**Now with multi-provider support: WhatsApp, Plivo, and Exotel**
+## Features
+
+- **Ultra-low latency** - Session preloading while phone rings (~30 audio chunks ready)
+- **Native AI Voice** - Gemini 2.0 Live with Charon voice (no external TTS)
+- **Tool Calling** - WhatsApp, SMS, callbacks executed during live calls
+- **Transcripts** - Automatic call transcription with timestamps
+- **Bidirectional Audio** - Real-time conversation via WebSocket streaming
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                             │
-│  ┌─────────────┐                                                            │
-│  │  WhatsApp   │───┐                                                        │
-│  └─────────────┘   │                                                        │
-│                    │     ┌──────────────┐      ┌─────────────────────┐      │
-│  ┌─────────────┐   │     │              │      │                     │      │
-│  │   Plivo     │───┼────►│   src/app.py    │◄────►│ gemini-live-service │      │
-│  └─────────────┘   │     │  (port 3000) │      │    (port 8003)      │      │
-│                    │     │              │      │                     │      │
-│  ┌─────────────┐   │     └──────┬───────┘      └──────────┬──────────┘      │
-│  │   Exotel    │───┘            │                         │                 │
-│  └─────────────┘                │                         │                 │
-│                           ┌─────┴─────┐             ┌─────┴─────┐           │
-│                           │  adapters │             │  Pipecat  │           │
-│                           │  + aiortc │             │  Gemini   │           │
-│                           └───────────┘             │   Live    │           │
-│                                                     └───────────┘           │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────┐         ┌──────────────────┐         ┌─────────────────────┐
+│                 │  PSTN   │                  │   WS    │                     │
+│  User's Phone   │◄───────►│   Plivo Cloud    │◄───────►│   FastAPI Server    │
+│                 │         │   (Stream API)   │         │   (port 3001)       │
+└─────────────────┘         └──────────────────┘         └──────────┬──────────┘
+                                                                    │
+                                                           WebSocket│
+                                                                    │
+                                                         ┌──────────▼──────────┐
+                                                         │                     │
+                                                         │  Google Gemini 2.0  │
+                                                         │  Live API           │
+                                                         │  (BidiGenerateContent)
+                                                         │                     │
+                                                         └─────────────────────┘
 ```
 
-## Provider Comparison
+### Call Flow
 
-| Feature | WhatsApp | Plivo | Exotel |
-|---------|----------|-------|--------|
-| Outbound Calls | ✅ | ✅ | ✅ |
-| Incoming Calls | ✅ | ✅ | ✅ |
-| WebRTC | ✅ | ❌ (PSTN) | ❌ (PSTN) |
-| India Numbers | Via Business | Requires Compliance | Easy |
-| TTS on Call | ❌ | ✅ | Via ExoML |
-| Recording | ❌ | ✅ | ✅ (auto) |
-| SMS | ✅ | ❌ | ✅ |
-
-## Flow
-
-1. **Make Call**: `POST /make-call` → Provider rings user
-2. **User Answers**: Connection established (WebRTC or PSTN)
-3. **Agent Connects**: `src/app.py` connects to `gemini-live-service.py` via WebSocket
-4. **Greeting**: Gemini Live speaks first with greeting prompt
-5. **Conversation**: Two-way audio flows:
-   - User speaks → Audio captured → WebSocket → Gemini Live
-   - Gemini responds → WebSocket → Audio output → User hears
+```
+1. POST /plivo/make-call ──► Plivo API initiates call
+                              │
+2. Phone rings ◄──────────────┘
+   │
+   └──► Gemini session PRELOADS (greeting audio generated)
+        │
+3. User answers ──► Plivo hits /plivo/answer
+                    │
+                    └──► Returns <Stream> XML
+                         │
+4. WebSocket connects ◄──┘
+   │
+   └──► Preloaded audio sent INSTANTLY
+        │
+5. Bidirectional conversation begins
+   User speaks ──► PCM 16kHz ──► Gemini
+   Gemini responds ──► PCM 24kHz ──► User
+```
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Clone and Setup
 
 ```bash
-cd /home/kiran/FWAI_WebRTC_Gemini/FWAI_WebRTC_Gemini
+git clone https://github.com/kiranfwai/FWAI_WebRTC_Gemini.git
+cd FWAI_WebRTC_Gemini
+
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Linux/Mac
+# venv\Scripts\activate   # Windows
+
 pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment
 
-Edit `.env`:
+Create `.env` file:
+
 ```env
-# Choose provider: whatsapp, plivo, or exotel
-CALL_PROVIDER=whatsapp
-
-# WhatsApp Config
-PHONE_NUMBER_ID=your_whatsapp_phone_number_id
-META_ACCESS_TOKEN=your_meta_access_token
-META_VERIFY_TOKEN=your_verify_token
-
-# Plivo Config (if using Plivo)
+# Plivo Configuration
 PLIVO_AUTH_ID=your_plivo_auth_id
 PLIVO_AUTH_TOKEN=your_plivo_auth_token
-PLIVO_PHONE_NUMBER=+1234567890
-PLIVO_CALLBACK_URL=https://your-server.com
-
-# Exotel Config (if using Exotel)
-EXOTEL_API_KEY=your_exotel_api_key
-EXOTEL_API_TOKEN=your_exotel_api_token
-EXOTEL_SID=your_exotel_sid
-EXOTEL_CALLER_ID=your_exotel_virtual_number
+PLIVO_FROM_NUMBER=+912268093710
+PLIVO_CALLBACK_URL=https://your-ngrok-url.ngrok-free.app
 
 # Google Gemini
 GOOGLE_API_KEY=your_google_api_key
-GEMINI_LIVE_PORT=8003
+
+# WhatsApp Business API (for sending messages)
+META_ACCESS_TOKEN=your_meta_access_token
+WHATSAPP_PHONE_ID=your_whatsapp_phone_number_id
+
+# Server
+HOST=0.0.0.0
+PORT=3001
+DEBUG=true
+
+# Features
+ENABLE_TRANSCRIPTS=true
+TTS_VOICE=Charon
 ```
 
-### 3. Start Services
+### 3. Expose Server with ngrok
 
-**Terminal 1 - Gemini Live Service (port 8003):**
 ```bash
-python src/services/gemini-live-service.py
+ngrok http 3001
 ```
 
-**Terminal 2 - Main Server (port 3000):**
+Copy the ngrok URL and update `PLIVO_CALLBACK_URL` in `.env`.
+
+### 4. Configure Plivo
+
+In [Plivo Console](https://console.plivo.com/):
+
+1. Go to **Voice** → **Applications** → **Create Application**
+2. Set **Answer URL**: `https://your-ngrok-url/plivo/answer` (POST)
+3. Set **Hangup URL**: `https://your-ngrok-url/plivo/hangup` (POST)
+4. Assign your Plivo number to this application
+
+### 5. Start Server
+
 ```bash
-python src/app.py
+python run.py
 ```
 
-### 4. Expose with ngrok
+### 6. Make a Call
 
 ```bash
-ngrok http 3000
-```
-
-Configure webhooks in respective provider console:
-- **WhatsApp**: `https://your-ngrok-url/webhook` and `/call-events`
-- **Plivo**: `https://your-ngrok-url/plivo/answer` and `/plivo/hangup`
-- **Exotel**: `https://your-ngrok-url/exotel/status`
-
-### 5. Make a Call
-
-```bash
-curl -X POST http://localhost:3000/make-call \
+curl -X POST http://localhost:3001/plivo/make-call \
   -H "Content-Type: application/json" \
-  -d '{"phoneNumber": "919052034075", "contactName": "Test Customer"}'
+  -d '{"phoneNumber": "+919876543210", "contactName": "John Doe"}'
 ```
 
 ## API Endpoints
 
+### Primary Endpoints (for external integration)
+
+| Endpoint | Method | Description | Use From |
+|----------|--------|-------------|----------|
+| `/plivo/make-call` | POST | **Initiate outbound call** | n8n, Zapier, custom apps |
+| `/calls` | GET | List all active calls | Monitoring dashboards |
+| `/calls/{call_id}/terminate` | POST | End a specific call | Admin panels |
+| `/` | GET | Health check | Load balancers |
+
+### Plivo Webhook Endpoints (configured in Plivo console)
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/make-call` | POST | Make outbound call |
-| `/webhook` | GET/POST | WhatsApp message webhook |
-| `/call-events` | GET/POST | WhatsApp call events webhook |
-| `/plivo/answer` | POST | Plivo answer webhook |
-| `/plivo/hangup` | POST | Plivo hangup webhook |
-| `/exotel/status` | POST | Exotel status callback |
-| `/calls` | GET | List active calls |
-| `/calls/{id}/terminate` | POST | End a call |
-| `/` | GET | Health check |
+| `/plivo/answer` | POST | Called when user answers (returns Stream XML) |
+| `/plivo/stream/{call_uuid}` | WebSocket | Bidirectional audio stream |
+| `/plivo/stream-status` | POST | Stream status callbacks |
+| `/plivo/hangup` | POST | Called when call ends |
+
+### Make Call Request
+
+```bash
+# From n8n HTTP Request node, Zapier, or any HTTP client
+POST https://your-server.com/plivo/make-call
+Content-Type: application/json
+
+{
+  "phoneNumber": "+919876543210",
+  "contactName": "Customer Name"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "call_uuid": "a8237790-5aa4-4320-a882-bf3056d02bdb",
+  "message": "Call initiated to +919876543210. Waiting for user to answer."
+}
+```
+
+### n8n Integration Example
+
+1. **HTTP Request Node:**
+   - Method: POST
+   - URL: `https://your-ngrok-url/plivo/make-call`
+   - Body (JSON):
+     ```json
+     {
+       "phoneNumber": "{{ $json.phone }}",
+       "contactName": "{{ $json.name }}"
+     }
+     ```
+
+2. **Trigger Options:**
+   - Webhook (incoming lead)
+   - Schedule (follow-up calls)
+   - CRM event (new signup)
 
 ## Project Structure
 
 ```
 FWAI_WebRTC_Gemini/
-├── run.py                  # Entry point
+├── run.py                          # Entry point
 ├── requirements.txt
-├── .env / .env.example
+├── .env                            # Environment configuration
+├── prompts.json                    # AI agent prompts
+│
 ├── src/
-│   ├── app.py              # FastAPI server
-│   ├── core/               # config.py, audio_processor.py
-│   ├── services/           # gemini_agent.py, whatsapp_client.py
-│   ├── handlers/           # webrtc_handler.py
-│   └── adapters/           # whatsapp, plivo, exotel adapters
-├── logs/                  # Application logs
-├── scripts/              # start.sh, start.bat
-└── docs/                 # Documentation
+│   ├── app.py                      # FastAPI server (all endpoints)
+│   ├── core/
+│   │   ├── config.py               # Configuration management
+│   │   └── audio_processor.py      # Audio format conversion
+│   ├── services/
+│   │   ├── plivo_gemini_stream.py  # Main: Plivo ↔ Gemini bridge
+│   │   ├── gemini_live_tts.py      # TTS utilities
+│   │   └── gemini_tools.py         # Tool definitions
+│   ├── tools/
+│   │   ├── __init__.py             # Tool registry
+│   │   ├── base.py                 # Base tool class
+│   │   ├── send_whatsapp.py        # WhatsApp messaging
+│   │   ├── send_sms.py             # SMS messaging
+│   │   └── schedule_callback.py    # Callback scheduling
+│   └── adapters/
+│       └── plivo_adapter.py        # Plivo API client
+│
+├── transcripts/                    # Call transcripts (auto-generated)
+│   └── {call_uuid}.txt
+│
+├── logs/                           # Application logs
+│   └── whatsapp_voice.log
+│
+└── docs/
+    └── ARCHITECTURE.md
 ```
 
-## Adapter Usage
+## Logs Location
+
+| Log Type | Location | Description |
+|----------|----------|-------------|
+| Application Log | `logs/whatsapp_voice.log` | All server events, rotates at 10MB |
+| Call Transcripts | `transcripts/{call_uuid}.txt` | Per-call conversation logs |
+| Console Output | stdout | Real-time debug output |
+
+### Transcript Format
+
+```
+[14:30:15] SYSTEM: AI ready
+[14:30:16] VISHNU: Hello! This is Vishnu from Freedom with AI. How did you find our masterclass?
+[14:30:25] USER: It was really helpful
+[14:30:28] VISHNU: Great to hear! What aspect interested you the most?
+[14:30:45] TOOL: send_whatsapp: {'message': 'Course details...'}
+[14:30:46] TOOL_RESULT: send_whatsapp: success
+[14:31:00] SYSTEM: Call ended
+```
+
+### View Logs
+
+```bash
+# Real-time application logs
+tail -f logs/whatsapp_voice.log
+
+# View specific call transcript
+cat transcripts/a8237790-5aa4-4320-a882-bf3056d02bdb.txt
+
+# Search for errors
+grep "ERROR" logs/whatsapp_voice.log
+```
+
+## Available AI Tools
+
+Tools that the AI can invoke during calls:
+
+| Tool | Trigger Phrases | Action |
+|------|-----------------|--------|
+| `send_whatsapp` | "send details on WhatsApp" | Sends WhatsApp message via Meta API |
+| `send_sms` | "text me", "send SMS" | Sends SMS via Plivo |
+| `schedule_callback` | "call me later", "schedule callback" | Records callback request |
+
+## Customizing the AI Agent
+
+Edit `prompts.json`:
+
+```json
+{
+  "FWAI_Core": {
+    "name": "Your Agent Name",
+    "description": "Agent description",
+    "prompt": "You are [Agent Name]...\n\nSTYLE:\n- Keep responses brief\n- Ask one question at a time\n\nTOOLS:\n- Use send_whatsapp when user requests details\n\nFLOW:\n1. Greet the user\n2. Understand their needs\n3. Provide relevant information"
+  }
+}
+```
+
+## Audio Configuration
+
+| Direction | Format | Sample Rate |
+|-----------|--------|-------------|
+| User → Server | PCM L16 | 16 kHz |
+| Server → Gemini | PCM L16 | 16 kHz |
+| Gemini → Server | PCM L16 | 24 kHz |
+| Server → User | PCM L16 | 24 kHz |
+
+## Performance Tuning
+
+### Latency Optimization
+
+The system uses **session preloading** to minimize first-response latency:
+
+1. When `/plivo/make-call` is called, Gemini session starts immediately
+2. Initial greeting audio is generated while the phone is ringing
+3. When user answers, preloaded audio is sent instantly
+
+Current buffer size: **320 bytes (20ms chunks)** for ultra-low latency.
+
+### Preload Timeout
+
+Default preload timeout is 8 seconds. Adjust in `plivo_gemini_stream.py`:
 
 ```python
-from src.adapters import WhatsAppAdapter, PlivoAdapter, ExotelAdapter
-
-# WhatsApp
-wa = WhatsAppAdapter()
-await wa.make_call(phone_number="919052034075", sdp_offer="...")
-
-# Plivo
-plivo = PlivoAdapter()
-await plivo.make_call(phone_number="+919052034075")
-await plivo.speak_text(call_id, "Hello from AI")
-
-# Exotel
-exotel = ExotelAdapter()
-await exotel.make_call(phone_number="919052034075")
-await exotel.connect_two_numbers(from_number="agent", to_number="customer")
+await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
 ```
 
-## Why This Architecture?
+## Troubleshooting
 
-The Node.js `@roamhq/wrtc` library couldn't extract audio from WebRTC tracks. Python's `aiortc` provides full audio access, solving the audio bridge problem.
+### No audio after connection
 
-**Multi-provider adapters** allow:
-- Easy switching between providers via `CALL_PROVIDER` env var
-- Consistent interface across all providers
-- Provider-specific features (TTS, recording, etc.)
-- Fallback options for different regions
+- Check Plivo Stream URL matches ngrok URL
+- Verify WebSocket connection in logs
+- Ensure `GOOGLE_API_KEY` is valid
 
-## Plivo + Google Live API (Recommended)
+### High latency
 
-The simplest and most cost-effective setup using Plivo for telephony and Google Live API for real-time AI voice.
+- Reduce `BUFFER_SIZE` in `plivo_gemini_stream.py`
+- Check network latency to Google API
+- Verify preloading is working (check logs for "PRELOAD COMPLETE")
 
-### Cost Breakdown
-| Component | Provider | Cost |
-|-----------|----------|------|
-| Phone Line | Plivo (Outbound) | ~/bin/bash.012/min |
-| Real-time Audio | Plivo Stream | ~/bin/bash.003/min |
-| AI Brain + Voice | Gemini 2.0 Flash | Free tier available |
-| Orchestration | Your server | Minimal |
+### WhatsApp messages not sending
 
-### Quick Test
+- Verify `META_ACCESS_TOKEN` is valid
+- Check `WHATSAPP_PHONE_ID` is correct
+- Ensure phone number has country code
 
-1. **Start ngrok:**
+### Call not connecting
 
+- Verify ngrok is running and URL is updated in `.env`
+- Check Plivo application webhooks are configured
+- Ensure Plivo account has sufficient credits
 
-2. **Update :**
-SHELL=/bin/bash
-WSL2_GUI_APPS_ENABLED=1
-WSL_DISTRO_NAME=Ubuntu-22.04
-NAME=DESKTOP-TRROJ24
-PWD=/mnt/c
-LOGNAME=kiran
-HOME=/home/kiran
-LANG=C.UTF-8
-WSL_INTEROP=/run/WSL/27060_interop
-WAYLAND_DISPLAY=wayland-0
-TERM=xterm-256color
-USER=kiran
-DISPLAY=:0
-SHLVL=1
-XDG_RUNTIME_DIR=/run/user/1000/
-WSLENV=
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/lib/wsl/lib:/mnt/c/Users/Admin/bin:/mnt/d/Softwares/Git/mingw64/bin:/mnt/d/Softwares/Git/usr/local/bin:/mnt/d/Softwares/Git/usr/bin:/mnt/d/Softwares/Git/usr/bin:/mnt/d/Softwares/Git/mingw64/bin:/mnt/d/Softwares/Git/usr/bin:/mnt/c/Users/Admin/bin:/mnt/c/Python314/Scripts:/mnt/c/Python314:/mnt/c/Windows/system32:/mnt/c/Windows:/mnt/c/Windows/System32/Wbem:/mnt/c/Windows/System32/WindowsPowerShell/v1.0:/mnt/c/Windows/System32/OpenSSH:/mnt/d/Softwares/Git/cmd:/mnt/d/Softwares:/mnt/c/ProgramData/chocolatey/bin:/Docker/host/bin:/mnt/c/Python314/Scripts:/mnt/c/Python314:/mnt/c/Windows/system32:/mnt/c/Windows:/mnt/c/Windows/System32/Wbem:/mnt/c/Windows/System32/WindowsPowerShell/v1.0:/mnt/c/Windows/System32/OpenSSH:/mnt/d/Softwares/Git/cmd:/mnt/d/Softwares:/mnt/c/ProgramData/chocolatey/bin:/mnt/c/Users/Admin/AppData/Local/Microsoft/WindowsApps:/mnt/c/Users/Admin/AppData/Local/Programs/cursor/resources/app/bin:/mnt/c/Users/Admin/AppData/Roaming/npm:/mnt/c/Users/Admin/AppData/Roaming/npm:/mnt/c/Users/Admin/AppData/Local/Programs/Microsoft VS Code/bin:/mnt/c/Users/Admin/AppData/Local/Programs/Antigravity/bin:/mnt/d/Softwares/Git/usr/bin/vendor_perl:/mnt/d/Softwares/Git/usr/bin/core_perl
-DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-HOSTTYPE=x86_64
-PULSE_SERVER=unix:/mnt/wslg/PulseServer
-_=/usr/bin/env
+## Environment Variables Reference
 
-3. **Start server:**
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:68 - ============================================================
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:69 - WhatsApp Voice Calling with Gemini Live
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:70 - ============================================================
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:78 - Server starting on http://0.0.0.0:3000
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:79 - Gemini Voice: Kore
-2026-01-24 21:26:57 | INFO     | src.app:lifespan:84 - Server shutting down...
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PLIVO_AUTH_ID` | Yes | Plivo account auth ID |
+| `PLIVO_AUTH_TOKEN` | Yes | Plivo account auth token |
+| `PLIVO_FROM_NUMBER` | Yes | Your Plivo phone number |
+| `PLIVO_CALLBACK_URL` | Yes | Public URL (ngrok) for callbacks |
+| `GOOGLE_API_KEY` | Yes | Google AI API key |
+| `META_ACCESS_TOKEN` | For WhatsApp | Meta WhatsApp Business token |
+| `WHATSAPP_PHONE_ID` | For WhatsApp | WhatsApp phone number ID |
+| `HOST` | No | Server host (default: 0.0.0.0) |
+| `PORT` | No | Server port (default: 3001) |
+| `DEBUG` | No | Enable debug logging (default: false) |
+| `ENABLE_TRANSCRIPTS` | No | Save call transcripts (default: true) |
+| `TTS_VOICE` | No | Gemini voice name (default: Charon) |
 
-4. **Make a call:**
-{"detail":[{"type":"json_invalid","loc":["body",1],"msg":"JSON decode error","input":{},"ctx":{"error":"Expecting property name enclosed in double quotes"}}]}
+## License
 
-### Transcripts
-
-Call transcripts with timestamps are saved to:
-
-
-Format:
-
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-|  | FastAPI server with Plivo endpoints |
-|  | Plivo ↔ Google Live API bridge |
-|  | FWAI sales agent prompt |
-|  | Call transcripts with timestamps |
+MIT
