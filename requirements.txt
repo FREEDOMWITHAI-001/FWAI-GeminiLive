@@ -25,3 +25,4 @@ loguru==0.7.2
 python-multipart
 google-generativeai
 google-genai>=1.0.0
+openai-whisper

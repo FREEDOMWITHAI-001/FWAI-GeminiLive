@@ -2,6 +2,9 @@
 import asyncio
 import json
 import base64
+import wave
+import struct
+import threading
 from typing import Dict, Optional
 from loguru import logger
 from datetime import datetime
@@ -9,6 +12,10 @@ from pathlib import Path
 import websockets
 from src.core.config import config
 from src.tools import execute_tool
+
+# Recording directory
+RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
+RECORDINGS_DIR.mkdir(exist_ok=True)
 
 # Load FWAI prompt
 def load_fwai_prompt():
@@ -90,6 +97,10 @@ class PlivoGeminiSession:
         self.preloaded_audio = []  # Store audio generated during preload
         self._preload_complete = asyncio.Event()
 
+        # Audio recording - single combined file (for post-call transcription)
+        self.audio_chunks = []  # List of (role, audio_bytes) tuples
+        self.recording_enabled = config.enable_transcripts
+
     def _save_transcript(self, role, text):
         if not config.enable_transcripts:
             return
@@ -103,6 +114,90 @@ class PlivoGeminiSession:
             logger.info(f"TRANSCRIPT [{role}]: {text}")
         except Exception as e:
             logger.error(f"Error saving transcript: {e}")
+
+    def _record_audio(self, role: str, audio_bytes: bytes, sample_rate: int = 16000):
+        """Record audio chunk for post-call transcription"""
+        if not self.recording_enabled:
+            return
+        # Store with metadata (role and sample_rate for resampling later)
+        self.audio_chunks.append((role, audio_bytes, sample_rate))
+
+    def _resample_24k_to_16k(self, audio_bytes: bytes) -> bytes:
+        """Resample 24kHz audio to 16kHz (simple linear interpolation)"""
+        # Convert bytes to samples (16-bit signed)
+        samples_24k = struct.unpack(f'<{len(audio_bytes)//2}h', audio_bytes)
+        # Resample 24kHz -> 16kHz (ratio 2:3)
+        samples_16k = []
+        for i in range(0, len(samples_24k) * 2 // 3):
+            idx = i * 3 / 2
+            idx_floor = int(idx)
+            if idx_floor + 1 < len(samples_24k):
+                frac = idx - idx_floor
+                sample = int(samples_24k[idx_floor] * (1 - frac) + samples_24k[idx_floor + 1] * frac)
+            else:
+                sample = samples_24k[idx_floor] if idx_floor < len(samples_24k) else 0
+            samples_16k.append(max(-32768, min(32767, sample)))
+        return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
+
+    def _save_recording(self):
+        """Save combined recording as WAV file"""
+        if not self.recording_enabled or not self.audio_chunks:
+            return None
+        try:
+            recording_file = RECORDINGS_DIR / f"{self.call_uuid}.wav"
+            combined_audio = bytearray()
+
+            for role, audio_bytes, sample_rate in self.audio_chunks:
+                if sample_rate == 24000:
+                    # Resample AI audio from 24kHz to 16kHz
+                    audio_bytes = self._resample_24k_to_16k(audio_bytes)
+                combined_audio.extend(audio_bytes)
+
+            # Write WAV file (16kHz, mono, 16-bit)
+            with wave.open(str(recording_file), 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)  # 16-bit
+                wav.setframerate(16000)
+                wav.writeframes(bytes(combined_audio))
+
+            logger.info(f"Recording saved: {recording_file} ({len(combined_audio)} bytes)")
+            return recording_file
+        except Exception as e:
+            logger.error(f"Error saving recording: {e}")
+            return None
+
+    def _transcribe_recording(self, recording_file: Path):
+        """Transcribe recording using Whisper (runs in background thread)"""
+        def transcribe():
+            try:
+                import whisper
+                logger.info(f"Starting transcription for {self.call_uuid}")
+                model = whisper.load_model("base")  # Options: tiny, base, small, medium, large
+                result = model.transcribe(str(recording_file))
+                transcript_text = result["text"]
+
+                # Save to transcript file
+                transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{self.call_uuid}.txt"
+                with open(transcript_file, "a") as f:
+                    f.write(f"\n--- FULL TRANSCRIPT ---\n{transcript_text}\n")
+
+                logger.info(f"Transcription complete for {self.call_uuid}")
+
+                # Delete recording file after successful transcription
+                try:
+                    recording_file.unlink()
+                    logger.info(f"Recording deleted: {recording_file}")
+                except Exception as e:
+                    logger.warning(f"Could not delete recording: {e}")
+
+            except ImportError:
+                logger.warning("Whisper not installed. Run: pip install openai-whisper")
+            except Exception as e:
+                logger.error(f"Transcription error: {e}")
+
+        # Run in background thread to not block
+        thread = threading.Thread(target=transcribe, daemon=True)
+        thread.start()
 
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
@@ -158,19 +253,41 @@ class PlivoGeminiSession:
             logger.info("Google Live session ended")
 
     async def _send_session_setup(self):
+        # Natural speech instructions to add to prompt
+        natural_speech = """
+
+SPEAKING STYLE (VERY IMPORTANT):
+- Speak naturally like a real Indian person having a phone conversation
+- Use casual Indian English phrases like "actually", "basically", "you know", "na", "right?"
+- Add natural pauses with "hmm", "so", "well"
+- Vary your tone - don't be monotone, show emotion and warmth
+- Speak at a relaxed pace, not too fast
+- Use contractions (I'm, you're, that's, it's, don't, won't)
+- Sound friendly and warm, like talking to a friend
+- Occasionally use filler words naturally
+- React naturally to what user says ("Oh nice!", "I see", "That's great")
+"""
+        full_prompt = FWAI_PROMPT + natural_speech
+
         msg = {
             "setup": {
                 "model": "models/gemini-2.0-flash-exp",
                 "generation_config": {
                     "response_modalities": ["AUDIO"],
-                    "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Charon"}}}
+                    "speech_config": {
+                        "voice_config": {
+                            "prebuilt_voice_config": {
+                                "voice_name": "Charon"
+                            }
+                        }
+                    }
                 },
-                "system_instruction": {"parts": [{"text": FWAI_PROMPT}]},
+                "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.info("Sent session setup with FWAI prompt and tools")
+        logger.info("Sent session setup with natural speech prompt")
 
     async def _send_initial_greeting(self):
         """Send initial trigger to make AI greet immediately"""
@@ -261,6 +378,8 @@ class PlivoGeminiSession:
                     for p in parts:
                         if p.get("inlineData", {}).get("data"):
                             audio = p["inlineData"]["data"]
+                            # Record AI audio (24kHz)
+                            self._record_audio("AI", base64.b64decode(audio), 24000)
                             if self.plivo_ws:
                                 # Send directly to Plivo
                                 await self.plivo_ws.send_text(json.dumps({
@@ -280,6 +399,8 @@ class PlivoGeminiSession:
             if not self.is_active or not self.start_streaming or not self.goog_live_ws:
                 return
             chunk = base64.b64decode(audio_b64)
+            # Record user audio (16kHz)
+            self._record_audio("USER", chunk, 16000)
             self.inbuffer.extend(chunk)
             while len(self.inbuffer) >= self.BUFFER_SIZE:
                 ac = self.inbuffer[:self.BUFFER_SIZE]
@@ -312,6 +433,11 @@ class PlivoGeminiSession:
         if self._session_task:
             self._session_task.cancel()
         self._save_transcript("SYSTEM", "Call ended")
+
+        # Save recording and transcribe in background
+        recording_file = self._save_recording()
+        if recording_file:
+            self._transcribe_recording(recording_file)
 
 # Session storage
 _sessions: Dict[str, PlivoGeminiSession] = {}
