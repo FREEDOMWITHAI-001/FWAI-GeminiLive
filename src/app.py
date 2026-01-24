@@ -16,6 +16,9 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from src.core.config import config
+from src.prompt_loader import FWAI_PROMPT
+from src.conversation_memory import add_message, get_history, clear_conversation
+from datetime import datetime
 from src.handlers.webrtc_handler import (
     make_outbound_call,
     handle_incoming_call,
@@ -23,6 +26,19 @@ from src.handlers.webrtc_handler import (
     terminate_call,
     get_active_calls
 )
+
+def save_transcript(call_uuid: str, role: str, message: str):
+    """Save transcript to a file for each call"""
+    try:
+        transcript_dir = Path(__file__).parent.parent / "transcripts"
+        transcript_dir.mkdir(exist_ok=True)
+        transcript_file = transcript_dir / f"{call_uuid}.txt"
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        with open(transcript_file, "a") as f:
+            f.write(f"[{timestamp}] {role}: {message}" + chr(10))
+    except Exception as e:
+        logger.error(f"Error saving transcript: {e}")
+
 
 # Configure logging
 logger.remove()
@@ -294,16 +310,19 @@ async def plivo_answer(request: Request):
     call_uuid = body.get("CallUUID", "")
     
     logger.info(f"Plivo call answered: {call_uuid}")
+    greeting = "Hi, this is Vishnu from Freedom with AI. I noticed you attended our AI Masterclass last week. How did you find it?"
+    add_message(call_uuid, "assistant", greeting)
+    save_transcript(call_uuid, "VISHNU", greeting)
     
     callback_url = f"{config.plivo_callback_url}/plivo/speech"
     
     xml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Speak voice="Polly.Aditi">Hello! I am your AI assistant. Please speak after the beep.</Speak>
-    <GetInput action="{callback_url}" method="POST" inputType="speech" executionTimeout="30" speechEndTimeout="2">
-        <Speak voice="Polly.Aditi">I am listening.</Speak>
+    <Speak voice="Polly.Matthew">Hi, this is Vishnu from Freedom with AI. I noticed you attended our AI Masterclass last week. How did you find it?</Speak>
+    <GetInput action="{callback_url}" method="POST" inputType="speech" executionTimeout="60" speechEndTimeout="3">
+        
     </GetInput>
-    <Speak voice="Polly.Aditi">I did not hear anything. Goodbye!</Speak>
+    <Speak voice="Polly.Matthew">I did not hear anything. Goodbye!</Speak>
 </Response>"""
     
     return Response(content=xml_response, media_type="application/xml")
@@ -319,14 +338,27 @@ async def plivo_speech(request: Request):
     call_uuid = body.get("CallUUID", "")
     speech = body.get("Speech", "")
     
-    logger.info(f"Plivo speech received: {speech}")
+    logger.info("=" * 50)
+    logger.info(f"TRANSCRIPT - USER: {speech}")
+    logger.info("=" * 50)
+    save_transcript(call_uuid, "USER", speech)
+    
+    # Track conversation
+    add_message(call_uuid, "user", speech)
+    history = get_history(call_uuid)
     
     # Call Gemini for response
     try:
         genai.configure(api_key=config.google_api_key)
         model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(f"You are a helpful voice assistant. Respond briefly to: {speech}")
+        context = 'You are Vishnu, currently on a phone call. DO NOT repeat the greeting. The conversation so far:' + chr(10) + history + chr(10) + chr(10) + 'User just said: ' + speech + chr(10) + chr(10) + 'Respond naturally with ONE follow-up question based on what they said. Do NOT introduce yourself again.'
+        response = model.generate_content(FWAI_PROMPT + chr(10) + chr(10) + context)
         reply = response.text.replace('"', "''").strip()
+        add_message(call_uuid, "assistant", reply)
+        logger.info("=" * 50)
+        logger.info(f"TRANSCRIPT - VISHNU: {reply}")
+        logger.info("=" * 50)
+        save_transcript(call_uuid, "VISHNU", reply)
     except Exception as e:
         logger.error(f"Gemini error: {e}")
         reply = "Sorry, I could not process your request."
@@ -335,11 +367,11 @@ async def plivo_speech(request: Request):
     
     xml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Speak voice="Polly.Aditi">{reply}</Speak>
-    <GetInput action="{callback_url}" method="POST" inputType="speech" executionTimeout="30" speechEndTimeout="2">
-        <Speak voice="Polly.Aditi">What else can I help you with?</Speak>
+    <Speak voice="Polly.Matthew">{reply}</Speak>
+    <GetInput action="{callback_url}" method="POST" inputType="speech" executionTimeout="60" speechEndTimeout="3">
+        
     </GetInput>
-    <Speak voice="Polly.Aditi">Thank you for calling. Goodbye!</Speak>
+    <Speak voice="Polly.Matthew">Thank you for calling. Goodbye!</Speak>
 </Response>"""
     
     return Response(content=xml_response, media_type="application/xml")
@@ -353,6 +385,7 @@ async def plivo_hangup(request: Request):
     duration = body.get("Duration", "0")
     
     logger.info(f"Plivo call ended: {call_uuid}, duration: {duration}s")
+    clear_conversation(call_uuid)
     
     return JSONResponse(content={"status": "ok"})
 
