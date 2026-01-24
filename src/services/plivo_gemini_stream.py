@@ -101,6 +101,9 @@ class PlivoGeminiSession:
         self.audio_chunks = []  # List of (role, audio_bytes) tuples
         self.recording_enabled = config.enable_transcripts
 
+        # Flag to prevent double greeting
+        self.greeting_audio_complete = False
+
     def _save_transcript(self, role, text):
         if not config.enable_transcripts:
             return
@@ -368,6 +371,7 @@ SPEAKING STYLE (VERY IMPORTANT):
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
                     self._preload_complete.set()
+                    self.greeting_audio_complete = True
 
                 if sc.get("interrupted"):
                     if self.plivo_ws:
@@ -380,15 +384,16 @@ SPEAKING STYLE (VERY IMPORTANT):
                             audio = p["inlineData"]["data"]
                             # Record AI audio (24kHz)
                             self._record_audio("AI", base64.b64decode(audio), 24000)
-                            if self.plivo_ws:
-                                # Send directly to Plivo
+
+                            # During greeting preload, always store (don't send twice)
+                            if not self.greeting_audio_complete:
+                                self.preloaded_audio.append(audio)
+                            elif self.plivo_ws:
+                                # After greeting done, send directly to Plivo
                                 await self.plivo_ws.send_text(json.dumps({
                                     "event": "playAudio",
                                     "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
                                 }))
-                            else:
-                                # Store for later (during preload)
-                                self.preloaded_audio.append(audio)
                         if p.get("text"):
                             self._save_transcript("VISHNU", p["text"])
         except Exception as e:
