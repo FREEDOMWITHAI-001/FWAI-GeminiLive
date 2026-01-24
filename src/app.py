@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from src.core.config import config
 from src.prompt_loader import FWAI_PROMPT
 from src.conversation_memory import add_message, get_history, clear_conversation
+from src.services.gemini_tools import generate_response_with_tools
 from datetime import datetime
 from src.handlers.webrtc_handler import (
     make_outbound_call,
@@ -330,13 +331,13 @@ async def plivo_answer(request: Request):
 
 @app.post("/plivo/speech")
 async def plivo_speech(request: Request):
-    """Handle speech input from Plivo"""
+    """Handle speech input from Plivo with tool calling support"""
     from fastapi.responses import Response
-    import google.generativeai as genai
     
     body = await request.form()
     call_uuid = body.get("CallUUID", "")
     speech = body.get("Speech", "")
+    caller_phone = body.get("From", "")
     
     logger.info("=" * 50)
     logger.info(f"TRANSCRIPT - USER: {speech}")
@@ -347,13 +348,18 @@ async def plivo_speech(request: Request):
     add_message(call_uuid, "user", speech)
     history = get_history(call_uuid)
     
-    # Call Gemini for response
+    # Call Gemini with tool support
     try:
-        genai.configure(api_key=config.google_api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        context = 'You are Vishnu, currently on a phone call. DO NOT repeat the greeting. The conversation so far:' + chr(10) + history + chr(10) + chr(10) + 'User just said: ' + speech + chr(10) + chr(10) + 'Respond naturally with ONE follow-up question based on what they said. Do NOT introduce yourself again.'
-        response = model.generate_content(FWAI_PROMPT + chr(10) + chr(10) + context)
-        reply = response.text.replace('"', "''").strip()
+        reply, tool_result = await generate_response_with_tools(
+            history=history,
+            user_message=speech,
+            caller_phone=caller_phone
+        )
+        
+        if tool_result:
+            logger.info(f"TOOL EXECUTED: {tool_result}")
+            save_transcript(call_uuid, "TOOL", str(tool_result))
+        
         add_message(call_uuid, "assistant", reply)
         logger.info("=" * 50)
         logger.info(f"TRANSCRIPT - VISHNU: {reply}")

@@ -150,3 +150,13 @@ INSTRUCTIONS:
     except Exception as e:
         print(f"Error loading conversation script: {e}")
         return "You are Mousumi, a Senior Counselor at Freedom with AI."
+
+    # SMTP Email settings
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user: str = os.getenv("SMTP_USER", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "noreply@freedomwithai.com")
+    
+    # WhatsApp Phone ID (for Meta API)
+    whatsapp_phone_id: str = os.getenv("WHATSAPP_PHONE_ID", "")
