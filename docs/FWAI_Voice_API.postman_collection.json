@@ -1,0 +1,228 @@
+{
+	"info": {
+		"_postman_id": "fwai-voice-api-collection",
+		"name": "FWAI Voice AI API",
+		"description": "API collection for FWAI Voice AI Agent - Plivo + Gemini Live integration.\n\n## Setup\n1. Update the `base_url` variable to your server URL (localhost or ngrok)\n2. Update `test_phone` with a valid phone number\n\n## Endpoints\n- Health Check\n- Make Outbound Call\n- List Active Calls\n- Terminate Call",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/",
+					"host": ["{{base_url}}"],
+					"path": [""]
+				},
+				"description": "Check if the server is running and healthy."
+			},
+			"response": [
+				{
+					"name": "Success",
+					"originalRequest": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/",
+							"host": ["{{base_url}}"],
+							"path": [""]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"status\": \"ok\",\n  \"service\": \"WhatsApp Voice Calling with Gemini Live\",\n  \"version\": \"1.0.0\"\n}"
+				}
+			]
+		},
+		{
+			"name": "Make Outbound Call",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"phoneNumber\": \"{{test_phone}}\",\n  \"contactName\": \"Test Customer\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/plivo/make-call",
+					"host": ["{{base_url}}"],
+					"path": ["plivo", "make-call"]
+				},
+				"description": "Initiate an outbound AI voice call to the specified phone number.\n\n**Parameters:**\n- `phoneNumber` (required): Phone number with country code (e.g., +919876543210)\n- `contactName` (optional): Name of the contact (default: \"Customer\")\n\n**Flow:**\n1. Plivo initiates call to the phone number\n2. Gemini session preloads while phone rings\n3. When user answers, AI greeting plays instantly\n4. Bidirectional conversation begins"
+			},
+			"response": [
+				{
+					"name": "Success",
+					"originalRequest": {
+						"method": "POST",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phoneNumber\": \"+919876543210\",\n  \"contactName\": \"Test Customer\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/plivo/make-call",
+							"host": ["{{base_url}}"],
+							"path": ["plivo", "make-call"]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"success\": true,\n  \"call_uuid\": \"a8237790-5aa4-4320-a882-bf3056d02bdb\",\n  \"message\": \"Call initiated to +919876543210. Waiting for user to answer.\"\n}"
+				},
+				{
+					"name": "Error - Invalid Phone",
+					"originalRequest": {
+						"method": "POST",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phoneNumber\": \"invalid\",\n  \"contactName\": \"Test\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/plivo/make-call",
+							"host": ["{{base_url}}"],
+							"path": ["plivo", "make-call"]
+						}
+					},
+					"status": "Bad Request",
+					"code": 400,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"detail\": \"Invalid phone number format\"\n}"
+				}
+			]
+		},
+		{
+			"name": "List Active Calls",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/calls",
+					"host": ["{{base_url}}"],
+					"path": ["calls"]
+				},
+				"description": "Get a list of all currently active calls."
+			},
+			"response": [
+				{
+					"name": "Success",
+					"originalRequest": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/calls",
+							"host": ["{{base_url}}"],
+							"path": ["calls"]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"calls\": [\n    {\n      \"call_id\": \"a8237790-5aa4-4320-a882-bf3056d02bdb\",\n      \"phone\": \"+919876543210\",\n      \"status\": \"active\"\n    }\n  ]\n}"
+				},
+				{
+					"name": "No Active Calls",
+					"originalRequest": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/calls",
+							"host": ["{{base_url}}"],
+							"path": ["calls"]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"calls\": []\n}"
+				}
+			]
+		},
+		{
+			"name": "Terminate Call",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/calls/{{call_uuid}}/terminate",
+					"host": ["{{base_url}}"],
+					"path": ["calls", "{{call_uuid}}", "terminate"]
+				},
+				"description": "Terminate a specific active call by its UUID.\n\nReplace `{{call_uuid}}` with the actual call UUID from the make-call response."
+			},
+			"response": [
+				{
+					"name": "Success",
+					"originalRequest": {
+						"method": "POST",
+						"url": {
+							"raw": "{{base_url}}/calls/a8237790-5aa4-4320-a882-bf3056d02bdb/terminate",
+							"host": ["{{base_url}}"],
+							"path": ["calls", "a8237790-5aa4-4320-a882-bf3056d02bdb", "terminate"]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"success\": true,\n  \"message\": \"Call terminated\"\n}"
+				},
+				{
+					"name": "Not Found",
+					"originalRequest": {
+						"method": "POST",
+						"url": {
+							"raw": "{{base_url}}/calls/invalid-uuid/terminate",
+							"host": ["{{base_url}}"],
+							"path": ["calls", "invalid-uuid", "terminate"]
+						}
+					},
+					"status": "Not Found",
+					"code": 404,
+					"_postman_previewlanguage": "json",
+					"body": "{\n  \"detail\": \"Call not found\"\n}"
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [""]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [""]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3001",
+			"type": "string",
+			"description": "Base URL of the FWAI Voice API server. Change to your ngrok URL for external access."
+		},
+		{
+			"key": "test_phone",
+			"value": "+919876543210",
+			"type": "string",
+			"description": "Phone number to use for testing calls. Include country code."
+		},
+		{
+			"key": "call_uuid",
+			"value": "",
+			"type": "string",
+			"description": "Call UUID from make-call response. Used for terminate endpoint."
+		}
+	]
+}

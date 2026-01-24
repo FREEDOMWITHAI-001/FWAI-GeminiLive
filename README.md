@@ -146,20 +146,49 @@ curl -X POST http://localhost:3001/plivo/make-call \
 | `/plivo/stream-status` | POST | Stream status callbacks |
 | `/plivo/hangup` | POST | Called when call ends |
 
-### Make Call Request
+---
+
+## API Reference with cURL Examples
+
+### 1. Health Check
+
+Check if the server is running.
 
 ```bash
-# From n8n HTTP Request node, Zapier, or any HTTP client
-POST https://your-server.com/plivo/make-call
-Content-Type: application/json
-
-{
-  "phoneNumber": "+919876543210",
-  "contactName": "Customer Name"
-}
+curl -X GET http://localhost:3001/
 ```
 
 **Response:**
+```json
+{
+  "status": "ok",
+  "service": "WhatsApp Voice Calling with Gemini Live",
+  "version": "1.0.0"
+}
+```
+
+---
+
+### 2. Make Outbound Call
+
+Initiate an AI voice call to a phone number.
+
+```bash
+curl -X POST http://localhost:3001/plivo/make-call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phoneNumber": "+919876543210",
+    "contactName": "John Doe"
+  }'
+```
+
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `phoneNumber` | string | Yes | Phone number with country code (e.g., +919876543210) |
+| `contactName` | string | No | Name of the contact (default: "Customer") |
+
+**Response (Success):**
 ```json
 {
   "success": true,
@@ -168,12 +197,74 @@ Content-Type: application/json
 }
 ```
 
-### n8n Integration Example
+**Response (Error):**
+```json
+{
+  "detail": "Invalid phone number format"
+}
+```
+
+---
+
+### 3. List Active Calls
+
+Get all currently active calls.
+
+```bash
+curl -X GET http://localhost:3001/calls
+```
+
+**Response:**
+```json
+{
+  "calls": [
+    {
+      "call_id": "a8237790-5aa4-4320-a882-bf3056d02bdb",
+      "phone": "+919876543210",
+      "status": "active",
+      "started_at": "2026-01-25T00:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### 4. Terminate a Call
+
+End a specific active call.
+
+```bash
+curl -X POST http://localhost:3001/calls/a8237790-5aa4-4320-a882-bf3056d02bdb/terminate
+```
+
+**Response (Success):**
+```json
+{
+  "success": true,
+  "message": "Call terminated"
+}
+```
+
+**Response (Not Found):**
+```json
+{
+  "detail": "Call not found"
+}
+```
+
+---
+
+## Using with External Tools
+
+### n8n Integration
 
 1. **HTTP Request Node:**
-   - Method: POST
+   - Method: `POST`
    - URL: `https://your-ngrok-url/plivo/make-call`
-   - Body (JSON):
+   - Authentication: None (add API key if you implement it)
+   - Body Content Type: JSON
+   - Body:
      ```json
      {
        "phoneNumber": "{{ $json.phone }}",
@@ -185,6 +276,54 @@ Content-Type: application/json
    - Webhook (incoming lead)
    - Schedule (follow-up calls)
    - CRM event (new signup)
+
+### Zapier Integration
+
+Use "Webhooks by Zapier" action:
+- Method: POST
+- URL: `https://your-ngrok-url/plivo/make-call`
+- Data Pass-Through: No
+- Data:
+  ```
+  phoneNumber: +91{{phone}}
+  contactName: {{name}}
+  ```
+
+### Python Script
+
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:3001/plivo/make-call",
+    json={
+        "phoneNumber": "+919876543210",
+        "contactName": "John Doe"
+    }
+)
+print(response.json())
+```
+
+### JavaScript/Node.js
+
+```javascript
+fetch('http://localhost:3001/plivo/make-call', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    phoneNumber: '+919876543210',
+    contactName: 'John Doe'
+  })
+})
+.then(res => res.json())
+.then(data => console.log(data));
+```
+
+---
+
+## Postman Collection
+
+Import the collection from `docs/FWAI_Voice_API.postman_collection.json` or use the examples above
 
 ## Project Structure
 
