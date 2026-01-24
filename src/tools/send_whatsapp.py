@@ -37,7 +37,7 @@ class SendWhatsAppTool(BaseTool):
             phone = caller_phone.replace("+", "").replace(" ", "")
             
             # Meta WhatsApp Business API
-            url = f"https://graph.facebook.com/v17.0/{config.whatsapp_phone_id}/messages"
+            url = f"https://graph.facebook.com/v22.0/{config.whatsapp_phone_id}/messages"
             
             headers = {
                 "Authorization": f"Bearer {config.meta_access_token}",

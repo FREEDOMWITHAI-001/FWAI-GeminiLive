@@ -314,6 +314,9 @@ async def api_terminate_call(call_id: str):
 # Import Plivo adapter
 from src.adapters.plivo_adapter import plivo_adapter
 
+# Store phone numbers for pending calls (call_uuid -> phone)
+_pending_call_phones = {}
+
 
 class PlivoMakeCallRequest(BaseModel):
     phoneNumber: str
@@ -342,10 +345,19 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         )
 
         if result.get("success"):
-            logger.info(f"Plivo call initiated: {result.get('call_uuid')}")
+            call_uuid = result.get("call_uuid")
+            # Store phone number for this call
+            _pending_call_phones[call_uuid] = request.phoneNumber
+            logger.info(f"Plivo call initiated: {call_uuid}, stored phone: {request.phoneNumber}")
+
+            # PRELOAD Gemini session immediately while phone is ringing
+            from src.services.plivo_gemini_stream import preload_session
+            asyncio.create_task(preload_session(call_uuid, request.phoneNumber))
+            logger.info(f"Started preloading Gemini session for {call_uuid}")
+
             return JSONResponse(content={
                 "success": True,
-                "call_uuid": result.get("call_uuid"),
+                "call_uuid": call_uuid,
                 "message": f"Call initiated to {request.phoneNumber}. Waiting for user to answer."
             })
         else:
@@ -366,9 +378,16 @@ async def plivo_answer(request: Request):
     """Handle Plivo call answer - uses Stream with Gemini Live"""
     body = await request.form()
     call_uuid = body.get("CallUUID", "")
-    caller_phone = body.get("From", "")
+    from_phone = body.get("From", "")
+    to_phone = body.get("To", "")
 
-    logger.info(f"Plivo call answered: {call_uuid} from {caller_phone}")
+    # For outbound calls, customer is "To"; for inbound, customer is "From"
+    # Store the customer phone (not our Plivo number)
+    customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
+    if customer_phone and call_uuid:
+        _pending_call_phones[call_uuid] = customer_phone
+
+    logger.info(f"Plivo call answered: {call_uuid} from {from_phone} to {to_phone}, customer: {customer_phone}")
 
     # WebSocket URL for bidirectional audio stream
     ws_base = config.plivo_callback_url.replace("https://", "wss://").replace("http://", "ws://")
@@ -411,10 +430,19 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
             if event == "start":
                 # Stream started - create Gemini session
                 start_data = message.get("start", {})
+                logger.info(f"Plivo start event data: {start_data}")
                 call_uuid = start_data.get("callId", call_uuid)
-                caller_phone = start_data.get("from", "")
+                # Get phone from customParameters or fallback to stored value
+                custom_params = start_data.get("customParameters", {})
+                caller_phone = custom_params.get("callerPhone", "") or start_data.get("to", "") or start_data.get("from", "")
+                # If still empty, use the call_uuid to look up from pending calls
+                if not caller_phone:
+                    caller_phone = _pending_call_phones.get(call_uuid, "")
+                # Ensure it has country code format
+                if caller_phone and not caller_phone.startswith("+"):
+                    caller_phone = "+" + caller_phone
 
-                logger.info(f"Plivo stream started: {call_uuid} from {caller_phone}")
+                logger.info(f"Plivo stream started: {call_uuid} to {caller_phone}")
 
                 # Create Gemini Live session
                 session = await create_session(call_uuid, caller_phone, websocket)
