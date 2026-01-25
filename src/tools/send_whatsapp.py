@@ -11,6 +11,7 @@ from .base import BaseTool, ToolResult
 from .tool_registry import ToolRegistry
 from src.core.config import config
 from src.templates import format_template, WHATSAPP_TEMPLATES
+from src.services.meta_token_manager import get_access_token
 
 
 @ToolRegistry.register
@@ -68,8 +69,11 @@ If no template matches, use custom_message for a plain text message."""
             # Meta WhatsApp Business API
             url = f"https://graph.facebook.com/v22.0/{config.whatsapp_phone_id}/messages"
 
+            # Get token from token manager (auto-refreshes if needed)
+            access_token = await get_access_token()
+
             headers = {
-                "Authorization": f"Bearer {config.meta_access_token}",
+                "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json"
             }
 

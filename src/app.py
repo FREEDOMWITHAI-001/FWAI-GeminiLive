@@ -75,6 +75,14 @@ async def lifespan(app: FastAPI):
         for error in errors:
             logger.warning(f"Config warning: {error}")
 
+    # Initialize Meta token manager (auto-refresh)
+    try:
+        from src.services.meta_token_manager import token_manager
+        await token_manager.initialize()
+        logger.info("Meta token manager initialized")
+    except Exception as e:
+        logger.warning(f"Token manager init failed: {e} - using static token")
+
     logger.info(f"Server starting on http://{config.host}:{config.port}")
     logger.info(f"Gemini Voice: {config.tts_voice}")
 

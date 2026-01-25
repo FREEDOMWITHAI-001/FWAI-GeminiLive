@@ -29,6 +29,10 @@ class Config(BaseModel):
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "my_super_secret_token_123")
     whatsapp_api_version: str = "v21.0"
 
+    # Meta App credentials for token refresh
+    meta_app_id: str = os.getenv("META_APP_ID", "")
+    meta_app_secret: str = os.getenv("META_APP_SECRET", "")
+
     # Plivo API settings
     plivo_auth_id: str = os.getenv("PLIVO_AUTH_ID", "")
     plivo_auth_token: str = os.getenv("PLIVO_AUTH_TOKEN", "")
