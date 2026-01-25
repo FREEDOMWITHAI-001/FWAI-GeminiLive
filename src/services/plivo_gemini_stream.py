@@ -101,6 +101,26 @@ Only use custom_message for very specific requests that don't fit any template."
             },
             "required": ["message"]
         }
+    },
+    {
+        "name": "end_call",
+        "description": """End the phone call gracefully. USE THIS TOOL WHEN:
+- User says 'bye', 'bye bye', 'goodbye', 'talk later', 'gotta go', 'thanks bye'
+- User indicates they want to end the conversation
+- You have said your goodbye and the conversation is naturally ending
+- The call time limit has been reached
+
+IMPORTANT: Always say a warm goodbye BEFORE calling this tool, then call it to actually hang up.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for ending call (e.g., 'user said goodbye', 'conversation complete', 'time limit')"
+                }
+            },
+            "required": ["reason"]
+        }
     }
 ]
 
@@ -130,6 +150,12 @@ class PlivoGeminiSession:
 
         # Flag to prevent double greeting
         self.greeting_audio_complete = False
+
+        # Call duration management (8 minute max)
+        self.call_start_time = None
+        self.max_call_duration = 8 * 60  # 8 minutes in seconds
+        self._timeout_task = None
+        self._closing_call = False  # Flag to indicate we're closing the call
 
     def _save_transcript(self, role, text):
         if not config.enable_transcripts:
@@ -239,12 +265,12 @@ class PlivoGeminiSession:
             logger.info(f"PRELOADING Gemini session for call {self.call_uuid}")
             self.is_active = True
             self._session_task = asyncio.create_task(self._run_google_live_session())
-            # Wait for setup to complete (with timeout)
+            # Wait for setup to complete (with timeout - increased to 15s)
             try:
-                await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
-                logger.info(f"PRELOAD COMPLETE for {self.call_uuid} - AI ready to speak!")
+                await asyncio.wait_for(self._preload_complete.wait(), timeout=15.0)
+                logger.info(f"PRELOAD COMPLETE for {self.call_uuid} - AI ready to speak! ({len(self.preloaded_audio)} audio chunks)")
             except asyncio.TimeoutError:
-                logger.warning(f"Preload timeout for {self.call_uuid}")
+                logger.warning(f"Preload timeout for {self.call_uuid} - continuing anyway with {len(self.preloaded_audio)} chunks")
             return True
         except Exception as e:
             logger.error(f"Failed to preload session: {e}")
@@ -253,10 +279,13 @@ class PlivoGeminiSession:
     def attach_plivo_ws(self, plivo_ws):
         """Attach Plivo WebSocket when user answers"""
         self.plivo_ws = plivo_ws
+        self.call_start_time = datetime.now()
         logger.info(f"Plivo WS attached for {self.call_uuid}")
         # Send any preloaded audio immediately
         if self.preloaded_audio:
             asyncio.create_task(self._send_preloaded_audio())
+        # Start call duration timer
+        self._timeout_task = asyncio.create_task(self._monitor_call_duration())
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio to Plivo"""
@@ -268,6 +297,48 @@ class PlivoGeminiSession:
                     "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
                 }))
         self.preloaded_audio = []
+
+    async def _monitor_call_duration(self):
+        """Monitor call duration and trigger wrap-up at 8 minutes"""
+        try:
+            # Wait until 7:30 (give 30 seconds for wrap-up)
+            wrap_up_time = self.max_call_duration - 30
+            await asyncio.sleep(wrap_up_time)
+
+            if self.is_active and not self._closing_call:
+                logger.info(f"Call {self.call_uuid} reaching 8 min limit - triggering wrap-up")
+                self._closing_call = True
+                await self._send_wrap_up_message()
+
+                # Wait another 30 seconds then force end
+                await asyncio.sleep(30)
+                if self.is_active:
+                    logger.info(f"Call {self.call_uuid} reached max duration - ending call")
+                    await self.stop()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in call duration monitor: {e}")
+
+    async def _send_wrap_up_message(self):
+        """Send a message to AI to wrap up the call"""
+        if not self.goog_live_ws:
+            return
+        try:
+            msg = {
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.]"}]
+                    }],
+                    "turn_complete": True
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+            logger.info("Sent wrap-up message to AI")
+            self._save_transcript("SYSTEM", "Call time limit - wrapping up")
+        except Exception as e:
+            logger.error(f"Error sending wrap-up message: {e}")
 
     async def _run_google_live_session(self):
         url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
@@ -341,47 +412,97 @@ SPEAKING STYLE (VERY IMPORTANT):
         logger.info("Sent initial greeting trigger")
 
     async def _handle_tool_call(self, tool_call):
-        """Execute tool and send response back to Gemini"""
-        try:
-            func_calls = tool_call.get("functionCalls", [])
-            for fc in func_calls:
-                tool_name = fc.get("name")
-                tool_args = fc.get("args", {})
-                call_id = fc.get("id")
+        """Execute tool and send response back to Gemini - gracefully handles errors"""
+        func_calls = tool_call.get("functionCalls", [])
+        for fc in func_calls:
+            tool_name = fc.get("name")
+            tool_args = fc.get("args", {})
+            call_id = fc.get("id")
 
-                logger.info(f"TOOL CALL: {tool_name} with args: {tool_args}")
-                self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
+            logger.info(f"TOOL CALL: {tool_name} with args: {tool_args}")
+            self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
-                # Execute the tool with context for templates
+            # Handle end_call tool specially
+            if tool_name == "end_call":
+                reason = tool_args.get("reason", "conversation ended")
+                logger.info(f"END CALL requested: {reason}")
+                self._save_transcript("SYSTEM", f"Call ending: {reason}")
+
+                # Send success response first
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": {"success": True, "message": "Call will be ended"}
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except:
+                    pass
+
+                # Hang up the call after a short delay (let goodbye audio play)
+                asyncio.create_task(self._hangup_call_delayed(3.0))
+                return
+
+            # Execute the tool with context for templates - graceful error handling
+            try:
                 result = await execute_tool(tool_name, self.caller_phone, context=self.context, **tool_args)
+                success = result.get("success", False)
+                message = result.get("message", "Tool executed")
+            except Exception as e:
+                logger.error(f"Tool execution error for {tool_name}: {e}")
+                success = False
+                message = f"Tool temporarily unavailable, but conversation can continue"
 
-                logger.info(f"TOOL RESULT: {result}")
-                self._save_transcript("TOOL_RESULT", f"{tool_name}: {'success' if result.get('success') else 'failed'}")
+            logger.info(f"TOOL RESULT: success={success}, message={message}")
+            self._save_transcript("TOOL_RESULT", f"{tool_name}: {'success' if success else 'failed'}")
 
-                # Send tool response back to Gemini
+            # Always send tool response back to Gemini so conversation continues
+            try:
                 tool_response = {
                     "tool_response": {
                         "function_responses": [{
                             "id": call_id,
                             "name": tool_name,
                             "response": {
-                                "success": result.get("success", False),
-                                "message": result.get("message", "Tool executed")
+                                "success": success,
+                                "message": message
                             }
                         }]
                     }
                 }
                 await self.goog_live_ws.send(json.dumps(tool_response))
                 logger.info(f"Sent tool response for {tool_name}")
+            except Exception as e:
+                logger.error(f"Error sending tool response: {e} - continuing conversation")
 
+    async def _hangup_call_delayed(self, delay: float):
+        """Hang up the call after a delay to let goodbye audio play"""
+        await asyncio.sleep(delay)
+        logger.info(f"Hanging up call {self.call_uuid}")
+        try:
+            # Use Plivo API to hang up
+            import plivo
+            from src.core.config import config
+            client = plivo.RestClient(config.plivo_auth_id, config.plivo_auth_token)
+            client.calls.delete(self.call_uuid)
+            logger.info(f"Call {self.call_uuid} hung up successfully")
         except Exception as e:
-            logger.error(f"Tool execution error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error hanging up call: {e}")
+            # Force stop the session anyway
+            await self.stop()
 
     async def _receive_from_google(self, message):
         try:
             resp = json.loads(message)
+
+            # Log all Gemini responses for debugging
+            resp_keys = list(resp.keys())
+            if resp_keys != ['serverContent']:  # Don't log every content message
+                logger.debug(f"Gemini response keys: {resp_keys}")
 
             if "setupComplete" in resp:
                 logger.info("Google Live setup complete - AI Ready")
@@ -401,10 +522,12 @@ SPEAKING STYLE (VERY IMPORTANT):
 
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
+                    logger.info(f"Turn complete - greeting_audio_complete was {self.greeting_audio_complete}")
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
 
                 if sc.get("interrupted"):
+                    logger.info("AI was interrupted by user")
                     if self.plivo_ws:
                         await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
@@ -413,38 +536,58 @@ SPEAKING STYLE (VERY IMPORTANT):
                     for p in parts:
                         if p.get("inlineData", {}).get("data"):
                             audio = p["inlineData"]["data"]
+                            audio_bytes = base64.b64decode(audio)
                             # Record AI audio (24kHz)
-                            self._record_audio("AI", base64.b64decode(audio), 24000)
+                            self._record_audio("AI", audio_bytes, 24000)
+                            logger.info(f"AI AUDIO received: {len(audio_bytes)} bytes, greeting_complete={self.greeting_audio_complete}")
 
                             # During greeting preload, always store (don't send twice)
                             if not self.greeting_audio_complete:
                                 self.preloaded_audio.append(audio)
+                                logger.debug(f"Stored preload audio chunk #{len(self.preloaded_audio)}")
                             elif self.plivo_ws:
                                 # After greeting done, send directly to Plivo
-                                await self.plivo_ws.send_text(json.dumps({
-                                    "event": "playAudio",
-                                    "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
-                                }))
+                                try:
+                                    await self.plivo_ws.send_text(json.dumps({
+                                        "event": "playAudio",
+                                        "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
+                                    }))
+                                    logger.debug(f"Sent AI audio to Plivo: {len(audio_bytes)} bytes")
+                                except Exception as plivo_err:
+                                    logger.error(f"Error sending audio to Plivo: {plivo_err} - continuing")
                         if p.get("text"):
+                            logger.info(f"AI TEXT: {p['text'][:100]}...")
                             self._save_transcript("VISHNU", p["text"])
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Error processing Google message: {e} - continuing session")
 
     async def handle_plivo_audio(self, audio_b64):
+        """Handle incoming audio from Plivo - graceful error handling"""
         try:
-            if not self.is_active or not self.start_streaming or not self.goog_live_ws:
+            if not self.is_active or not self.start_streaming:
+                logger.debug(f"Skipping audio: active={self.is_active}, streaming={self.start_streaming}")
+                return
+            if not self.goog_live_ws:
+                logger.warning("Google WS not connected, skipping audio")
                 return
             chunk = base64.b64decode(audio_b64)
             # Record user audio (16kHz)
             self._record_audio("USER", chunk, 16000)
             self.inbuffer.extend(chunk)
+            chunks_sent = 0
             while len(self.inbuffer) >= self.BUFFER_SIZE:
                 ac = self.inbuffer[:self.BUFFER_SIZE]
                 msg = {"realtime_input": {"media_chunks": [{"mime_type": "audio/pcm;rate=16000", "data": base64.b64encode(bytes(ac)).decode()}]}}
-                await self.goog_live_ws.send(json.dumps(msg))
+                try:
+                    await self.goog_live_ws.send(json.dumps(msg))
+                    chunks_sent += 1
+                except Exception as send_err:
+                    logger.error(f"Error sending audio to Google: {send_err} - continuing")
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
+            if chunks_sent > 0 and len(self.audio_chunks) % 100 == 0:
+                logger.info(f"Sent {chunks_sent} audio chunks to Gemini (total user chunks: {len(self.audio_chunks)})")
         except Exception as e:
-            logger.error(f"Audio error: {e}")
+            logger.error(f"Audio processing error: {e} - continuing session")
 
     async def handle_plivo_message(self, message):
         event = message.get("event")
@@ -461,6 +604,17 @@ SPEAKING STYLE (VERY IMPORTANT):
     async def stop(self):
         logger.info(f"Stopping session for {self.call_uuid}")
         self.is_active = False
+
+        # Cancel timeout task
+        if self._timeout_task:
+            self._timeout_task.cancel()
+
+        # Log call duration
+        if self.call_start_time:
+            duration = (datetime.now() - self.call_start_time).total_seconds()
+            logger.info(f"Call {self.call_uuid} duration: {duration:.1f} seconds")
+            self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s")
+
         if self.goog_live_ws:
             try:
                 await self.goog_live_ws.close()
