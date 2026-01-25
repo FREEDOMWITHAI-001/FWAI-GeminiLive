@@ -314,13 +314,16 @@ async def api_terminate_call(call_id: str):
 # Import Plivo adapter
 from src.adapters.plivo_adapter import plivo_adapter
 
-# Store phone numbers for pending calls (call_uuid -> phone)
-_pending_call_phones = {}
+# Store call data for pending calls (call_uuid -> {phone, prompt, context})
+_pending_call_data = {}
 
 
 class PlivoMakeCallRequest(BaseModel):
     phoneNumber: str
     contactName: Optional[str] = "Customer"
+    prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
+    context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
+    webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
 
 
 @app.post("/plivo/make-call")
@@ -346,13 +349,29 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         if result.get("success"):
             call_uuid = result.get("call_uuid")
-            # Store phone number for this call
-            _pending_call_phones[call_uuid] = request.phoneNumber
+
+            # Add customer_name to context if not present
+            context = request.context or {}
+            context.setdefault("customer_name", request.contactName)
+
+            # Store all call data
+            _pending_call_data[call_uuid] = {
+                "phone": request.phoneNumber,
+                "prompt": request.prompt,
+                "context": context,
+                "webhookUrl": request.webhookUrl
+            }
             logger.info(f"Plivo call initiated: {call_uuid}, stored phone: {request.phoneNumber}")
 
             # PRELOAD Gemini session immediately while phone is ringing
             from src.services.plivo_gemini_stream import preload_session
-            asyncio.create_task(preload_session(call_uuid, request.phoneNumber))
+            asyncio.create_task(preload_session(
+                call_uuid,
+                request.phoneNumber,
+                prompt=request.prompt,
+                context=context,
+                webhook_url=request.webhookUrl
+            ))
             logger.info(f"Started preloading Gemini session for {call_uuid}")
 
             return JSONResponse(content={
@@ -384,8 +403,8 @@ async def plivo_answer(request: Request):
     # For outbound calls, customer is "To"; for inbound, customer is "From"
     # Store the customer phone (not our Plivo number)
     customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
-    if customer_phone and call_uuid:
-        _pending_call_phones[call_uuid] = customer_phone
+    if customer_phone and call_uuid and call_uuid not in _pending_call_data:
+        _pending_call_data[call_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
 
     logger.info(f"Plivo call answered: {call_uuid} from {from_phone} to {to_phone}, customer: {customer_phone}")
 
@@ -437,7 +456,8 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
                 caller_phone = custom_params.get("callerPhone", "") or start_data.get("to", "") or start_data.get("from", "")
                 # If still empty, use the call_uuid to look up from pending calls
                 if not caller_phone:
-                    caller_phone = _pending_call_phones.get(call_uuid, "")
+                    call_data = _pending_call_data.get(call_uuid, {})
+                    caller_phone = call_data.get("phone", "")
                 # Ensure it has country code format
                 if caller_phone and not caller_phone.startswith("+"):
                     caller_phone = "+" + caller_phone

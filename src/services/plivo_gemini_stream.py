@@ -125,11 +125,12 @@ IMPORTANT: Always say a warm goodbye BEFORE calling this tool, then call it to a
 ]
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None):
         self.call_uuid = call_uuid
         self.caller_phone = caller_phone
         self.prompt = prompt or DEFAULT_PROMPT  # Use passed prompt or default
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
+        self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
         self.is_active = False
@@ -609,7 +610,8 @@ SPEAKING STYLE (VERY IMPORTANT):
         if self._timeout_task:
             self._timeout_task.cancel()
 
-        # Log call duration
+        # Calculate call duration
+        duration = 0
         if self.call_start_time:
             duration = (datetime.now() - self.call_start_time).total_seconds()
             logger.info(f"Call {self.call_uuid} duration: {duration:.1f} seconds")
@@ -629,18 +631,53 @@ SPEAKING STYLE (VERY IMPORTANT):
         if recording_file:
             self._transcribe_recording(recording_file)
 
+        # Call webhook URL to notify n8n that call ended
+        if self.webhook_url:
+            asyncio.create_task(self._call_webhook(duration))
+
+    async def _call_webhook(self, duration: float):
+        """Call webhook URL to notify n8n that call ended"""
+        try:
+            import httpx
+
+            # Read transcript file if it exists
+            transcript = ""
+            try:
+                transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{self.call_uuid}.txt"
+                if transcript_file.exists():
+                    transcript = transcript_file.read_text()
+            except:
+                pass
+
+            payload = {
+                "event": "call_ended",
+                "call_uuid": self.call_uuid,
+                "caller_phone": self.caller_phone,
+                "duration_seconds": round(duration, 1),
+                "timestamp": datetime.now().isoformat(),
+                "transcript": transcript
+            }
+
+            logger.info(f"Calling webhook: {self.webhook_url}")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(self.webhook_url, json=payload)
+                logger.info(f"Webhook response: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error calling webhook: {e}")
+
+
 # Session storage
 _sessions: Dict[str, PlivoGeminiSession] = {}
 _preloading_sessions: Dict[str, PlivoGeminiSession] = {}
 
-async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None) -> bool:
+async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None) -> bool:
     """Preload a session while phone is ringing"""
-    session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context)
+    session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
     _preloading_sessions[call_uuid] = session
     success = await session.preload()
     return success
 
-async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: str = None, context: dict = None) -> Optional[PlivoGeminiSession]:
+async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: str = None, context: dict = None, webhook_url: str = None) -> Optional[PlivoGeminiSession]:
     """Create or retrieve preloaded session"""
     # Check for preloaded session
     if call_uuid in _preloading_sessions:
@@ -654,7 +691,7 @@ async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: st
 
     # Fallback: create new session
     logger.info(f"No preloaded session, creating new for {call_uuid}")
-    session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context)
+    session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
     session.plivo_ws = plivo_ws
     session._save_transcript("SYSTEM", "Call started")
     if await session.preload():
