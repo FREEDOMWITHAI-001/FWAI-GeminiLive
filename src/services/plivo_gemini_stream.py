@@ -482,19 +482,39 @@ SPEAKING STYLE (VERY IMPORTANT):
 
     async def _hangup_call_delayed(self, delay: float):
         """Hang up the call after a delay to let goodbye audio play"""
-        await asyncio.sleep(delay)
-        logger.info(f"Hanging up call {self.call_uuid}")
         try:
-            # Use Plivo API to hang up
-            import plivo
-            from src.core.config import config
-            client = plivo.RestClient(config.plivo_auth_id, config.plivo_auth_token)
-            client.calls.delete(self.call_uuid)
-            logger.info(f"Call {self.call_uuid} hung up successfully")
+            await asyncio.sleep(delay)
+            logger.info(f"Hanging up call {self.call_uuid}")
+
+            # Use Plivo REST API directly with httpx (async)
+            import httpx
+            import base64
+
+            auth_string = f"{config.plivo_auth_id}:{config.plivo_auth_token}"
+            auth_b64 = base64.b64encode(auth_string.encode()).decode()
+
+            url = f"https://api.plivo.com/v1/Account/{config.plivo_auth_id}/Call/{self.call_uuid}/"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.delete(
+                    url,
+                    headers={"Authorization": f"Basic {auth_b64}"}
+                )
+                logger.info(f"Plivo hangup response: {response.status_code}")
+
+                if response.status_code in [204, 200]:
+                    logger.info(f"Call {self.call_uuid} hung up successfully via Plivo API")
+                else:
+                    logger.error(f"Plivo hangup failed: {response.status_code} - {response.text}")
+
         except Exception as e:
-            logger.error(f"Error hanging up call: {e}")
-            # Force stop the session anyway
-            await self.stop()
+            logger.error(f"Error hanging up call {self.call_uuid}: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Always stop the session
+            if self.is_active:
+                await self.stop()
 
     async def _receive_from_google(self, message):
         try:

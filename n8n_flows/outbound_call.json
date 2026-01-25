@@ -1,0 +1,218 @@
+{
+  "name": "FWAI Outbound Call",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "trigger-call"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_NGROK_URL/plivo/make-call",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"contactName\": $json.body.contactName || \"Customer\",\n  \"prompt\": $json.body.prompt || null,\n  \"context\": $json.body.context || {},\n  \"webhookUrl\": $execution.resumeUrl\n}) }}",
+        "options": {}
+      },
+      "id": "make-call",
+      "name": "Make Outbound Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  \"success\": true,\n  \"message\": \"Call initiated\",\n  \"call_uuid\": $json.call_uuid\n}) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond - Call Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [710, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  \"success\": false,\n  \"error\": $json.error || \"Failed to initiate call\"\n}) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond - Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [710, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Call Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [590, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "call-ended",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "call-ended-webhook",
+      "name": "Call Ended Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 520],
+      "webhookId": "call-ended"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "event",
+              "value": "={{ $json.body.event }}"
+            },
+            {
+              "name": "call_uuid",
+              "value": "={{ $json.body.call_uuid }}"
+            },
+            {
+              "name": "caller_phone",
+              "value": "={{ $json.body.caller_phone }}"
+            },
+            {
+              "name": "duration_seconds",
+              "value": "={{ $json.body.duration_seconds }}"
+            },
+            {
+              "name": "transcript",
+              "value": "={{ $json.body.transcript }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-call-data",
+      "name": "Extract Call Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 520]
+    },
+    {
+      "parameters": {},
+      "id": "process-call-ended",
+      "name": "Process Call Ended",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [710, 520],
+      "notesInFlow": true,
+      "notes": "Add your post-call logic here:\n- Update CRM\n- Send follow-up email\n- Log to database\n- Trigger next workflow"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Make Outbound Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Outbound Call": {
+      "main": [
+        [
+          {
+            "node": "Call Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Success?": {
+      "main": [
+        [
+          {
+            "node": "Respond - Call Started",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Ended Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Call Data": {
+      "main": [
+        [
+          {
+            "node": "Process Call Ended",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fwai-voice-ai"
+  },
+  "pinData": {},
+  "tags": []
+}
