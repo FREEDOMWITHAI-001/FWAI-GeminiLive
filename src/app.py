@@ -19,9 +19,10 @@ import json
 from src.core.config import config
 from src.prompt_loader import FWAI_PROMPT
 from src.conversation_memory import add_message, get_history, clear_conversation
-from src.services.gemini_tools import generate_response_with_tools
-from src.services.gemini_live_tts import generate_audio_response, get_audio_url, AUDIO_DIR
 from fastapi.staticfiles import StaticFiles
+
+# Audio directory for any generated audio files
+AUDIO_DIR = Path(__file__).parent.parent / "audio"
 from datetime import datetime
 from src.handlers.webrtc_handler import (
     make_outbound_call,

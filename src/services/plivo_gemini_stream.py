@@ -359,31 +359,25 @@ class PlivoGeminiSession:
             logger.info("Google Live session ended")
 
     async def _send_session_setup(self):
-        # Natural speech instructions to add to prompt
-        natural_speech = """
+        # Accent/speech instructions FIRST (before main prompt)
+        accent_instruction = """VOICE AND ACCENT (CRITICAL - APPLY THROUGHOUT):
+You MUST speak with an Indian English accent. Sound like an educated Indian professional from Bangalore.
+Use Indian English pronunciation, intonation, and rhythm patterns.
+Speak only in English. Be warm, friendly, and professional.
 
-SPEAKING STYLE (VERY IMPORTANT):
-- Speak naturally like a real Indian person having a phone conversation
-- Use casual Indian English phrases like "actually", "basically", "you know", "na", "right?"
-- Add natural pauses with "hmm", "so", "well"
-- Vary your tone - don't be monotone, show emotion and warmth
-- Speak at a relaxed pace, not too fast
-- Use contractions (I'm, you're, that's, it's, don't, won't)
-- Sound friendly and warm, like talking to a friend
-- Occasionally use filler words naturally
-- React naturally to what user says ("Oh nice!", "I see", "That's great")
 """
-        full_prompt = self.prompt + natural_speech
+        # Combine: accent first, then main prompt
+        full_prompt = accent_instruction + self.prompt
 
         msg = {
             "setup": {
-                "model": "models/gemini-2.0-flash-exp",
+                "model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
                 "generation_config": {
                     "response_modalities": ["AUDIO"],
                     "speech_config": {
                         "voice_config": {
                             "prebuilt_voice_config": {
-                                "voice_name": "Charon"
+                                "voice_name": "Puck"
                             }
                         }
                     }
