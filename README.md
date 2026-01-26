@@ -192,9 +192,170 @@ Edit `prompts.json`:
 }
 ```
 
+## Production Deployment (Oracle Cloud)
+
+Deploy for **FREE** on Oracle Cloud Always Free Tier. See [OCI Deployment Guide](docs/OCI_DEPLOYMENT_GUIDE.md) for complete setup.
+
+### Quick Deploy Commands
+
+```bash
+# SSH into server
+ssh -i ~/.ssh/oracle_key.key ubuntu@YOUR_PUBLIC_IP
+
+# Navigate to app
+cd /opt/fwai/FWAI-GeminiLive
+source venv/bin/activate
+```
+
+### Service Management
+
+| Command | Description |
+|---------|-------------|
+| `sudo systemctl status fwai-app` | Check app status |
+| `sudo systemctl start fwai-app` | Start app |
+| `sudo systemctl stop fwai-app` | Stop app |
+| `sudo systemctl restart fwai-app` | Restart app |
+| `sudo systemctl enable fwai-app` | Enable auto-start on boot |
+
+### View Logs
+
+```bash
+# Live logs (follow mode)
+sudo journalctl -u fwai-app -f
+
+# Last 100 lines
+sudo journalctl -u fwai-app -n 100
+
+# Logs from last hour
+sudo journalctl -u fwai-app --since "1 hour ago"
+
+# Logs from today
+sudo journalctl -u fwai-app --since today
+
+# Export logs to file
+sudo journalctl -u fwai-app --since today > /tmp/logs.txt
+```
+
+### Update Application
+
+```bash
+cd /opt/fwai/FWAI-GeminiLive
+git pull origin main
+sudo systemctl restart fwai-app
+```
+
+### Monitor Resources
+
+```bash
+# Check memory usage
+free -h
+
+# Check disk space
+df -h
+
+# Monitor CPU/Memory (live)
+htop
+
+# Check running processes
+ps aux | grep python
+
+# Check network connections
+ss -tulpn | grep 3000
+
+# Check if port is listening
+sudo netstat -tlnp | grep 3000
+```
+
+### Health Check
+
+```bash
+# Local health check
+curl http://localhost:3000
+
+# Expected response:
+# {"status":"ok","service":"WhatsApp Voice Calling with Gemini Live","version":"1.0.0"}
+```
+
+### Firewall Management
+
+```bash
+# List current rules
+sudo iptables -L INPUT -n
+
+# Add new port
+sudo iptables -I INPUT -p tcp --dport PORT_NUMBER -j ACCEPT
+
+# Save rules permanently
+sudo netfilter-persistent save
+
+# Reload rules
+sudo netfilter-persistent reload
+```
+
+### Database/Files
+
+```bash
+# View transcripts
+ls -la transcripts/
+
+# View latest transcript
+cat transcripts/$(ls -t transcripts/ | head -1)
+
+# View scheduled callbacks
+cat data/callbacks.json
+
+# Clear old transcripts (older than 30 days)
+find transcripts/ -type f -mtime +30 -delete
+```
+
+### Troubleshooting
+
+```bash
+# Check if app is running
+sudo systemctl is-active fwai-app
+
+# View failed service logs
+sudo journalctl -u fwai-app --no-pager | tail -50
+
+# Test Gemini API connectivity
+curl -s "https://generativelanguage.googleapis.com/v1/models?key=$GOOGLE_API_KEY" | head
+
+# Check environment variables are loaded
+source venv/bin/activate
+python -c "from src.core.config import config; print(f'Port: {config.port}')"
+
+# Manual test run (for debugging)
+sudo systemctl stop fwai-app
+python run.py  # See live errors
+# Ctrl+C to stop, then restart service
+sudo systemctl start fwai-app
+```
+
+### Backup & Restore
+
+```bash
+# Backup .env and transcripts
+tar -czvf backup_$(date +%Y%m%d).tar.gz .env transcripts/ data/
+
+# Restore
+tar -xzvf backup_YYYYMMDD.tar.gz
+```
+
+### Server Reboot
+
+```bash
+# Graceful restart (app will auto-start if enabled)
+sudo reboot
+
+# After reboot, verify app is running
+sudo systemctl status fwai-app
+```
+
 ## Documentation
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture, call flow, audio config, troubleshooting
+- **[OCI_DEPLOYMENT_GUIDE.md](docs/OCI_DEPLOYMENT_GUIDE.md)** - Oracle Cloud deployment steps
+- **[PRODUCTION_ARCHITECTURE.md](docs/PRODUCTION_ARCHITECTURE.md)** - Production architecture overview
 
 ## License
 
