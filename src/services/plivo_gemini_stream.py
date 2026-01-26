@@ -252,12 +252,12 @@ class PlivoGeminiSession:
             logger.error(f"Error saving recording: {e}")
             return None
 
-    def _transcribe_recording(self, recording_file: Path):
-        """Transcribe recording using Whisper (synchronous - completes before returning)"""
+    def _transcribe_recording_sync(self, recording_file: Path, call_uuid: str):
+        """Transcribe recording using Whisper (runs in background thread)"""
         try:
             import whisper
-            logger.info(f"Starting transcription for {self.call_uuid}")
-            model = whisper.load_model("base")  # Options: tiny, base, small, medium, large
+            logger.info(f"Starting background transcription for {call_uuid}")
+            model = whisper.load_model("tiny")  # Use tiny for faster transcription
             result = model.transcribe(str(recording_file))
             transcript_text = result["text"].strip()
 
@@ -279,13 +279,13 @@ class PlivoGeminiSession:
                     is_agent = True  # Next is likely agent
 
             # Save formatted transcript
-            transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{self.call_uuid}.txt"
+            transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{call_uuid}.txt"
             with open(transcript_file, "a") as f:
                 f.write(f"\n--- CONVERSATION TRANSCRIPT ---\n")
                 for line in formatted_lines:
                     f.write(f"{line}\n")
 
-            logger.info(f"Transcription complete for {self.call_uuid}")
+            logger.info(f"Transcription complete for {call_uuid}")
 
             # Delete recording file after successful transcription
             try:
@@ -298,6 +298,17 @@ class PlivoGeminiSession:
             logger.warning("Whisper not installed. Run: pip install openai-whisper")
         except Exception as e:
             logger.error(f"Transcription error: {e}")
+
+    def _transcribe_recording(self, recording_file: Path):
+        """Run transcription in background thread (non-blocking)"""
+        # Run in background thread so it doesn't block call ending
+        transcribe_thread = threading.Thread(
+            target=self._transcribe_recording_sync,
+            args=(recording_file, self.call_uuid),
+            daemon=True
+        )
+        transcribe_thread.start()
+        logger.info(f"Transcription started in background for {self.call_uuid}")
 
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
