@@ -48,7 +48,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "end_call",
-        "description": "End call when user says bye/goodbye. Say goodbye first, then call this.",
+        "description": "End call IMMEDIATELY when user wants to disconnect. Triggers: 'bye', 'goodbye', 'hang up', 'disconnect', 'end call', 'gotta go', 'need to go', 'talk later', 'not interested', 'stop calling', 'I'm busy', 'no thanks', or ANY indication they want to end. Say brief goodbye THEN call this tool - do NOT continue conversation.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -250,10 +250,14 @@ class PlivoGeminiSession:
         """Attach Plivo WebSocket when user answers"""
         self.plivo_ws = plivo_ws
         self.call_start_time = datetime.now()
-        logger.info(f"Plivo WS attached for {self.call_uuid}")
+        preload_count = len(self.preloaded_audio)
+        logger.info(f"Plivo WS attached for {self.call_uuid} - PRELOAD: {preload_count} audio chunks ready")
         # Send any preloaded audio immediately
         if self.preloaded_audio:
+            logger.info(f"PRELOAD SUCCESS: Sending {preload_count} chunks immediately (no wait for AI)")
             asyncio.create_task(self._send_preloaded_audio())
+        else:
+            logger.warning(f"PRELOAD MISS: No preloaded audio - AI greeting will have latency")
         # Start call duration timer
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
 
@@ -386,7 +390,7 @@ class PlivoGeminiSession:
             # Handle end_call tool specially
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
-                logger.info(f"END CALL requested: {reason}")
+                logger.info(f"END CALL requested: {reason} - hanging up in 0.3s")
                 self._save_transcript("SYSTEM", f"Call ending: {reason}")
 
                 # Send success response first
@@ -405,7 +409,8 @@ class PlivoGeminiSession:
                     pass
 
                 # Hang up the call after a short delay (let goodbye audio play)
-                asyncio.create_task(self._hangup_call_delayed(1.0))
+                # Reduced from 1.0s to 0.3s - audio is already queued in Plivo buffer
+                asyncio.create_task(self._hangup_call_delayed(0.3))
                 return
 
             # Execute the tool with context for templates - graceful error handling
@@ -441,7 +446,7 @@ class PlivoGeminiSession:
                 logger.error(f"Error sending tool response: {e} - continuing conversation")
 
     async def _hangup_call_delayed(self, delay: float):
-        """Hang up the call after a delay to let goodbye audio play"""
+        """Hang up the call after a short delay (audio is queued in Plivo buffer)"""
         try:
             await asyncio.sleep(delay)
 
@@ -511,7 +516,7 @@ class PlivoGeminiSession:
 
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
-                    logger.info(f"Turn complete - greeting_audio_complete was {self.greeting_audio_complete}")
+                    logger.info(f"Turn complete - preloaded {len(self.preloaded_audio)} audio chunks, plivo_ws={'connected' if self.plivo_ws else 'None'}")
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
 
@@ -537,8 +542,9 @@ class PlivoGeminiSession:
                             self._record_audio("AI", audio_bytes, 24000)
                             logger.info(f"AI AUDIO received: {len(audio_bytes)} bytes, greeting_complete={self.greeting_audio_complete}")
 
-                            # During greeting preload, always store (don't send twice)
-                            if not self.greeting_audio_complete:
+                            # During preload (no plivo_ws yet), always store audio
+                            # This fixes race condition where turnComplete arrives before all audio
+                            if not self.plivo_ws:
                                 self.preloaded_audio.append(audio)
                                 logger.debug(f"Stored preload audio chunk #{len(self.preloaded_audio)}")
                             elif self.plivo_ws:
@@ -655,9 +661,11 @@ class PlivoGeminiSession:
                 # Step 1: Save recording
                 recording_file = self._save_recording()
 
-                # Step 2: Transcribe (takes time, but doesn't block anything)
-                if recording_file:
+                # Step 2: Transcribe with Whisper (only if enabled - RAM heavy)
+                if recording_file and config.enable_whisper:
                     self._transcribe_recording_sync(recording_file, self.call_uuid)
+                elif recording_file:
+                    logger.info(f"Whisper disabled - recording saved without transcription: {recording_file}")
 
                 # Step 3: Call webhook AFTER transcription is done
                 if self.webhook_url:

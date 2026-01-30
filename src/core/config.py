@@ -85,6 +85,7 @@ class Config(BaseModel):
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     enable_transcripts: bool = os.getenv("ENABLE_TRANSCRIPTS", "true").lower() == "true"
+    enable_whisper: bool = os.getenv("ENABLE_WHISPER", "false").lower() == "true"  # Whisper transcription (RAM heavy)
     enable_detailed_logging: bool = os.getenv("ENABLE_DETAILED_LOGGING", "true").lower() == "true"
     
     # SMTP Email settings
