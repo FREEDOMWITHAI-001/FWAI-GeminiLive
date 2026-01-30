@@ -101,13 +101,30 @@ class PlivoGeminiSession:
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
         text_lower = text.lower()
-        # Check for goodbye patterns at end of agent's message
+        # Comprehensive goodbye/farewell/ending detection
         goodbye_phrases = [
-            'bye', 'goodbye', 'good bye', 'take care', 'talk later',
-            'have a great day', 'have a nice day', 'have a good day',
-            'thanks for calling', 'thank you for calling',
-            'nice talking', 'great talking', 'good talking',
-            'catch you later', 'see you', 'talk soon'
+            # Direct goodbyes
+            'bye', 'goodbye', 'good bye', 'bye bye', 'buh bye',
+            # Take care variants
+            'take care', 'take it easy', 'be well', 'stay safe',
+            # Talk later variants
+            'talk later', 'talk soon', 'talk to you', 'speak soon', 'speak later',
+            'catch you later', 'catch up later', 'chat later', 'chat soon',
+            # Day wishes
+            'have a great', 'have a nice', 'have a good', 'have a wonderful',
+            'enjoy your', 'all the best', 'best of luck', 'good luck',
+            # Thanks for calling
+            'thanks for calling', 'thank you for calling', 'thanks for your time',
+            'thank you for your time', 'appreciate your time', 'appreciate you calling',
+            # Nice talking
+            'nice talking', 'great talking', 'good talking', 'lovely talking',
+            'nice chatting', 'great chatting', 'pleasure talking', 'pleasure speaking',
+            'enjoyed talking', 'enjoyed our', 'was great speaking',
+            # See you
+            'see you', 'see ya', 'cya', 'until next time', 'till next time',
+            # Ending indicators
+            'signing off', 'thats all', "that's all", 'nothing else',
+            'we are done', "we're done", 'call ended', 'ending the call'
         ]
         for phrase in goodbye_phrases:
             if phrase in text_lower:
