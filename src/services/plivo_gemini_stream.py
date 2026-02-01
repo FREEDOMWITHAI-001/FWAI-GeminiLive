@@ -34,6 +34,23 @@ def load_default_prompt():
 
 DEFAULT_PROMPT = load_default_prompt()
 
+
+def detect_voice_from_prompt(prompt: str) -> str:
+    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for default."""
+    if not prompt:
+        return "Puck"
+    prompt_lower = prompt.lower()
+    # Check for female indicators in the prompt
+    female_indicators = [
+        "female", "woman", "girl", "she ", "her ", "lady",
+        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya"  # Common Indian female names
+    ]
+    for indicator in female_indicators:
+        if indicator in prompt_lower:
+            logger.info(f"Detected female voice indicator '{indicator}' in prompt - using Kore voice")
+            return "Kore"
+    return "Puck"
+
 # Tool definitions for Gemini Live (minimal for lower latency)
 # NOTE: WhatsApp messaging disabled during calls to reduce latency/interruptions
 TOOL_DECLARATIONS = [
@@ -434,6 +451,9 @@ class PlivoGeminiSession:
         # Combine: accent first, then main prompt
         full_prompt = accent_instruction + self.prompt
 
+        # Detect voice based on prompt content (female -> Kore, default -> Puck)
+        voice_name = detect_voice_from_prompt(self.prompt)
+
         msg = {
             "setup": {
                 "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
@@ -442,7 +462,7 @@ class PlivoGeminiSession:
                     "speech_config": {
                         "voice_config": {
                             "prebuilt_voice_config": {
-                                "voice_name": "Puck"
+                                "voice_name": voice_name
                             }
                         }
                     }
@@ -452,7 +472,7 @@ class PlivoGeminiSession:
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.info("Sent session setup with natural speech prompt")
+        logger.info(f"Sent session setup with voice: {voice_name}")
 
     async def _send_initial_greeting(self):
         """Send initial trigger to make AI greet immediately"""

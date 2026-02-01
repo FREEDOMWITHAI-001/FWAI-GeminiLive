@@ -76,13 +76,30 @@ except ImportError:
 # Load conversation script
 CONVERSATION_SCRIPT_PATH = "FAWI_Call_BOT.txt"
 
+def detect_voice_from_prompt(prompt: str) -> str:
+    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for default."""
+    if not prompt:
+        return "Puck"
+    prompt_lower = prompt.lower()
+    # Check for female indicators in the prompt
+    female_indicators = [
+        "female", "woman", "girl", "she ", "her ", "lady",
+        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya"  # Common Indian female names
+    ]
+    for indicator in female_indicators:
+        if indicator in prompt_lower:
+            log(f"✅ Detected female voice indicator '{indicator}' in prompt - using Kore voice")
+            return "Kore"
+    return "Puck"
+
+
 def load_conversation_script():
     """Load FAWI_Call_BOT.txt and convert to system prompt"""
     try:
         if os.path.exists(CONVERSATION_SCRIPT_PATH):
             with open(CONVERSATION_SCRIPT_PATH, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             system_prompt = f"""You are Mousumi, a Senior Counselor at Freedom with AI. You help people guide their career path using AI skills and how they can make more money out of it.
 
 CONVERSATION SCRIPT:
@@ -97,7 +114,7 @@ INSTRUCTIONS:
 - Present the three pillars when appropriate
 - Handle objections professionally
 - Keep responses conversational and natural"""
-            
+
             log(f"✅ Loaded conversation script from {CONVERSATION_SCRIPT_PATH}")
             return system_prompt
         else:
@@ -187,16 +204,19 @@ async def create_gemini_live_pipeline(websocket, call_id, caller_name):
     
     # Create WebSocket transport
     transport = WebSocketTransport(websocket, call_id)
-    
-    # Create Gemini Live service
+
+    # Load conversation script to detect voice
+    system_prompt = load_conversation_script()
+    voice_id = detect_voice_from_prompt(system_prompt)
+
+    # Create Gemini Live service with detected voice
     llm = GeminiLiveLLMService(
         api_key=google_api_key,
-        voice_id="Kore"
+        voice_id=voice_id
     )
-    log(f"✅ Gemini Live initialized (Voice: Kore)")
-    
-    # Load conversation script as system prompt
-    system_prompt = load_conversation_script()
+    log(f"✅ Gemini Live initialized (Voice: {voice_id})")
+
+    # Use the already loaded system_prompt for messages
     messages = [{"role": "system", "content": system_prompt}]
     context = LLMContext(messages=messages)
     context_aggregator = LLMContextAggregatorPair(context)
