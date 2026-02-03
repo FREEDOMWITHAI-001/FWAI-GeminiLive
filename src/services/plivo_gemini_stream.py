@@ -493,6 +493,9 @@ class PlivoGeminiSession:
                                 "voice_name": voice_name
                             }
                         }
+                    },
+                    "thinking_config": {
+                        "thinking_budget": 512  # Low budget for faster responses
                     }
                 },
                 # Note: Transcription via Whisper offline (native audio model doesn't support real-time transcription)
