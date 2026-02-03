@@ -458,7 +458,7 @@ class PlivoGeminiSession:
             "setup": {
                 "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
                 "generation_config": {
-                    "response_modalities": ["AUDIO"],
+                    "response_modalities": ["AUDIO", "TEXT"],  # Enable text for transcription
                     "speech_config": {
                         "voice_config": {
                             "prebuilt_voice_config": {
@@ -470,6 +470,8 @@ class PlivoGeminiSession:
                         "thinking_budget": 2048  # Allow some thinking for better responses
                     }
                 },
+                "input_audio_transcription": {},  # Enable user speech transcription
+                "output_audio_transcription": {},  # Enable AI speech transcription
                 "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
