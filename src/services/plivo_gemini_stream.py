@@ -588,7 +588,7 @@ class PlivoGeminiSession:
 
         msg = {
             "setup": {
-                "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
+                "model": "models/gemini-live-2.5-flash-native-audio",
                 "generation_config": {
                     "response_modalities": ["AUDIO"],  # Native audio model - audio only
                     "speech_config": {
