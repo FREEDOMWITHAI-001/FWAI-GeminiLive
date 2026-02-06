@@ -122,6 +122,12 @@ class PlivoGeminiSession:
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
 
+        # Speech detection logging
+        self._user_speaking = False  # Track if user is currently speaking
+        self._agent_speaking = False  # Track if agent is currently speaking
+        self._last_user_audio_time = None  # Last time user audio received
+        self._user_speech_start_time = None  # When user started speaking
+
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
         self._max_reconnect_buffer = 150  # Increased buffer (~3 seconds) for better reconnection
@@ -857,9 +863,12 @@ class PlivoGeminiSession:
                             audio_bytes = base64.b64decode(audio)
                             # Track audio chunks for empty turn detection
                             self._current_turn_audio_chunks += 1
-                            # Track turn start time (first audio chunk of this turn)
+                            # Track turn start time and log when agent starts speaking
                             if self._current_turn_audio_chunks == 1:
                                 self._turn_start_time = time.time()
+                                self._agent_speaking = True
+                                self._user_speaking = False
+                                logger.info(f">>> AGENT speaking (turn #{self._turn_count + 1})")
                             # Record AI audio (24kHz)
                             self._record_audio("AI", audio_bytes, 24000)
 
@@ -882,7 +891,9 @@ class PlivoGeminiSession:
                                         "event": "playAudio",
                                         "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
                                     }))
-                                    # Removed per-chunk logging to reduce I/O overhead
+                                    # Log first chunk sent to Plivo for this turn
+                                    if self._current_turn_audio_chunks == 1:
+                                        logger.info(f"    -> PLIVO: sending agent audio")
                                 except Exception as plivo_err:
                                     logger.error(f"Error sending audio to Plivo: {plivo_err} - continuing")
                         if p.get("text"):
@@ -927,6 +938,18 @@ class PlivoGeminiSession:
                         logger.warning("Google WS disconnected - buffering audio for reconnection")
                 return
             chunk = base64.b64decode(audio_b64)
+
+            # Detect when user starts speaking (after agent finished)
+            now = time.time()
+            if self._last_user_audio_time is None or (now - self._last_user_audio_time) > 1.0:
+                # Gap > 1 second means new user speech segment
+                if self._agent_speaking or not self._user_speaking:
+                    self._user_speaking = True
+                    self._agent_speaking = False
+                    self._user_speech_start_time = now
+                    logger.info(f"<<< USER speaking")
+            self._last_user_audio_time = now
+
             # Record user audio (16kHz)
             self._record_audio("USER", chunk, 16000)
             self.inbuffer.extend(chunk)
@@ -937,6 +960,9 @@ class PlivoGeminiSession:
                 try:
                     await self.goog_live_ws.send(json.dumps(msg))
                     chunks_sent += 1
+                    # Log first chunk sent to Gemini for this user speech
+                    if chunks_sent == 1 and self._user_speaking:
+                        logger.info(f"    -> GEMINI: sending user audio")
                 except Exception as send_err:
                     logger.error(f"Error sending audio to Google: {send_err} - continuing")
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
