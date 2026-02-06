@@ -253,140 +253,124 @@ class PlivoGeminiSession:
         return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
 
     def _save_recording(self):
-        """Save separate user/agent WAV files with proper timing (silence for gaps)"""
+        """Save single mixed WAV file with both user and agent audio in correct timeline"""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
             return None
         try:
-            import subprocess
-
-            # Get call start time (earliest timestamp)
-            call_start = min(chunk[3] for chunk in self.audio_chunks)
-
-            # Build audio with proper timing (insert silence for gaps)
-            user_audio = bytearray()
-            agent_audio = bytearray()
-            user_last_end = call_start
-            agent_last_end = call_start
             SAMPLE_RATE = 16000
             BYTES_PER_SAMPLE = 2  # 16-bit audio
 
-            for chunk in self.audio_chunks:
+            # Sort chunks by timestamp to get correct order
+            sorted_chunks = sorted(self.audio_chunks, key=lambda x: x[3])
+            call_start = sorted_chunks[0][3]
+
+            # Build single mixed audio timeline
+            mixed_audio = bytearray()
+            current_time = call_start
+            chunk_info = []  # Store (start_time, end_time, role) for labeling
+
+            for chunk in sorted_chunks:
                 role, audio_bytes, sample_rate, timestamp = chunk
                 if sample_rate == 24000:
                     audio_bytes = self._resample_24k_to_16k(audio_bytes)
 
-                # Calculate audio duration in seconds
+                # Calculate audio duration
                 audio_duration = len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
 
-                if role == "USER":
-                    # Insert silence for gap since last user audio
-                    gap = timestamp - user_last_end
-                    if gap > 0.05:  # Only add silence for gaps > 50ms
-                        silence_samples = int(gap * SAMPLE_RATE)
-                        user_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
-                    user_audio.extend(audio_bytes)
-                    user_last_end = timestamp + audio_duration
-                else:  # AI/AGENT
-                    # Insert silence for gap since last agent audio
-                    gap = timestamp - agent_last_end
-                    if gap > 0.05:
-                        silence_samples = int(gap * SAMPLE_RATE)
-                        agent_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
-                    agent_audio.extend(audio_bytes)
-                    agent_last_end = timestamp + audio_duration
+                # Insert silence if there's a gap
+                gap = timestamp - current_time
+                if gap > 0.02:  # Gap > 20ms
+                    silence_samples = int(gap * SAMPLE_RATE)
+                    mixed_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
+                    current_time = timestamp
 
-            # Start times are now call_start for both (silence padding handles alignment)
-            user_start_time = call_start
-            agent_start_time = call_start
+                # Record chunk timing for speaker labeling
+                chunk_start = current_time - call_start
+                chunk_info.append((chunk_start, chunk_start + audio_duration, role))
 
-            # Save user audio
-            user_wav = RECORDINGS_DIR / f"{self.call_uuid}_user.wav"
-            if user_audio:
-                with wave.open(str(user_wav), 'wb') as wav:
-                    wav.setnchannels(1)
-                    wav.setsampwidth(2)
-                    wav.setframerate(16000)
-                    wav.writeframes(bytes(user_audio))
+                # Add audio
+                mixed_audio.extend(audio_bytes)
+                current_time = timestamp + audio_duration
 
-            # Save agent audio
-            agent_wav = RECORDINGS_DIR / f"{self.call_uuid}_agent.wav"
-            if agent_audio:
-                with wave.open(str(agent_wav), 'wb') as wav:
-                    wav.setnchannels(1)
-                    wav.setsampwidth(2)
-                    wav.setframerate(16000)
-                    wav.writeframes(bytes(agent_audio))
+            # Save mixed audio
+            mixed_wav = RECORDINGS_DIR / f"{self.call_uuid}_mixed.wav"
+            with wave.open(str(mixed_wav), 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(bytes(mixed_audio))
 
-            logger.info(f"Recordings saved: user={len(user_audio)}bytes, agent={len(agent_audio)}bytes")
+            logger.info(f"Mixed recording saved: {len(mixed_audio)} bytes, {len(chunk_info)} chunks")
 
-            # Return paths and start times for transcription
+            # Return path and chunk timing info for transcription
             return {
-                "user_wav": user_wav if user_audio else None,
-                "agent_wav": agent_wav if agent_audio else None,
-                "user_start": user_start_time,
-                "agent_start": agent_start_time
+                "mixed_wav": mixed_wav,
+                "chunk_info": chunk_info,  # List of (start, end, role) for speaker labeling
+                "call_start": call_start
             }
         except Exception as e:
             logger.error(f"Error saving recording: {e}")
             return None
 
     def _transcribe_recording_sync(self, recording_info: dict, call_uuid: str):
-        """Transcribe user/agent recordings separately and merge by timestamp"""
+        """Transcribe mixed recording and label speakers using chunk timing info"""
         try:
             import whisper
             logger.info(f"Starting Whisper transcription for {call_uuid}")
             model = whisper.load_model("medium")  # Better accuracy, needs 5GB RAM
 
-            segments = []  # List of (absolute_time, role, text)
+            mixed_wav = recording_info.get("mixed_wav")
+            chunk_info = recording_info.get("chunk_info", [])  # List of (start, end, role)
 
-            # Transcribe user audio
-            if recording_info.get("user_wav") and recording_info["user_wav"].exists():
-                user_start = recording_info.get("user_start", 0) or 0
-                result = model.transcribe(str(recording_info["user_wav"]))
-                for seg in result.get("segments", []):
-                    abs_time = user_start + seg["start"]
-                    text = seg["text"].strip()
-                    if text:
-                        segments.append((abs_time, "User", text))
+            if not mixed_wav or not mixed_wav.exists():
+                logger.warning(f"No mixed recording found for {call_uuid}")
+                return None
 
-            # Transcribe agent audio
-            if recording_info.get("agent_wav") and recording_info["agent_wav"].exists():
-                agent_start = recording_info.get("agent_start", 0) or 0
-                result = model.transcribe(str(recording_info["agent_wav"]))
-                for seg in result.get("segments", []):
-                    abs_time = agent_start + seg["start"]
-                    text = seg["text"].strip()
-                    if text:
-                        segments.append((abs_time, "Agent", text))
+            # Transcribe mixed audio
+            result = model.transcribe(str(mixed_wav))
+            segments = result.get("segments", [])
 
-            # Sort by timestamp - don't merge, keep each segment separate for accuracy
-            segments.sort(key=lambda x: x[0])
+            # Function to find speaker at a given time
+            def get_speaker_at_time(time_sec):
+                for start, end, role in chunk_info:
+                    if start <= time_sec <= end + 0.5:  # Small tolerance
+                        return "Agent" if role in ("AI", "AGENT") else "User"
+                # Default based on nearest chunk
+                if chunk_info:
+                    nearest = min(chunk_info, key=lambda x: abs(x[0] - time_sec))
+                    return "Agent" if nearest[2] in ("AI", "AGENT") else "User"
+                return "Unknown"
 
-            # Only merge if segments are very close together (< 0.5 seconds apart) and same speaker
-            merged = []
+            # Label each segment with speaker
+            labeled_segments = []
             for seg in segments:
+                text = seg["text"].strip()
+                if text:
+                    start_time = seg["start"]
+                    speaker = get_speaker_at_time(start_time)
+                    labeled_segments.append((start_time, speaker, text))
+
+            # Merge consecutive same-speaker segments
+            merged = []
+            for seg in labeled_segments:
                 if merged and merged[-1][1] == seg[1]:
-                    # Same speaker - only merge if within 0.5 seconds
+                    # Same speaker - merge if within 2 seconds
                     time_gap = seg[0] - merged[-1][0]
-                    if time_gap < 0.5:
+                    if time_gap < 2.0:
                         merged[-1] = (merged[-1][0], merged[-1][1], merged[-1][2] + " " + seg[2])
                     else:
-                        # Too much gap - keep separate
                         merged.append(seg)
                 else:
                     merged.append(seg)
 
-            # Write clean transcript with timestamps
+            # Write transcript with timestamps
             transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{call_uuid}_final.txt"
             with open(transcript_file, "w") as f:
-                # Get call start time for relative timestamps
-                call_start = min(s[0] for s in merged) if merged else 0
-                for abs_time, role, text in merged:
-                    rel_time = abs_time - call_start
-                    mins = int(rel_time // 60)
-                    secs = int(rel_time % 60)
+                for start_time, role, text in merged:
+                    mins = int(start_time // 60)
+                    secs = int(start_time % 60)
                     f.write(f"[{mins:02d}:{secs:02d}] {role}: {text}\n\n")
 
             logger.info(f"Transcription complete for {call_uuid}: {len(merged)} turns")
