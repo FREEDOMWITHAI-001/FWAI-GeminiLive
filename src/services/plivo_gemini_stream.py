@@ -36,19 +36,33 @@ DEFAULT_PROMPT = load_default_prompt()
 
 
 def detect_voice_from_prompt(prompt: str) -> str:
-    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for default."""
+    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for male (default)."""
     if not prompt:
         return "Puck"
     prompt_lower = prompt.lower()
-    # Check for female indicators in the prompt
+
+    # FIRST: Check for male names - if found, use male voice (Puck)
+    male_names = [
+        "rahul", "vishnu", "avinash", "arjun", "raj", "amit", "vijay", "suresh",
+        "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar"
+    ]
+    for name in male_names:
+        if name in prompt_lower:
+            logger.info(f"Detected male name '{name}' in prompt - using Puck voice")
+            return "Puck"
+
+    # THEN: Check for female indicators
     female_indicators = [
-        "female", "woman", "girl", "she ", "her ", "lady",
-        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya"  # Common Indian female names
+        "female", "woman", "girl", "lady",
+        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya",
+        "sunita", "anita", "kavita", "rekha", "meena", "sita", "geeta"
     ]
     for indicator in female_indicators:
         if indicator in prompt_lower:
             logger.info(f"Detected female voice indicator '{indicator}' in prompt - using Kore voice")
             return "Kore"
+
+    # Default to male voice
     return "Puck"
 
 # Tool definitions for Gemini Live (minimal for lower latency)
