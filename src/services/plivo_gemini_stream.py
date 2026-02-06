@@ -170,12 +170,27 @@ class PlivoGeminiSession:
         return False
 
     def _check_mutual_goodbye(self):
-        """End call only when both user and agent have said goodbye"""
-        if self.user_said_goodbye and self.agent_said_goodbye and not self._closing_call:
-            logger.info(f"MUTUAL GOODBYE detected - ending call (user={self.user_said_goodbye}, agent={self.agent_said_goodbye})")
-            self._closing_call = True
-            # Give 2 seconds for final audio to play before hanging up
-            asyncio.create_task(self._hangup_call_delayed(2.0))
+        """End call when agent says goodbye (don't wait too long for user)"""
+        if self.agent_said_goodbye and not self._closing_call:
+            if self.user_said_goodbye:
+                logger.info(f"MUTUAL GOODBYE - ending call immediately")
+                self._closing_call = True
+                asyncio.create_task(self._hangup_call_delayed(0.5))  # Quick end
+            else:
+                # Agent said goodbye but user hasn't - start short timeout
+                logger.info(f"AGENT GOODBYE - waiting 3s for user response")
+                asyncio.create_task(self._quick_goodbye_timeout(3.0))
+
+    async def _quick_goodbye_timeout(self, timeout: float):
+        """Quick timeout after agent says goodbye - don't wait too long"""
+        try:
+            await asyncio.sleep(timeout)
+            if not self._closing_call and self.agent_said_goodbye:
+                logger.info(f"Quick goodbye timeout - ending call")
+                self._closing_call = True
+                await self._hangup_call_delayed(0.5)
+        except asyncio.CancelledError:
+            pass
 
     def _save_transcript(self, role, text):
         if not config.enable_transcripts:
