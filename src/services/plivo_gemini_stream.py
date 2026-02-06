@@ -236,7 +236,7 @@ class PlivoGeminiSession:
         return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
 
     def _save_recording(self):
-        """Save separate user/agent WAV files for speaker-separated transcription"""
+        """Save separate user/agent WAV files with proper timing (silence for gaps)"""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
@@ -244,25 +244,45 @@ class PlivoGeminiSession:
         try:
             import subprocess
 
-            # Separate audio by speaker
+            # Get call start time (earliest timestamp)
+            call_start = min(chunk[3] for chunk in self.audio_chunks)
+
+            # Build audio with proper timing (insert silence for gaps)
             user_audio = bytearray()
             agent_audio = bytearray()
-            user_start_time = None
-            agent_start_time = None
+            user_last_end = call_start
+            agent_last_end = call_start
+            SAMPLE_RATE = 16000
+            BYTES_PER_SAMPLE = 2  # 16-bit audio
 
             for chunk in self.audio_chunks:
                 role, audio_bytes, sample_rate, timestamp = chunk
                 if sample_rate == 24000:
                     audio_bytes = self._resample_24k_to_16k(audio_bytes)
 
+                # Calculate audio duration in seconds
+                audio_duration = len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
                 if role == "USER":
-                    if user_start_time is None:
-                        user_start_time = timestamp
+                    # Insert silence for gap since last user audio
+                    gap = timestamp - user_last_end
+                    if gap > 0.05:  # Only add silence for gaps > 50ms
+                        silence_samples = int(gap * SAMPLE_RATE)
+                        user_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
                     user_audio.extend(audio_bytes)
+                    user_last_end = timestamp + audio_duration
                 else:  # AI/AGENT
-                    if agent_start_time is None:
-                        agent_start_time = timestamp
+                    # Insert silence for gap since last agent audio
+                    gap = timestamp - agent_last_end
+                    if gap > 0.05:
+                        silence_samples = int(gap * SAMPLE_RATE)
+                        agent_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
                     agent_audio.extend(audio_bytes)
+                    agent_last_end = timestamp + audio_duration
+
+            # Start times are now call_start for both (silence padding handles alignment)
+            user_start_time = call_start
+            agent_start_time = call_start
 
             # Save user audio
             user_wav = RECORDINGS_DIR / f"{self.call_uuid}_user.wav"
