@@ -117,6 +117,8 @@ class PlivoGeminiSession:
         self._silence_monitor_task = None
         self._silence_sla_seconds = 3.0  # Must respond within 3 seconds
         self._last_ai_audio_time = None  # Track when AI last sent audio
+        self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
+        self._empty_turn_nudge_count = 0  # Track consecutive empty turns
 
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
@@ -768,9 +770,21 @@ class PlivoGeminiSession:
 
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
-                    logger.debug(f"Turn complete - preloaded {len(self.preloaded_audio)} audio chunks")
+                    logger.debug(f"Turn complete - preloaded {len(self.preloaded_audio)} audio chunks, turn audio: {self._current_turn_audio_chunks}")
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
+
+                    # Detect empty turn (AI didn't generate audio) - nudge to respond
+                    if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
+                        self._empty_turn_nudge_count += 1
+                        if self._empty_turn_nudge_count <= 3:  # Max 3 nudges to prevent loop
+                            logger.warning(f"EMPTY TURN detected (no audio generated) - nudging AI (attempt {self._empty_turn_nudge_count})")
+                            asyncio.create_task(self._send_silence_nudge())
+                    else:
+                        self._empty_turn_nudge_count = 0  # Reset on successful audio
+
+                    # Reset turn audio counter
+                    self._current_turn_audio_chunks = 0
 
                 if sc.get("interrupted"):
                     logger.info("AI was interrupted by user")
@@ -799,6 +813,8 @@ class PlivoGeminiSession:
                         if p.get("inlineData", {}).get("data"):
                             audio = p["inlineData"]["data"]
                             audio_bytes = base64.b64decode(audio)
+                            # Track audio chunks for empty turn detection
+                            self._current_turn_audio_chunks += 1
                             # Record AI audio (24kHz)
                             self._record_audio("AI", audio_bytes, 24000)
 
