@@ -338,43 +338,73 @@ class PlivoGeminiSession:
             result = model.transcribe(str(mixed_wav))
             segments = result.get("segments", [])
 
-            # Function to find speaker at a given time
-            def get_speaker_at_time(time_sec):
-                for start, end, role in chunk_info:
-                    if start <= time_sec <= end + 0.5:  # Small tolerance
-                        return "Agent" if role in ("AI", "AGENT") else "User"
-                # Default based on nearest chunk
+            # Improved speaker detection using overlap scoring
+            def get_speaker_for_segment(seg_start, seg_end):
+                """Find speaker by calculating audio overlap with each role"""
+                user_overlap = 0.0
+                agent_overlap = 0.0
+
+                for chunk_start, chunk_end, role in chunk_info:
+                    # Calculate overlap between segment and chunk
+                    overlap_start = max(seg_start, chunk_start)
+                    overlap_end = min(seg_end, chunk_end)
+                    overlap = max(0, overlap_end - overlap_start)
+
+                    if role in ("AI", "AGENT"):
+                        agent_overlap += overlap
+                    else:
+                        user_overlap += overlap
+
+                # Return speaker with more overlap
+                if agent_overlap > user_overlap:
+                    return "Agent"
+                elif user_overlap > agent_overlap:
+                    return "User"
+
+                # Fallback: find nearest chunk center
+                seg_mid = (seg_start + seg_end) / 2
                 if chunk_info:
-                    nearest = min(chunk_info, key=lambda x: abs(x[0] - time_sec))
+                    nearest = min(chunk_info, key=lambda x: abs((x[0] + x[1])/2 - seg_mid))
                     return "Agent" if nearest[2] in ("AI", "AGENT") else "User"
                 return "Unknown"
 
-            # Label each segment with speaker
+            # Label each segment with speaker using segment duration
             labeled_segments = []
             for seg in segments:
                 text = seg["text"].strip()
                 if text:
                     start_time = seg["start"]
-                    speaker = get_speaker_at_time(start_time)
-                    labeled_segments.append((start_time, speaker, text))
+                    end_time = seg["end"]
+                    speaker = get_speaker_for_segment(start_time, end_time)
+                    labeled_segments.append((start_time, end_time, speaker, text))
 
-            # Merge consecutive same-speaker segments
+            # Merge consecutive same-speaker segments and deduplicate
             merged = []
+            seen_texts = set()  # Track seen text to avoid duplicates
+
             for seg in labeled_segments:
-                if merged and merged[-1][1] == seg[1]:
-                    # Same speaker - merge if within 2 seconds
-                    time_gap = seg[0] - merged[-1][0]
-                    if time_gap < 2.0:
-                        merged[-1] = (merged[-1][0], merged[-1][1], merged[-1][2] + " " + seg[2])
-                    else:
-                        merged.append(seg)
-                else:
-                    merged.append(seg)
+                start_time, end_time, speaker, text = seg
+
+                # Skip duplicate text (exact or near-duplicate)
+                text_normalized = text.lower().strip()
+                if text_normalized in seen_texts:
+                    continue
+                seen_texts.add(text_normalized)
+
+                if merged and merged[-1][2] == speaker:
+                    # Same speaker - merge if within 3 seconds
+                    time_gap = start_time - merged[-1][1]
+                    if time_gap < 3.0:
+                        # Merge text, update end time
+                        merged[-1] = (merged[-1][0], end_time, speaker, merged[-1][3] + " " + text)
+                        continue
+
+                merged.append((start_time, end_time, speaker, text))
 
             # Write transcript with timestamps
             transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{call_uuid}_final.txt"
             with open(transcript_file, "w") as f:
-                for start_time, role, text in merged:
+                for start_time, end_time, role, text in merged:
                     mins = int(start_time // 60)
                     secs = int(start_time % 60)
                     f.write(f"[{mins:02d}:{secs:02d}] {role}: {text}\n\n")
