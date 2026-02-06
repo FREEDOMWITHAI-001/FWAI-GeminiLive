@@ -115,7 +115,12 @@ class PlivoGeminiSession:
 
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
-        self._max_reconnect_buffer = 50  # Max chunks to buffer (~1 second)
+        self._max_reconnect_buffer = 150  # Increased buffer (~3 seconds) for better reconnection
+
+        # Google session refresh timer (10-min limit, refresh at 9 min)
+        self._google_session_start = None
+        self._session_refresh_task = None
+        self.GOOGLE_SESSION_LIMIT = 9 * 60  # Refresh at 9 minutes (before 10-min disconnect)
 
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
@@ -433,11 +438,11 @@ class PlivoGeminiSession:
     async def _run_google_live_session(self):
         url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
         reconnect_attempts = 0
-        max_reconnects = 3
+        max_reconnects = 5  # Increased for better stability
 
         while self.is_active and reconnect_attempts < max_reconnects:
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                async with websockets.connect(url, ping_interval=30, ping_timeout=20, close_timeout=5) as ws:
                     self.goog_live_ws = ws
                     reconnect_attempts = 0  # Reset on successful connect
                     logger.info("Connected to Google Live API")
@@ -457,14 +462,14 @@ class PlivoGeminiSession:
                 if self.is_active and not self._closing_call:
                     reconnect_attempts += 1
                     logger.info(f"Attempting reconnect {reconnect_attempts}/{max_reconnects}...")
-                    await asyncio.sleep(0.5)  # Brief pause before reconnect
+                    await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
                     continue
             except Exception as e:
                 logger.error(f"Google Live error: {e}")
                 if self.is_active and not self._closing_call:
                     reconnect_attempts += 1
                     logger.info(f"Attempting reconnect {reconnect_attempts}/{max_reconnects} after error...")
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
                     continue
             break  # Normal exit
 
@@ -484,7 +489,7 @@ class PlivoGeminiSession:
 
         msg = {
             "setup": {
-                "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
+                "model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
                 "generation_config": {
                     "response_modalities": ["AUDIO"],  # Native audio model - audio only
                     "speech_config": {
@@ -663,9 +668,19 @@ class PlivoGeminiSession:
                 logger.info("Google Live setup complete - AI Ready")
                 self.start_streaming = True
                 self.setup_complete = True
+                self._google_session_start = time.time()  # Track session start for 10-min limit
                 self._save_transcript("SYSTEM", "AI ready")
                 # Trigger immediate greeting during preload
                 await self._send_initial_greeting()
+
+            # Handle GoAway message - 9-minute warning before 10-minute session limit
+            if "goAway" in resp:
+                logger.warning("Received GoAway from Google - session will end soon (10-min limit). Triggering proactive reconnect...")
+                self._save_transcript("SYSTEM", "Session refresh triggered (10-min limit)")
+                # Don't wait for disconnect - proactively close and reconnect
+                if self.goog_live_ws:
+                    await self.goog_live_ws.close()
+                return
 
             # Handle tool calls
             if "toolCall" in resp:
