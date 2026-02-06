@@ -273,7 +273,7 @@ class PlivoGeminiSession:
         return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
 
     def _save_recording(self):
-        """Save single mixed WAV file with both user and agent audio in correct timeline"""
+        """Save mixed WAV file for Gemini transcription with native diarization"""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
@@ -282,39 +282,30 @@ class PlivoGeminiSession:
             SAMPLE_RATE = 16000
             BYTES_PER_SAMPLE = 2  # 16-bit audio
 
-            # Sort chunks by timestamp to get correct order
+            # Sort chunks by timestamp
             sorted_chunks = sorted(self.audio_chunks, key=lambda x: x[3])
             call_start = sorted_chunks[0][3]
 
-            # Build single mixed audio timeline
+            # Build mixed audio with proper timeline
             mixed_audio = bytearray()
             current_time = call_start
-            chunk_info = []  # Store (start_time, end_time, role) for labeling
 
             for chunk in sorted_chunks:
                 role, audio_bytes, sample_rate, timestamp = chunk
                 if sample_rate == 24000:
                     audio_bytes = self._resample_24k_to_16k(audio_bytes)
 
-                # Calculate audio duration
-                audio_duration = len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-
-                # Insert silence if there's a gap
+                # Insert silence for gaps
                 gap = timestamp - current_time
                 if gap > 0.02:  # Gap > 20ms
                     silence_samples = int(gap * SAMPLE_RATE)
                     mixed_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
                     current_time = timestamp
 
-                # Record chunk timing for speaker labeling
-                chunk_start = current_time - call_start
-                chunk_info.append((chunk_start, chunk_start + audio_duration, role))
-
-                # Add audio
                 mixed_audio.extend(audio_bytes)
-                current_time = timestamp + audio_duration
+                current_time = timestamp + len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
 
-            # Save mixed audio
+            # Save mixed WAV
             mixed_wav = RECORDINGS_DIR / f"{self.call_uuid}_mixed.wav"
             with wave.open(str(mixed_wav), 'wb') as wav:
                 wav.setnchannels(1)
@@ -322,12 +313,10 @@ class PlivoGeminiSession:
                 wav.setframerate(16000)
                 wav.writeframes(bytes(mixed_audio))
 
-            logger.info(f"Mixed recording saved: {len(mixed_audio)} bytes, {len(chunk_info)} chunks")
+            logger.info(f"Mixed recording saved: {len(mixed_audio)} bytes, {len(sorted_chunks)} chunks")
 
-            # Return path and chunk timing info for transcription
             return {
                 "mixed_wav": mixed_wav,
-                "chunk_info": chunk_info,  # List of (start, end, role) for speaker labeling
                 "call_start": call_start
             }
         except Exception as e:
@@ -335,103 +324,71 @@ class PlivoGeminiSession:
             return None
 
     def _transcribe_recording_sync(self, recording_info: dict, call_uuid: str):
-        """Transcribe mixed recording and label speakers using chunk timing info"""
+        """Transcribe using Gemini 2.0 Flash with native speaker diarization"""
         try:
-            import whisper
-            logger.info(f"Starting Whisper transcription for {call_uuid}")
-            model = whisper.load_model("medium")  # Better accuracy, needs 5GB RAM
+            from google import genai
+            import time as time_module
 
             mixed_wav = recording_info.get("mixed_wav")
-            chunk_info = recording_info.get("chunk_info", [])  # List of (start, end, role)
 
             if not mixed_wav or not mixed_wav.exists():
                 logger.warning(f"No mixed recording found for {call_uuid}")
                 return None
 
-            # Transcribe mixed audio
-            result = model.transcribe(str(mixed_wav))
-            segments = result.get("segments", [])
+            logger.info(f"Starting Gemini transcription for {call_uuid}")
 
-            # Improved speaker detection using overlap scoring
-            def get_speaker_for_segment(seg_start, seg_end):
-                """Find speaker by calculating audio overlap with each role"""
-                user_overlap = 0.0
-                agent_overlap = 0.0
+            # Initialize Gemini client
+            client = genai.Client(api_key=config.google_api_key)
 
-                for chunk_start, chunk_end, role in chunk_info:
-                    # Calculate overlap between segment and chunk
-                    overlap_start = max(seg_start, chunk_start)
-                    overlap_end = min(seg_end, chunk_end)
-                    overlap = max(0, overlap_end - overlap_start)
+            # Upload the audio file
+            logger.info(f"Uploading audio file for transcription...")
+            audio_file = client.files.upload(file=str(mixed_wav))
 
-                    if role in ("AI", "AGENT"):
-                        agent_overlap += overlap
-                    else:
-                        user_overlap += overlap
+            # Wait for processing
+            while audio_file.state == "PROCESSING":
+                time_module.sleep(2)
+                audio_file = client.files.get(name=audio_file.name)
 
-                # Return speaker with more overlap
-                if agent_overlap > user_overlap:
-                    return "Agent"
-                elif user_overlap > agent_overlap:
-                    return "User"
+            if audio_file.state == "FAILED":
+                logger.error(f"Gemini audio processing failed for {call_uuid}")
+                return None
 
-                # Fallback: find nearest chunk center
-                seg_mid = (seg_start + seg_end) / 2
-                if chunk_info:
-                    nearest = min(chunk_info, key=lambda x: abs((x[0] + x[1])/2 - seg_mid))
-                    return "Agent" if nearest[2] in ("AI", "AGENT") else "User"
-                return "Unknown"
+            # Generate transcript with speaker diarization
+            prompt = """Transcribe this phone call audio accurately.
 
-            # Label each segment with speaker using segment duration
-            labeled_segments = []
-            for seg in segments:
-                text = seg["text"].strip()
-                if text:
-                    start_time = seg["start"]
-                    end_time = seg["end"]
-                    speaker = get_speaker_for_segment(start_time, end_time)
-                    labeled_segments.append((start_time, end_time, speaker, text))
+Rules:
+- The FIRST speaker is always the "Agent" (AI sales counselor calling)
+- The SECOND speaker is always the "User" (customer receiving the call)
+- Format each line as: [MM:SS] Speaker: text
+- Use timestamps from the audio
+- Keep the transcript natural and accurate
+- Do NOT add any commentary, just the transcript"""
 
-            # Merge consecutive same-speaker segments and deduplicate
-            merged = []
-            seen_texts = set()  # Track seen text to avoid duplicates
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[audio_file, prompt]
+            )
 
-            for seg in labeled_segments:
-                start_time, end_time, speaker, text = seg
-
-                # Skip duplicate text (exact or near-duplicate)
-                text_normalized = text.lower().strip()
-                if text_normalized in seen_texts:
-                    continue
-                seen_texts.add(text_normalized)
-
-                if merged and merged[-1][2] == speaker:
-                    # Same speaker - merge if within 3 seconds
-                    time_gap = start_time - merged[-1][1]
-                    if time_gap < 3.0:
-                        # Merge text, update end time
-                        merged[-1] = (merged[-1][0], end_time, speaker, merged[-1][3] + " " + text)
-                        continue
-
-                merged.append((start_time, end_time, speaker, text))
-
-            # Write transcript with timestamps
+            # Save transcript
             transcript_file = Path(__file__).parent.parent.parent / "transcripts" / f"{call_uuid}_final.txt"
             with open(transcript_file, "w") as f:
-                for start_time, end_time, role, text in merged:
-                    mins = int(start_time // 60)
-                    secs = int(start_time % 60)
-                    f.write(f"[{mins:02d}:{secs:02d}] {role}: {text}\n\n")
+                f.write(response.text)
 
-            logger.info(f"Transcription complete for {call_uuid}: {len(merged)} turns")
+            # Clean up uploaded file
+            try:
+                client.files.delete(name=audio_file.name)
+            except:
+                pass
+
+            logger.info(f"Gemini transcription complete for {call_uuid}")
             return transcript_file
+
         except ImportError:
-            logger.warning("Whisper not installed - skipping transcription")
+            logger.warning("google-genai not installed - skipping transcription")
             return None
         except Exception as e:
-            logger.error(f"Transcription error: {e}")
+            logger.error(f"Gemini transcription error: {e}")
             return None
-
 
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
