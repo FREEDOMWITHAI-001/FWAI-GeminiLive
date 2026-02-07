@@ -947,18 +947,13 @@ Rules:
                 logger.debug(f"[{self.call_uuid[:8]}] Ignoring short transcription: {transcription}")
                 return
 
-            # Filter out pure filler/hesitation sounds
+            # Only filter pure filler/noise sounds (not real responses)
             filler_only = {"um", "uh", "ah", "oh", "mhm", "hmm", "mm", "ugh", "hm", "eh"}
             words = transcription.lower().strip().replace(".", "").replace(",", "").replace("?", "").split()
 
             # If response is ONLY filler sounds, ignore it
-            if all(w in filler_only for w in words):
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler response: {transcription}")
-                return
-
-            # Require at least 2 words for a real response
-            if len(words) < 2:
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring short response ({len(words)} words): {transcription}")
+            if words and all(w in filler_only for w in words):
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler: {transcription}")
                 return
 
             # Save transcript locally
