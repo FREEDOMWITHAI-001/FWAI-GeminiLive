@@ -247,6 +247,9 @@ class PlivoGeminiSession:
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
         self._last_question_time = 0  # Cooldown between question injections
+        self._waiting_for_user = False  # Flag: waiting for user to respond
+        self._question_asked_time = 0  # When we asked the question
+        self._wait_timeout = 5.0  # Wait 5 seconds for user response
 
         # Speech detection logging
         self._user_speaking = False  # Track if user is currently speaking
@@ -730,12 +733,26 @@ Rules:
             logger.error(f"Error in silence monitor: {e}")
 
     async def _send_silence_nudge(self):
-        """Send a nudge to AI when silence detected - DISABLED for QuestionFlow"""
+        """Send a nudge to AI when silence detected"""
         if not self.goog_live_ws or self._closing_call:
             return
 
-        # In QuestionFlow mode, don't nudge at all - just wait for real user input
+        # In QuestionFlow mode, check if we've been waiting too long (5 sec timeout)
         if self.use_question_flow:
+            if self._waiting_for_user and (time.time() - self._question_asked_time) >= self._wait_timeout:
+                logger.info(f"[{self.call_uuid[:8]}] 5 sec timeout - prompting user")
+                # Send a gentle prompt
+                prompt_msg = {
+                    "client_content": {
+                        "turns": [{
+                            "role": "user",
+                            "parts": [{"text": "The customer hasn't responded. Gently ask if they are still there or repeat your question briefly."}]
+                        }],
+                        "turn_complete": True
+                    }
+                }
+                await self.goog_live_ws.send(json.dumps(prompt_msg))
+                self._question_asked_time = time.time()  # Reset timeout
             return
 
         try:
@@ -968,14 +985,20 @@ Rules:
 
             # Question Flow Mode: Get next question and inject
             if self.use_question_flow and self._question_flow:
-                # Cooldown check - don't advance if we just injected a question
                 now = time.time()
-                if hasattr(self, '_last_question_time') and (now - self._last_question_time) < 3.0:
-                    logger.debug(f"[{self.call_uuid[:8]}] Cooldown: ignoring quick response")
+
+                # If we're waiting for user and got a response, process it
+                if self._waiting_for_user:
+                    self._waiting_for_user = False
+                    logger.info(f"[{self.call_uuid[:8]}] User responded: {transcription}")
+
+                # Cooldown check - don't advance if we just injected a question (< 2 sec ago)
+                if (now - self._last_question_time) < 2.0:
+                    logger.debug(f"[{self.call_uuid[:8]}] Cooldown: too quick, waiting")
                     return
 
                 next_instruction = self._question_flow.advance(transcription)
-                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | User: {transcription}")
+                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
                 self._last_question_time = now
                 await self._inject_question(next_instruction)
 
@@ -1000,7 +1023,9 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
-            logger.info(f"[{self.call_uuid[:8]}] Sent next question to AI")
+            self._waiting_for_user = True
+            self._question_asked_time = time.time()
+            logger.info(f"[{self.call_uuid[:8]}] Sent next question - waiting for user response")
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
