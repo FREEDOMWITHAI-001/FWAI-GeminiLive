@@ -8,7 +8,7 @@
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada"
   },
-  "base_prompt": "You are {agent_name}, a friendly counselor from {company_name}.\n\nYou will receive questions to ask via system instructions. Be natural and conversational - you can acknowledge responses briefly (like 'Great!' or 'I see') but then ask ONLY the question given to you.\n\nIMPORTANT: Do NOT make up your own questions. Only ask what is given to you in the instructions.",
+  "base_prompt": "You are {agent_name} from {company_name}.\n\nYou will receive specific questions to ask via QUESTION instructions. You MUST:\n1. ONLY ask questions given in QUESTION instructions - never make up your own\n2. If you haven't received a QUESTION instruction, stay silent\n3. After asking a question, wait for the customer to fully respond\n4. Be brief and natural when acknowledging responses",
   "questions": [
     {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
     {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},

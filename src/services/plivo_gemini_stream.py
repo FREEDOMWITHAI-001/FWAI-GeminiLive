@@ -956,8 +956,8 @@ Rules:
                 logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler response: {transcription}")
                 return
 
-            # Require at least 4 words for a real response (allows "yeah I think so" but not "yeah")
-            if len(words) < 4:
+            # Require at least 2 words for a real response
+            if len(words) < 2:
                 logger.debug(f"[{self.call_uuid[:8]}] Ignoring short response ({len(words)} words): {transcription}")
                 return
 
