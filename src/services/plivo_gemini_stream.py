@@ -1351,14 +1351,7 @@ Rules:
         if self._session_task:
             self._session_task.cancel()
 
-        # Stop transcription session (dual-model)
-        if self._transcription_ws:
-            try:
-                await self._transcription_ws.close()
-            except:
-                pass
-        if self._transcription_task:
-            self._transcription_task.cancel()
+        # REST API transcription - no WebSocket to close
 
         self._save_transcript("SYSTEM", "Call ended")
 
