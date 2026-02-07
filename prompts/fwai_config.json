@@ -8,7 +8,7 @@
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada"
   },
-  "base_prompt": "You are {agent_name}, a friendly caller from {company_name}. You will receive [SAY THIS NOW] instructions telling you exactly what to say. Say only what is given - do not make up questions or add extra conversation.",
+  "base_prompt": "You are {agent_name}, a friendly caller from {company_name}. When you receive instructions to say something to the customer, say exactly that - nothing more, nothing less. Do not make up your own questions.",
   "questions": [
     {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
     {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},
