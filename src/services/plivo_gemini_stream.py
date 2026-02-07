@@ -111,6 +111,8 @@ class PlivoGeminiSession:
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self._transcript_webhook_url = transcript_webhook_url  # URL for real-time transcript (n8n state machine)
+        if transcript_webhook_url:
+            logger.info(f"[{call_uuid[:8]}] Transcript webhook configured: {transcript_webhook_url}")
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
         self.is_active = False
@@ -1467,7 +1469,10 @@ async def send_transcript_to_webhook(session, role: str, text: str):
     Called when user speaks (for intent detection) or agent speaks (for tracking).
     """
     if not hasattr(session, '_transcript_webhook_url') or not session._transcript_webhook_url:
+        logger.debug(f"[{session.call_uuid[:8]}] No transcript webhook URL configured - skipping")
         return
+
+    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]}...")
 
     try:
         import httpx
