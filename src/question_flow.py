@@ -120,15 +120,17 @@ class QuestionFlow:
         step_num = self.current_step + 1
         total = len(self.questions)
 
-        return f"""=== QUESTION {step_num} OF {total} ===
-YOU MUST SAY THIS EXACTLY (word for word):
-"{question}"
+        return f"""[QUESTION {step_num}/{total}]
+SAY EXACTLY: "{question}"
 
-AFTER SAYING THIS:
-- STOP talking immediately
-- WAIT for user to respond
-- Do NOT add anything else
-- Do NOT rephrase the question"""
+CRITICAL: After saying this, you MUST:
+1. STOP talking completely
+2. Be SILENT
+3. WAIT for customer to speak
+4. Do NOT say "okay", "right", or anything else
+5. Do NOT ask another question until customer responds
+
+IF CUSTOMER IS SILENT: Just wait. Do not fill the silence."""
 
     def detect_objection(self, user_text: str) -> Optional[str]:
         """Detect if user raised an objection"""

@@ -732,6 +732,12 @@ Rules:
         """Send a nudge to AI to respond when silence detected"""
         if not self.goog_live_ws or self._closing_call:
             return
+
+        # In QuestionFlow mode, DON'T nudge AI to continue - wait for real user input
+        if self.use_question_flow:
+            logger.debug(f"[{self.call_uuid[:8]}] Silence detected but QuestionFlow mode - waiting for user")
+            return
+
         try:
             msg = {
                 "client_content": {
@@ -1029,9 +1035,9 @@ Rules:
                             }
                         }
                     },
-                    # Higher thinking budget for conversational flow with state management
+                    # Low thinking budget to prevent AI from continuing on its own
                     "thinking_config": {
-                        "thinking_budget": 1024
+                        "thinking_budget": 256
                     }
                 },
                 # Enable input transcription to get real-time user speech transcripts
