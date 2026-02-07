@@ -86,7 +86,7 @@ class QuestionFlow:
         self.objection_keywords = self.config.get("objection_keywords", {})
         self.base_prompt = self.config.get("base_prompt", "")
 
-        logger.info(f"[{self.call_uuid[:8] if self.call_uuid else 'new'}] Loaded {len(self.questions)} questions for {self.client_name}")
+        logger.debug(f"Loaded {len(self.questions)} questions for {self.client_name}")
 
     def _render(self, template: str) -> str:
         """Replace {placeholders} with context values"""
@@ -151,7 +151,7 @@ class QuestionFlow:
         # Check for objection first
         objection = self.detect_objection(user_response)
         if objection:
-            logger.info(f"[{self.call_uuid[:8]}] Detected objection: {objection}")
+            logger.debug(f"Objection: {objection}")
             if objection == "not_interested":
                 return f"[SAY THIS]: {self.get_objection_response(objection)}\n[THEN USE end_call TOOL]"
             else:
@@ -197,7 +197,7 @@ class QuestionFlow:
             file_path = FLOW_DATA_DIR / f"{call_uuid}.json"
             with open(file_path, 'w') as f:
                 json.dump(data, f, indent=2)
-            logger.debug(f"[{call_uuid[:8]}] Saved flow data")
+            logger.debug(f"Saved flow data")
         except Exception as e:
             logger.error(f"Error saving flow data: {e}")
 

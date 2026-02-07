@@ -319,12 +319,12 @@ class PlivoGeminiSession:
         """End call when agent says goodbye (don't wait too long for user)"""
         if self.agent_said_goodbye and not self._closing_call:
             if self.user_said_goodbye:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:MUTUAL_GOODBYE | Both parties said goodbye - ending call")
+                logger.info(f"[{self.call_uuid[:8]}] Mutual goodbye - ending call")
                 self._closing_call = True
                 asyncio.create_task(self._hangup_call_delayed(0.5))  # Quick end
             else:
                 # Agent said goodbye but user hasn't - start short timeout
-                logger.info(f"[{self.call_uuid[:8]}] STEP:AGENT_GOODBYE | Agent said goodbye - waiting 3s for user")
+                logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye, waiting 3s for user")
                 asyncio.create_task(self._quick_goodbye_timeout(3.0))
 
     async def _quick_goodbye_timeout(self, timeout: float):
@@ -332,7 +332,7 @@ class PlivoGeminiSession:
         try:
             await asyncio.sleep(timeout)
             if not self._closing_call and self.agent_said_goodbye:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:GOODBYE_TIMEOUT | No user response after {timeout}s - ending call")
+                logger.debug(f"[{self.call_uuid[:8]}] Goodbye timeout - ending call")
                 self._closing_call = True
                 await self._hangup_call_delayed(0.5)
         except asyncio.CancelledError:
@@ -606,19 +606,19 @@ Rules:
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
         try:
-            logger.info(f"[{self.call_uuid[:8]}] STEP:PRELOAD_START | Preloading Gemini session")
+            logger.debug(f"[{self.call_uuid[:8]}] Preloading Gemini session")
             self.is_active = True
             # Start main voice session (native audio)
             self._session_task = asyncio.create_task(self._run_google_live_session())
             # REST API transcription enabled if webhook configured
             if self._transcript_webhook_url:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_ENABLED | REST API transcription active")
+                logger.debug(f"[{self.call_uuid[:8]}] REST API transcription active")
             # Wait for setup to complete (with timeout - 8s max for better greeting)
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
-                logger.info(f"[{self.call_uuid[:8]}] STEP:PRELOAD_COMPLETE | AI ready! ({len(self.preloaded_audio)} audio chunks)")
+                logger.info(f"[{self.call_uuid[:8]}] AI preloaded ({len(self.preloaded_audio)} chunks)")
             except asyncio.TimeoutError:
-                logger.warning(f"[{self.call_uuid[:8]}] STEP:PRELOAD_TIMEOUT | Continuing with {len(self.preloaded_audio)} chunks")
+                logger.warning(f"[{self.call_uuid[:8]}] Preload timeout, continuing with {len(self.preloaded_audio)} chunks")
             return True
         except Exception as e:
             logger.error(f"Failed to preload session: {e}")
@@ -629,13 +629,12 @@ Rules:
         self.plivo_ws = plivo_ws
         self.call_start_time = datetime.now()
         preload_count = len(self.preloaded_audio)
-        logger.info(f"[{self.call_uuid[:8]}] STEP:CALL_ANSWERED | Plivo WS attached - {preload_count} chunks preloaded")
+        logger.info(f"[{self.call_uuid[:8]}] Call answered, {preload_count} chunks ready")
         # Send any preloaded audio immediately
         if self.preloaded_audio:
-            logger.info(f"[{self.call_uuid[:8]}] STEP:PRELOAD_SUCCESS | Sending {preload_count} chunks immediately")
             asyncio.create_task(self._send_preloaded_audio())
         else:
-            logger.warning(f"[{self.call_uuid[:8]}] STEP:PRELOAD_MISS | No audio preloaded - greeting will have latency")
+            logger.warning(f"[{self.call_uuid[:8]}] No preloaded audio - greeting will lag")
         # Start call duration timer
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (3 second SLA)
@@ -643,7 +642,7 @@ Rules:
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio to Plivo"""
-        logger.info(f"[{self.call_uuid[:8]}] STEP:SENDING_PRELOAD | Sending {len(self.preloaded_audio)} preloaded chunks")
+        logger.debug(f"[{self.call_uuid[:8]}] Sending {len(self.preloaded_audio)} preloaded chunks")
         for audio in self.preloaded_audio:
             if self.plivo_ws:
                 await self.plivo_ws.send_text(json.dumps({
@@ -655,7 +654,7 @@ Rules:
     async def _monitor_call_duration(self):
         """Monitor call duration with periodic heartbeat and trigger wrap-up at 8 minutes"""
         try:
-            logger.info(f"[{self.call_uuid[:8]}] STEP:CALL_ACTIVE | Streaming audio started")
+            logger.debug(f"[{self.call_uuid[:8]}] Call monitor started")
 
             # Heartbeat every 60 seconds until wrap-up time
             wrap_up_time = self.max_call_duration - 30  # 7:30
@@ -719,7 +718,7 @@ Rules:
 
                 # If silence exceeds SLA, nudge the AI to respond
                 if silence_duration >= self._silence_sla_seconds:
-                    logger.warning(f"[{self.call_uuid[:8]}] STEP:SILENCE_SLA | {silence_duration:.1f}s without AI response - nudging model")
+                    logger.warning(f"[{self.call_uuid[:8]}] {silence_duration:.1f}s silence - nudging AI")
                     await self._send_silence_nudge()
                     # Reset timer to avoid repeated nudges
                     self._last_user_speech_time = None
@@ -744,7 +743,7 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
-            logger.info(f"[{self.call_uuid[:8]}] STEP:SILENCE_NUDGE | Sent nudge to AI")
+            logger.debug(f"[{self.call_uuid[:8]}] Sent nudge to AI")
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
 
@@ -753,7 +752,7 @@ Rules:
         if not self.plivo_ws or self._closing_call:
             return
         try:
-            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FILLER | Preparing for reconnection")
+            logger.debug(f"[{self.call_uuid[:8]}] Preparing for reconnection")
 
             # Clear any pending audio to prevent stale data
             await self.plivo_ws.send_text(json.dumps({
@@ -804,11 +803,11 @@ Rules:
                 async with websockets.connect(url, **ws_kwargs) as ws:
                     self.goog_live_ws = ws
                     reconnect_attempts = 0  # Reset on successful connect
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:GEMINI_CONNECTED | Connected to Google Live API")
+                    logger.info(f"[{self.call_uuid[:8]}] Gemini connected")
                     await self._send_session_setup()
                     # Flush any buffered audio from reconnection
                     if self._reconnect_audio_buffer:
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:FLUSH_BUFFER | Flushing {len(self._reconnect_audio_buffer)} buffered audio chunks")
+                        logger.debug(f"[{self.call_uuid[:8]}] Flushing {len(self._reconnect_audio_buffer)} buffered chunks")
                         for buffered_audio in self._reconnect_audio_buffer:
                             await self.handle_plivo_audio(buffered_audio)
                         self._reconnect_audio_buffer = []
@@ -817,11 +816,11 @@ Rules:
                             break
                         await self._receive_from_google(message)
             except websockets.exceptions.ConnectionClosed as e:
-                logger.warning(f"[{self.call_uuid[:8]}] STEP:GEMINI_CLOSED | code={e.code}, reason={e.reason}")
+                logger.warning(f"[{self.call_uuid[:8]}] Gemini closed: {e.code}")
                 if self.is_active and not self._closing_call:
                     self._is_reconnecting = True
                     reconnect_attempts += 1
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECTING | Attempt {reconnect_attempts}/{max_reconnects}")
+                    logger.info(f"[{self.call_uuid[:8]}] Reconnecting ({reconnect_attempts}/{max_reconnects})")
                     # Send filler message to user while reconnecting
                     asyncio.create_task(self._send_reconnection_filler())
                     await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
@@ -830,13 +829,13 @@ Rules:
                 logger.error(f"Google Live error: {e}")
                 if self.is_active and not self._closing_call:
                     reconnect_attempts += 1
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECTING | Attempt {reconnect_attempts}/{max_reconnects} after error")
+                    logger.info(f"[{self.call_uuid[:8]}] Reconnecting ({reconnect_attempts}/{max_reconnects})")
                     await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
                     continue
             break  # Normal exit
 
         self.goog_live_ws = None
-        logger.info(f"[{self.call_uuid[:8]}] STEP:SESSION_ENDED | Google Live session ended")
+        logger.debug(f"[{self.call_uuid[:8]}] Session ended")
 
     def _pcm_to_wav(self, pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, bits_per_sample: int = 16) -> bytes:
         """Convert raw PCM bytes to WAV format"""
@@ -889,7 +888,7 @@ Rules:
                 }
             }
 
-            logger.info(f"[{self.call_uuid[:8]}] STEP:REST_TRANSCRIBE | Sending {len(wav_bytes)} bytes WAV to Gemini REST API")
+            logger.debug(f"[{self.call_uuid[:8]}] Transcribing {len(wav_bytes)} bytes")
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(api_url, json=payload)
@@ -900,7 +899,7 @@ Rules:
                         text = result["candidates"][0]["content"]["parts"][0]["text"]
                         transcription = text.strip()
                         if transcription:
-                            logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_RESULT | {transcription}")
+                            logger.debug(f"[{self.call_uuid[:8]}] Transcribed: {transcription}")
                             return transcription
                     except (KeyError, IndexError) as e:
                         logger.warning(f"[{self.call_uuid[:8]}] Transcription parse error: {e}")
@@ -943,13 +942,11 @@ Rules:
             # Question Flow Mode: Get next question and inject
             if self.use_question_flow and self._question_flow:
                 next_instruction = self._question_flow.advance(transcription)
-                logger.info(f"[{self.call_uuid[:8]}] STEP:FLOW_ADVANCE | Step {self._question_flow.current_step}, injecting next question")
-                # Inject the next question into the AI
+                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | User: {transcription[:40]}...")
                 await self._inject_question(next_instruction)
 
-            # Also send to n8n webhook if configured (for data capture)
+            # Send to n8n webhook if configured
             if self._transcript_webhook_url:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | User transcript: {transcription[:50]}...")
                 asyncio.create_task(send_transcript_to_webhook(self, "user", transcription))
 
     async def _inject_question(self, instruction: str):
@@ -968,7 +965,7 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
-            logger.info(f"[{self.call_uuid[:8]}] STEP:QUESTION_INJECTED | {instruction[:60]}...")
+            logger.debug(f"[{self.call_uuid[:8]}] Injected: {instruction[:50]}...")
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
@@ -1003,7 +1000,7 @@ Rules:
                     history_text += f"{role}: {msg_item['text']}\n"
                 history_text += "\n[IMPORTANT: Start speaking IMMEDIATELY with 'Hmm, sorry about that, there was a brief issue on my end...' then continue the conversation. Do NOT greet again. Do NOT stay silent.]"
                 full_prompt = full_prompt + history_text
-                logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_CONTEXT | Loaded {len(file_history)} messages from file")
+                logger.debug(f"[{self.call_uuid[:8]}] Loaded {len(file_history)} messages for reconnect")
                 self._is_reconnecting = False
 
         # Use voice from config (if question flow mode) or detect from prompt
@@ -1058,7 +1055,7 @@ Rules:
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
             trigger_text = f"[START THE CALL NOW]\n{first_instruction}"
-            logger.info(f"[{self.call_uuid[:8]}] STEP:FIRST_QUESTION | Starting with question #1")
+            logger.debug(f"[{self.call_uuid[:8]}] Starting with question #1")
         else:
             trigger_text = "Hi"
 
@@ -1094,7 +1091,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
             else:
                 reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
 
-            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FLOW | Restoring to question {current_step + 1}")
+            logger.debug(f"[{self.call_uuid[:8]}] Restoring to question {current_step + 1}")
         else:
             reconnect_text = "[System: Connection restored. Say 'Hmm, sorry about that...' and continue]"
 
@@ -1108,7 +1105,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_TRIGGER | Sent trigger to resume conversation")
+        logger.debug(f"[{self.call_uuid[:8]}] Reconnect trigger sent")
 
     async def _handle_tool_call(self, tool_call):
         """Execute tool and send response back to Gemini - gracefully handles errors"""
@@ -1118,13 +1115,13 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
             tool_args = fc.get("args", {})
             call_id = fc.get("id")
 
-            logger.info(f"[{self.call_uuid[:8]}] STEP:TOOL_CALL | {tool_name} with args: {tool_args}")
+            logger.info(f"[{self.call_uuid[:8]}] Tool: {tool_name}")
             self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
             # Handle end_call tool - mark agent as said goodbye, wait for mutual farewell
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
-                logger.info(f"[{self.call_uuid[:8]}] STEP:END_CALL_TOOL | reason: {reason}")
+                logger.info(f"[{self.call_uuid[:8]}] End call: {reason}")
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
                 # Mark agent as having said goodbye
@@ -1247,7 +1244,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                 logger.debug(f"Gemini response keys: {resp_keys}")
 
             if "setupComplete" in resp:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:SETUP_COMPLETE | Google Live setup complete - AI Ready")
+                logger.info(f"[{self.call_uuid[:8]}] AI ready")
                 self.start_streaming = True
                 self.setup_complete = True
                 self._google_session_start = time.time()  # Track session start for 10-min limit
@@ -1262,7 +1259,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
 
             # Handle GoAway message - 9-minute warning before 10-minute session limit
             if "goAway" in resp:
-                logger.warning(f"[{self.call_uuid[:8]}] STEP:GOAWAY | Received GoAway - 10-min limit, reconnecting...")
+                logger.warning(f"[{self.call_uuid[:8]}] 10-min limit, reconnecting...")
                 self._save_transcript("SYSTEM", "Session refresh triggered (10-min limit)")
                 # Don't wait for disconnect - proactively close and reconnect
                 if self.goog_live_ws:
@@ -1288,10 +1285,10 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                     self.greeting_audio_complete = True
                     self._turn_count += 1
 
-                    # Log turn latency at INFO level (always visible)
+                    # Log turn latency at DEBUG level
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:TURN_COMPLETE | Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks in {turn_duration_ms:.0f}ms")
+                        logger.debug(f"[{self.call_uuid[:8]}] Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
                     # AFTER AI finishes speaking, transcribe buffered user audio via REST API
@@ -1303,7 +1300,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                     if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
                         self._empty_turn_nudge_count += 1
                         if self._empty_turn_nudge_count <= 3:  # Max 3 nudges to prevent loop
-                            logger.warning(f"[{self.call_uuid[:8]}] STEP:EMPTY_TURN | Turn #{self._turn_count} - no audio, nudging AI (attempt {self._empty_turn_nudge_count})")
+                            logger.warning(f"[{self.call_uuid[:8]}] Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
                             asyncio.create_task(self._send_silence_nudge())
                     else:
                         self._empty_turn_nudge_count = 0  # Reset on successful audio
@@ -1312,7 +1309,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                     self._current_turn_audio_chunks = 0
 
                 if sc.get("interrupted"):
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:INTERRUPTED | AI was interrupted by user")
+                    logger.debug(f"[{self.call_uuid[:8]}] AI interrupted")
                     if self.plivo_ws:
                         await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
@@ -1323,10 +1320,10 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
 
                 if "inputTranscript" in sc:
                     user_text = sc["inputTranscript"]
-                    logger.info(f"[{self.call_uuid[:8]}] DEBUG:INPUT_TRANSCRIPT | raw={user_text}")
+                    logger.debug(f"[{self.call_uuid[:8]}] Input transcript: {user_text}")
                     if user_text and user_text.strip():
                         self._last_user_speech_time = time.time()  # Track for latency
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TRANSCRIPT | {user_text}")
+                        logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
                         self._save_transcript("USER", user_text.strip())
                         # Log to file in background thread (no latency impact)
                         self._log_conversation("user", user_text.strip())
@@ -1334,7 +1331,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                         asyncio.create_task(send_transcript_to_webhook(self, "user", user_text.strip()))
                         # Track if user said goodbye
                         if self._is_goodbye_message(user_text):
-                            logger.info(f"[{self.call_uuid[:8]}] STEP:USER_GOODBYE | {user_text[:50]}")
+                            logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
                             self.user_said_goodbye = True
                             # Check if both parties said goodbye
                             self._check_mutual_goodbye()
@@ -1352,7 +1349,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                                 self._turn_start_time = time.time()
                                 self._agent_speaking = True
                                 self._user_speaking = False
-                                logger.info(f"[{self.call_uuid[:8]}] STEP:AGENT_SPEAKING >>> Agent started speaking (turn #{self._turn_count + 1})")
+                                logger.debug(f"[{self.call_uuid[:8]}] Agent speaking")
                             # Record AI audio (24kHz)
                             self._record_audio("AI", audio_bytes, 24000)
 
@@ -1360,7 +1357,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                             if self._last_user_speech_time:
                                 latency_ms = (time.time() - self._last_user_speech_time) * 1000
                                 if latency_ms > LATENCY_THRESHOLD_MS:
-                                    logger.warning(f"[{self.call_uuid[:8]}] STEP:LATENCY_SLOW | AI response took {latency_ms:.0f}ms")
+                                    logger.warning(f"[{self.call_uuid[:8]}] Slow response: {latency_ms:.0f}ms")
                                 self._last_user_speech_time = None  # Reset after first response
 
                             # During preload (no plivo_ws yet), always store audio
@@ -1377,7 +1374,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                                     }))
                                     # Log first chunk sent to Plivo for this turn
                                     if self._current_turn_audio_chunks == 1:
-                                        logger.info(f"[{self.call_uuid[:8]}] STEP:AGENT_TO_PLIVO -> Sending agent audio to Plivo")
+                                        logger.debug(f"[{self.call_uuid[:8]}] Sending audio to Plivo")
                                 except Exception as plivo_err:
                                     logger.error(f"Error sending audio to Plivo: {plivo_err} - continuing")
                         if p.get("text"):
@@ -1402,7 +1399,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                                 asyncio.create_task(send_transcript_to_webhook(self, "agent", ai_text))
                                 # Track if agent said goodbye (don't end immediately - wait for user)
                                 if not self._closing_call and self._is_goodbye_message(ai_text):
-                                    logger.info(f"[{self.call_uuid[:8]}] STEP:AGENT_GOODBYE_TEXT | {ai_text[:50]}")
+                                    logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected")
                                     self.agent_said_goodbye = True
                                     # Check if both parties said goodbye
                                     self._check_mutual_goodbye()
@@ -1431,7 +1428,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                     self._user_speaking = True
                     self._agent_speaking = False
                     self._user_speech_start_time = now
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:USER_SPEAKING <<< User started speaking")
+                    logger.debug(f"[{self.call_uuid[:8]}] User speaking")
             self._last_user_audio_time = now
 
             # Record user audio (16kHz)
@@ -1449,7 +1446,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
                     chunks_sent += 1
                     # Log first chunk sent to Gemini for this user speech
                     if chunks_sent == 1 and self._user_speaking:
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TO_GEMINI -> Sending user audio to Gemini")
+                        logger.debug(f"[{self.call_uuid[:8]}] Sending user audio to Gemini")
                 except Exception as send_err:
                     logger.error(f"Error sending audio to Google: {send_err} - continuing")
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
@@ -1474,7 +1471,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
             logger.debug(f"Session {self.call_uuid} already stopped, skipping")
             return
 
-        logger.info(f"[{self.call_uuid[:8]}] STEP:CALL_STOPPING | Stopping session")
+        logger.info(f"[{self.call_uuid[:8]}] Call stopping")
         self.is_active = False
 
         # Cancel timeout task
@@ -1489,14 +1486,14 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
         duration = 0
         if self.call_start_time:
             duration = (datetime.now() - self.call_start_time).total_seconds()
-            logger.info(f"[{self.call_uuid[:8]}] STEP:CALL_DURATION | {duration:.1f} seconds")
+            logger.info(f"[{self.call_uuid[:8]}] Duration: {duration:.1f}s")
             self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s")
 
         # Cleanup question flow and get collected data
         if self.use_question_flow:
             flow_data = remove_flow(self.call_uuid)
             if flow_data:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:FLOW_DATA | Collected {len(flow_data.get('responses', {}))} responses, step {flow_data.get('current_step')}/{flow_data.get('total_steps')}")
+                logger.debug(f"[{self.call_uuid[:8]}] Flow: {len(flow_data.get('responses', {}))} responses")
 
         if self.goog_live_ws:
             try:
@@ -1720,7 +1717,7 @@ async def inject_context_to_session(call_uuid: str, phase: str, additional_conte
             }
         }
         await session.goog_live_ws.send(json.dumps(msg))
-        logger.info(f"[{call_uuid[:8]}] STEP:PHASE_INJECT | Injected phase: {phase}")
+        logger.debug(f"[{call_uuid[:8]}] Phase injected: {phase}")
         session._save_transcript("SYSTEM", f"Phase: {phase}")
         return True
 
@@ -1789,7 +1786,7 @@ async def send_transcript_to_webhook(session, role: str, text: str, max_retries:
     if not hasattr(session, '_transcript_webhook_url') or not session._transcript_webhook_url:
         return
 
-    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]}...")
+    logger.debug(f"[{session.call_uuid[:8]}] Webhook: {role}: {text[:30]}...")
 
     try:
         import httpx
