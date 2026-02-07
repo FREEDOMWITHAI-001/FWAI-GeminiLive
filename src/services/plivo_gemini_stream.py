@@ -958,91 +958,50 @@ Rules:
             return None
 
     async def _process_user_audio_for_transcription(self):
-        """Process buffered user audio, transcribe, and advance question flow"""
+        """Process user response and advance question flow (transcription disabled - done at end)"""
         # Question flow mode doesn't require webhook URL
         if not self._transcript_webhook_url and not self.use_question_flow:
             return
 
-        # FIX 1: In QuestionFlow mode, only process if we're waiting for user response
-        # This prevents processing audio when AI just finished speaking (not after asking a question)
+        # Only process if we're waiting for user response
         if self.use_question_flow and not self._waiting_for_user:
             # Clear buffer to avoid processing stale audio later
             self._user_audio_buffer = bytearray(b"")
             logger.debug(f"[{self.call_uuid[:8]}] Not waiting for user, clearing buffer")
             return
 
-        # FIX 2: Require minimum audio duration (at least 0.5 seconds = 16000 bytes at 16kHz, 16-bit)
+        # Require minimum audio duration (at least 0.5 seconds = 16000 bytes at 16kHz, 16-bit)
         MIN_AUDIO_FOR_RESPONSE = 16000  # 0.5 seconds of audio
         if len(self._user_audio_buffer) < MIN_AUDIO_FOR_RESPONSE:
             logger.debug(f"[{self.call_uuid[:8]}] Not enough audio ({len(self._user_audio_buffer)} bytes), need {MIN_AUDIO_FOR_RESPONSE}")
             return  # Don't clear buffer - keep accumulating
 
-        # FIX 3: Don't process if question was asked very recently (< 2 seconds ago)
-        # User needs time to hear the question before responding
+        # Don't process if question was asked very recently (< 2 seconds ago)
         if self.use_question_flow and self._waiting_for_user:
             time_since_question = time.time() - self._question_asked_time
             if time_since_question < 2.0:
                 logger.debug(f"[{self.call_uuid[:8]}] Question asked {time_since_question:.1f}s ago, waiting for response...")
                 return  # Don't clear buffer - keep accumulating
 
-        # Copy and clear buffer
-        audio_to_transcribe = bytes(self._user_audio_buffer)
+        # Clear buffer (transcription disabled - will be done at end of call)
+        audio_bytes = len(self._user_audio_buffer)
         self._user_audio_buffer = bytearray(b"")
 
-        # Transcribe using REST API
-        transcription = await self._transcribe_audio_rest_api(audio_to_transcribe)
-
-        if transcription:
-            # Filter out noise/non-English transcriptions
-            # Check if transcription contains mostly ASCII (English)
-            ascii_ratio = sum(1 for c in transcription if ord(c) < 128) / len(transcription)
-            if ascii_ratio < 0.5:
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring non-English transcription: {transcription[:30]}")
+        # Question Flow Mode: Advance to next question based on silence detection (no real-time transcription)
+        if self.use_question_flow and self._question_flow:
+            if not self._waiting_for_user:
+                logger.debug(f"[{self.call_uuid[:8]}] Not waiting for user, skipping advance")
                 return
 
-            # Ignore very short transcriptions (likely noise)
-            if len(transcription.strip()) < 3:
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring short transcription: {transcription}")
-                return
+            # Mark that we got a response (detected via silence after speech)
+            self._waiting_for_user = False
+            logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({audio_bytes} bytes) - advancing")
 
-            # Only filter pure filler/noise sounds (not real responses)
-            filler_only = {"um", "uh", "ah", "oh", "mhm", "hmm", "mm", "ugh", "hm", "eh"}
-            words = transcription.lower().strip().replace(".", "").replace(",", "").replace("?", "").split()
-
-            # If response is ONLY filler sounds, ignore it
-            if words and all(w in filler_only for w in words):
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler: {transcription}")
-                return
-
-            # Save transcript locally
-            self._save_transcript("USER", transcription)
-            self._log_conversation("user", transcription)
-
-            # Track goodbye
-            if self._is_goodbye_message(transcription):
-                self.user_said_goodbye = True
-                self._check_mutual_goodbye()
-
-            # Question Flow Mode: Get next question and inject
-            if self.use_question_flow and self._question_flow:
-                # FIX 4: Only advance if we were actually waiting for user response
-                if not self._waiting_for_user:
-                    logger.debug(f"[{self.call_uuid[:8]}] Got transcription but not waiting for user, ignoring")
-                    return
-
-                # Mark that we got the response
-                self._waiting_for_user = False
-                logger.info(f"[{self.call_uuid[:8]}] USER RESPONDED: {transcription}")
-
-                # Advance to next question
-                next_instruction = self._question_flow.advance(transcription)
-                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
-                self._last_question_time = time.time()
-                await self._inject_question(next_instruction)
-
-            # Send to n8n webhook if configured
-            if self._transcript_webhook_url:
-                asyncio.create_task(send_transcript_to_webhook(self, "user", transcription))
+            # Advance to next question (pass empty string since we're not transcribing)
+            next_instruction = self._question_flow.advance("")
+            logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
+            self._last_question_time = time.time()
+            await self._inject_question(next_instruction)
 
     async def _inject_question(self, instruction: str):
         """Inject the next question instruction into the AI"""
