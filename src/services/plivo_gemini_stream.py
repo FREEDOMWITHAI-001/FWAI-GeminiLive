@@ -773,9 +773,9 @@ Rules:
                             }
                         }
                     },
-                    # Minimal thinking for better instruction following (adds ~50-100ms)
+                    # Reduced thinking for faster responses
                     "thinking_config": {
-                        "thinking_budget": 128
+                        "thinking_budget": 50
                     }
                 },
                 # Note: Transcription via Whisper offline (native audio model doesn't support real-time transcription)
