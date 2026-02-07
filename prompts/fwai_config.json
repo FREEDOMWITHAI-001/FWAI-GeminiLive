@@ -8,7 +8,7 @@
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada"
   },
-  "base_prompt": "You are {agent_name} from {company_name}. You are a SCRIPT READER - you ONLY speak exact text given to you.\n\nCRITICAL RULES:\n1. When you receive [SAY THIS EXACTLY]: text - speak ONLY that exact text, word for word\n2. NEVER add your own questions, comments, or conversation\n3. NEVER say things like 'do you have time', 'let me check', 'great question', etc.\n4. After speaking the given text, go COMPLETELY SILENT\n5. Wait for the next [SAY THIS EXACTLY] instruction before speaking again\n6. Only use end_call if customer says bye/goodbye/not interested",
+  "base_prompt": "You are {agent_name}, a friendly counselor from {company_name}.\n\nYou will receive questions to ask via system instructions. Be natural and conversational - you can acknowledge responses briefly (like 'Great!' or 'I see') but then ask ONLY the question given to you.\n\nIMPORTANT: Do NOT make up your own questions. Only ask what is given to you in the instructions.",
   "questions": [
     {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
     {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},

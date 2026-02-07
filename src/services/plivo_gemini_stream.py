@@ -947,21 +947,18 @@ Rules:
                 logger.debug(f"[{self.call_uuid[:8]}] Ignoring short transcription: {transcription}")
                 return
 
-            # Filter out filler/hesitation sounds and short acknowledgments
-            # These shouldn't advance the question flow - need real answers
-            filler_words = {"um", "uh", "ah", "oh", "mhm", "hmm", "mm", "ugh", "hm", "eh",
-                           "yeah", "yes", "yep", "yup", "okay", "ok", "sure", "right",
-                           "i", "see", "got", "it", "that", "is", "a", "the", "and"}
+            # Filter out pure filler/hesitation sounds
+            filler_only = {"um", "uh", "ah", "oh", "mhm", "hmm", "mm", "ugh", "hm", "eh"}
             words = transcription.lower().strip().replace(".", "").replace(",", "").replace("?", "").split()
-            # If response is ONLY filler words, ignore it
-            if all(w in filler_words for w in words):
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring short/filler response: {transcription}")
+
+            # If response is ONLY filler sounds, ignore it
+            if all(w in filler_only for w in words):
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler response: {transcription}")
                 return
 
-            # Also require minimum 3 real words for an answer
-            real_words = [w for w in words if w not in filler_words and len(w) > 1]
-            if len(real_words) < 2:
-                logger.debug(f"[{self.call_uuid[:8]}] Ignoring too-short response: {transcription}")
+            # Require at least 4 words for a real response (allows "yeah I think so" but not "yeah")
+            if len(words) < 4:
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring short response ({len(words)} words): {transcription}")
                 return
 
             # Save transcript locally
