@@ -4,7 +4,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "start-conversational-call",
+        "path": "conv-start-call",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -21,7 +21,7 @@
         "url": "http://34.93.142.172:3001/call/conversational",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"contactName\": $json.body.contactName || \"Customer\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/transcript-receiver\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/call-ended\",\n  \"context\": {\n    \"customer_name\": $json.body.contactName || \"Customer\"\n  }\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"contactName\": $json.body.contactName || \"Customer\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/conv-transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/conv-call-ended\",\n  \"context\": {\n    \"customer_name\": $json.body.contactName || \"Customer\"\n  }\n}) }}",
         "options": {}
       },
       "id": "start-conversational-call",
@@ -44,7 +44,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "transcript-receiver",
+        "path": "conv-transcript",
         "responseMode": "lastNode",
         "options": {}
       },
@@ -141,7 +141,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "call-ended",
+        "path": "conv-call-ended",
         "responseMode": "lastNode",
         "options": {}
       },
