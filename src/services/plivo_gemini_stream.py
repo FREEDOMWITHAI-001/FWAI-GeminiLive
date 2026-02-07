@@ -682,7 +682,8 @@ Rules:
 
                 ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
                 if extra_headers:
-                    ws_kwargs["extra_headers"] = extra_headers
+                    # Use additional_headers for newer websockets versions
+                    ws_kwargs["additional_headers"] = extra_headers
 
                 async with websockets.connect(url, **ws_kwargs) as ws:
                     self.goog_live_ws = ws
