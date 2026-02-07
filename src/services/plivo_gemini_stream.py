@@ -1634,18 +1634,16 @@ async def preload_session_conversational(
     return success
 
 
-async def send_transcript_to_webhook(session, role: str, text: str):
+async def send_transcript_to_webhook(session, role: str, text: str, max_retries: int = 2):
     """
     Send real-time transcript to n8n for state machine processing.
     Called when user speaks (for intent detection) or agent speaks (for tracking).
+    Non-blocking with retry mechanism.
     """
-    logger.info(f"[{session.call_uuid[:8]}] DEBUG:WEBHOOK_CALLED | role={role}, text={text[:30]}...")
-
     if not hasattr(session, '_transcript_webhook_url') or not session._transcript_webhook_url:
-        logger.warning(f"[{session.call_uuid[:8]}] No transcript webhook URL configured - skipping")
         return
 
-    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]} to {session._transcript_webhook_url}")
+    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]}...")
 
     try:
         import httpx
@@ -1655,13 +1653,29 @@ async def send_transcript_to_webhook(session, role: str, text: str):
             "call_uuid": session.call_uuid,
             "role": role,  # "user" or "agent"
             "text": text,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "turn_count": getattr(session, '_turn_count', 0)
         }
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(session._transcript_webhook_url, json=payload)
-
-        logger.debug(f"Sent transcript to webhook: {role}: {text[:50]}...")
+        # Retry mechanism with short timeout
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.post(session._transcript_webhook_url, json=payload)
+                    if resp.status_code == 200:
+                        logger.debug(f"Transcript webhook sent: {role}: {text[:30]}...")
+                        return
+                    else:
+                        logger.warning(f"Webhook returned {resp.status_code}, attempt {attempt + 1}")
+            except httpx.TimeoutException:
+                if attempt < max_retries:
+                    logger.warning(f"Webhook timeout, retrying ({attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(0.5)  # Brief pause before retry
+                else:
+                    logger.error(f"Webhook failed after {max_retries + 1} attempts (timeout)")
+            except Exception as e:
+                logger.error(f"Webhook error: {e}")
+                break
 
     except Exception as e:
-        logger.error(f"Error sending transcript webhook: {e}")
+        logger.error(f"Error in transcript webhook: {e}")
