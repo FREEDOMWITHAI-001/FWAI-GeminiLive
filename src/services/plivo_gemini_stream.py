@@ -729,22 +729,20 @@ Rules:
             logger.error(f"Error in silence monitor: {e}")
 
     async def _send_silence_nudge(self):
-        """Send a nudge to AI when silence detected"""
+        """Send a nudge to AI when silence detected - DISABLED for QuestionFlow"""
         if not self.goog_live_ws or self._closing_call:
             return
 
-        try:
-            # In QuestionFlow mode, ask if user is still there instead of continuing
-            if self.use_question_flow:
-                nudge_text = "[The customer has been silent. Say: 'Hello, are you still there?' and wait for response]"
-            else:
-                nudge_text = "[Continue the conversation - respond to what the customer just said]"
+        # In QuestionFlow mode, don't nudge at all - just wait for real user input
+        if self.use_question_flow:
+            return
 
+        try:
             msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": nudge_text}]
+                        "parts": [{"text": "[Respond to the customer]"}]
                     }],
                     "turn_complete": True
                 }
@@ -937,6 +935,18 @@ Rules:
         transcription = await self._transcribe_audio_rest_api(audio_to_transcribe)
 
         if transcription:
+            # Filter out noise/non-English transcriptions
+            # Check if transcription contains mostly ASCII (English)
+            ascii_ratio = sum(1 for c in transcription if ord(c) < 128) / len(transcription)
+            if ascii_ratio < 0.5:
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring non-English transcription: {transcription[:30]}")
+                return
+
+            # Ignore very short transcriptions (likely noise)
+            if len(transcription.strip()) < 3:
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring short transcription: {transcription}")
+                return
+
             # Save transcript locally
             self._save_transcript("USER", transcription)
             self._log_conversation("user", transcription)
