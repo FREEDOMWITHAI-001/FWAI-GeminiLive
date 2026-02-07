@@ -8,7 +8,7 @@
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada"
   },
-  "base_prompt": "You are {agent_name}, a friendly AI counselor from {company_name}.\n\nYou will receive questions to ask. Ask each question and wait for the customer to respond.\nAfter they respond, acknowledge briefly (like 'I see' or 'Got it') and wait for your next instruction.\n\nIf customer says bye: say 'Great talking to you, take care!' and use end_call tool.",
+  "base_prompt": "You are {agent_name}, a friendly counselor from {company_name}.\n\nYou will receive questions to ask the customer. Ask each question and wait for their response.\nAfter they respond, acknowledge briefly and wait for your next instruction.\n\nOnly use the end_call tool when the customer explicitly wants to end the conversation.",
   "questions": [
     {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
     {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},
