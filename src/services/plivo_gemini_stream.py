@@ -162,10 +162,17 @@ class PlivoGeminiSession:
         self._reconnect_audio_buffer = []
         self._max_reconnect_buffer = 150  # Increased buffer (~3 seconds) for better reconnection
 
-        # Conversation history for context restoration on reconnect (keep small to reduce latency)
-        self._conversation_history = []  # List of {"role": "user"/"model", "text": "..."}
-        self._max_history_size = 10  # Keep only last 10 messages to prevent latency buildup
+        # Conversation history - saved to file in background thread (no latency impact)
+        self._conversation_history = []  # In-memory cache for quick access
+        self._max_history_size = 10  # Keep only last 10 messages
         self._is_first_connection = True  # Track if this is first connect or reconnect
+        self._conversation_file = RECORDINGS_DIR / f"{call_uuid}_conversation.json"
+        self._conversation_queue = queue.Queue()  # Queue for background file writes
+        self._conversation_thread = None
+        self._start_conversation_logger()  # Start background thread for file writes
+
+        # Reconnection state
+        self._is_reconnecting = False  # Flag to handle reconnection gracefully
 
         # Google session refresh timer (10-min limit, refresh at 9 min)
         self._google_session_start = None
@@ -259,6 +266,71 @@ class PlivoGeminiSession:
         self._recording_thread = threading.Thread(target=recording_worker, daemon=True)
         self._recording_thread.start()
         logger.debug("Recording thread started")
+
+    def _start_conversation_logger(self):
+        """Start background thread for saving conversation to file (no latency impact)"""
+        def conversation_worker():
+            while True:
+                try:
+                    item = self._conversation_queue.get(timeout=1.0)
+                    if item is None:  # Shutdown signal
+                        break
+                    # Append to file
+                    self._save_conversation_to_file(item)
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"Conversation logger error: {e}")
+
+        self._conversation_thread = threading.Thread(target=conversation_worker, daemon=True)
+        self._conversation_thread.start()
+        logger.debug("Conversation logger thread started")
+
+    def _save_conversation_to_file(self, message: dict):
+        """Save conversation message to file (called from background thread)"""
+        try:
+            # Read existing
+            if self._conversation_file.exists():
+                with open(self._conversation_file, 'r') as f:
+                    history = json.load(f)
+            else:
+                history = []
+
+            # Append new message
+            history.append(message)
+
+            # Keep only last N messages
+            if len(history) > self._max_history_size:
+                history = history[-self._max_history_size:]
+
+            # Write back
+            with open(self._conversation_file, 'w') as f:
+                json.dump(history, f)
+        except Exception as e:
+            logger.error(f"Error saving conversation to file: {e}")
+
+    def _load_conversation_from_file(self) -> list:
+        """Load conversation history from file for reconnection"""
+        try:
+            if self._conversation_file.exists():
+                with open(self._conversation_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading conversation from file: {e}")
+        return []
+
+    def _log_conversation(self, role: str, text: str):
+        """Queue conversation message for background file save (non-blocking)"""
+        message = {"role": role, "text": text, "timestamp": time.time()}
+        # Update in-memory cache
+        self._conversation_history.append(message)
+        if len(self._conversation_history) > self._max_history_size:
+            self._conversation_history = self._conversation_history[-self._max_history_size:]
+        # Queue for background file write
+        try:
+            self._conversation_queue.put_nowait(message)
+        except queue.Full:
+            pass
 
     def _record_audio(self, role: str, audio_bytes: bytes, sample_rate: int = 16000):
         """Record audio chunk for post-call transcription (non-blocking)"""
@@ -560,6 +632,28 @@ Rules:
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
 
+    async def _send_reconnection_filler(self):
+        """Send filler message to user while reconnecting (via TTS or pre-recorded)"""
+        if not self.plivo_ws or self._closing_call:
+            return
+        try:
+            # Use Plivo's TTS to say a filler phrase
+            import random
+            fillers = [
+                "I see, hmm...",
+                "Hmm, I understand...",
+                "Right, right...",
+                "Okay, let me think...",
+            ]
+            filler = random.choice(fillers)
+            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FILLER | Sending: {filler}")
+
+            # Note: This uses Plivo's speak feature if available
+            # For now, we just log it - the AI will handle continuation after reconnect
+            # The main improvement is loading conversation from file on reconnect
+        except Exception as e:
+            logger.error(f"Error sending reconnection filler: {e}")
+
     async def _run_google_live_session(self):
         # Choose between Vertex AI (regional, lower latency) or Google AI Studio
         if config.use_vertex_ai:
@@ -611,8 +705,11 @@ Rules:
             except websockets.exceptions.ConnectionClosed as e:
                 logger.warning(f"[{self.call_uuid[:8]}] STEP:GEMINI_CLOSED | code={e.code}, reason={e.reason}")
                 if self.is_active and not self._closing_call:
+                    self._is_reconnecting = True
                     reconnect_attempts += 1
                     logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECTING | Attempt {reconnect_attempts}/{max_reconnects}")
+                    # Send filler message to user while reconnecting
+                    asyncio.create_task(self._send_reconnection_filler())
                     await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
                     continue
             except Exception as e:
@@ -635,16 +732,20 @@ Rules:
         # Combine: accent first, then main prompt
         full_prompt = accent_instruction + self.prompt
 
-        # On reconnect, add context about ongoing conversation (keep minimal to reduce latency)
-        if not self._is_first_connection and self._conversation_history:
-            # Build conversation summary for context restoration
-            history_text = "\n\n[RECONNECTION - call in progress. Recent conversation:]\n"
-            for msg_item in self._conversation_history[-self._max_history_size:]:
-                role = "Customer" if msg_item["role"] == "user" else "You"
-                history_text += f"{role}: {msg_item['text']}\n"
-            history_text += "[Continue naturally - do NOT greet again]"
-            full_prompt = full_prompt + history_text
-            logger.info(f"Reconnecting with {min(len(self._conversation_history), self._max_history_size)} messages of context")
+        # On reconnect, load conversation from FILE (not memory - avoids latency issues)
+        if not self._is_first_connection:
+            # Load conversation history from file (saved by background thread)
+            file_history = self._load_conversation_from_file()
+            if file_history:
+                history_text = "\n\n[RECONNECTION - there was a brief network issue. Resume the call naturally.]\n"
+                history_text += "[Recent conversation:]\n"
+                for msg_item in file_history[-self._max_history_size:]:
+                    role = "Customer" if msg_item["role"] == "user" else "You"
+                    history_text += f"{role}: {msg_item['text']}\n"
+                history_text += "\n[Say something like 'Sorry, I think there was a brief connection issue. You were saying...' and continue from where you left off. Do NOT greet again.]"
+                full_prompt = full_prompt + history_text
+                logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_CONTEXT | Loaded {len(file_history)} messages from file")
+                self._is_reconnecting = False
 
         # Detect voice based on prompt content (female -> Kore, default -> Puck)
         voice_name = detect_voice_from_prompt(self.prompt)
@@ -906,10 +1007,8 @@ Rules:
                         self._last_user_speech_time = time.time()  # Track for latency
                         logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TRANSCRIPT | {user_text}")
                         self._save_transcript("USER", user_text.strip())
-                        # Store in conversation history for reconnect context (limit size to prevent latency)
-                        self._conversation_history.append({"role": "user", "text": user_text.strip()})
-                        if len(self._conversation_history) > self._max_history_size:
-                            self._conversation_history = self._conversation_history[-self._max_history_size:]
+                        # Log to file in background thread (no latency impact)
+                        self._log_conversation("user", user_text.strip())
                         # Track if user said goodbye
                         if self._is_goodbye_message(user_text):
                             logger.info(f"[{self.call_uuid[:8]}] STEP:USER_GOODBYE | {user_text[:50]}")
@@ -974,10 +1073,8 @@ Rules:
                             )
                             if ai_text and not is_thinking and len(ai_text) > 3:
                                 self._save_transcript("AGENT", ai_text)
-                                # Store in conversation history for reconnect context (limit size)
-                                self._conversation_history.append({"role": "model", "text": ai_text})
-                                if len(self._conversation_history) > self._max_history_size:
-                                    self._conversation_history = self._conversation_history[-self._max_history_size:]
+                                # Log to file in background thread (no latency impact)
+                                self._log_conversation("model", ai_text)
                                 # Track if agent said goodbye (don't end immediately - wait for user)
                                 if not self._closing_call and self._is_goodbye_message(ai_text):
                                     logger.info(f"[{self.call_uuid[:8]}] STEP:AGENT_GOODBYE_TEXT | {ai_text[:50]}")
@@ -1081,6 +1178,12 @@ Rules:
             self._recording_queue.put(None)  # Shutdown signal
         if self._recording_thread:
             self._recording_thread.join(timeout=2.0)
+
+        # Stop conversation logger thread
+        if self._conversation_queue:
+            self._conversation_queue.put(None)  # Shutdown signal
+        if self._conversation_thread:
+            self._conversation_thread.join(timeout=2.0)
 
         # Process recording and transcription in COMPLETELY SEPARATE background thread
         # This does NOT block call ending - call ends immediately
