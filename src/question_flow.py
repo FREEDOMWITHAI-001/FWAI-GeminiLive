@@ -120,14 +120,14 @@ class QuestionFlow:
         step_num = self.current_step + 1
         total = len(self.questions)
 
-        return f"""NEXT QUESTION (#{step_num} of {total}):
-Ask: "{question}"
+        return f"""QUESTION {step_num}/{total}: "{question}"
 
-RULES:
-- You may briefly acknowledge their response first (1-2 words like "Great!" or "I see")
-- Then ask the above question
-- Do NOT add any other questions or topics
-- After asking, wait silently for their answer"""
+STRICT RULES:
+1. Briefly acknowledge (optional): "Great!" or "I see"
+2. Ask the EXACT question above
+3. STOP TALKING and wait for user to respond
+4. Do NOT ask follow-up questions or add anything else
+5. Stay COMPLETELY SILENT until you receive the next instruction"""
 
     def detect_objection(self, user_text: str) -> Optional[str]:
         """Detect if user raised an objection"""
