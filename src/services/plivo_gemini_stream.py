@@ -1015,7 +1015,7 @@ Rules:
                 for msg_item in file_history[-self._max_history_size:]:
                     role = "Customer" if msg_item["role"] == "user" else "You"
                     history_text += f"{role}: {msg_item['text']}\n"
-                history_text += "\n[IMPORTANT: Start speaking IMMEDIATELY with 'Hmm, sorry about that, there was a brief issue on my end...' then continue the conversation. Do NOT greet again. Do NOT stay silent.]"
+                history_text += "\n[Continue the conversation naturally from where you left off. Do NOT greet again.]"
                 full_prompt = full_prompt + history_text
                 logger.debug(f"[{self.call_uuid[:8]}] Loaded {len(file_history)} messages for reconnect")
                 self._is_reconnecting = False
@@ -1099,18 +1099,15 @@ Rules:
             current_question = self._question_flow.get_current_question()
 
             if current_question:
-                reconnect_text = f"""[SYSTEM: Connection restored. Brief issue on your end.
-Say "Hmm, sorry about that, small network issue..." then CONTINUE with the current question.
-
-YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.questions)}.
-YOU MUST SAY THIS EXACTLY: "{current_question}"
-THEN STOP AND WAIT FOR USER RESPONSE."""
+                reconnect_text = f"""Continue with this question:
+"{current_question}"
+Wait for customer response after asking."""
             else:
                 reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
 
             logger.debug(f"[{self.call_uuid[:8]}] Restoring to question {current_step + 1}")
         else:
-            reconnect_text = "[System: Connection restored. Say 'Hmm, sorry about that...' and continue]"
+            reconnect_text = "[Continue the conversation]"
 
         msg = {
             "client_content": {
