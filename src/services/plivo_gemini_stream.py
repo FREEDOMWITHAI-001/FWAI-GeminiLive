@@ -195,6 +195,9 @@ class PlivoGeminiSession:
         # Buffer to collect user transcript during a turn, sent to n8n AFTER AI responds
         self._pending_user_transcript = ""
 
+        # Full transcript collection (in-memory backup for webhook)
+        self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
+
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
         text_lower = text.lower()
@@ -252,13 +255,22 @@ class PlivoGeminiSession:
             pass
 
     def _save_transcript(self, role, text):
+        """Save transcript to file and in-memory list"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Always add to in-memory list (for webhook backup)
+        self._full_transcript.append({
+            "role": role,
+            "text": text,
+            "timestamp": timestamp
+        })
+
         if not config.enable_transcripts:
             return
         try:
             transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
             transcript_dir.mkdir(exist_ok=True)
             transcript_file = transcript_dir / f"{self.call_uuid}.txt"
-            timestamp = datetime.now().strftime("%H:%M:%S")
             with open(transcript_file, "a") as f:
                 f.write(f"[{timestamp}] {role}: {text}\n")
             logger.debug(f"TRANSCRIPT [{role}]: {text}")
@@ -1420,13 +1432,22 @@ Rules:
             except:
                 pass
 
+            # Fallback to in-memory transcript if file is empty
+            if not transcript.strip() and self._full_transcript:
+                transcript = "\n".join([
+                    f"[{t['timestamp']}] {t['role']}: {t['text']}"
+                    for t in self._full_transcript
+                ])
+                logger.info(f"Using in-memory transcript ({len(self._full_transcript)} entries)")
+
             payload = {
                 "event": "call_ended",
                 "call_uuid": self.call_uuid,
                 "caller_phone": self.caller_phone,
                 "duration_seconds": round(duration, 1),
                 "timestamp": datetime.now().isoformat(),
-                "transcript": transcript
+                "transcript": transcript,
+                "transcript_entries": self._full_transcript  # Also send as structured data
             }
 
             logger.info(f"Calling webhook: {self.webhook_url}")
