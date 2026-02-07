@@ -18,10 +18,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://your-server.com/call/conversational",
+        "url": "http://34.93.142.172:3001/call/conversational",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"contactName\": $json.body.contactName || \"Customer\",\n  \"n8nWebhookUrl\": \"https://your-n8n.com/webhook/transcript-receiver\",\n  \"callEndWebhookUrl\": \"https://your-n8n.com/webhook/call-ended\",\n  \"context\": {\n    \"customer_name\": $json.body.contactName || \"Customer\"\n  }\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"contactName\": $json.body.contactName || \"Customer\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/transcript-receiver\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/call-ended\",\n  \"context\": {\n    \"customer_name\": $json.body.contactName || \"Customer\"\n  }\n}) }}",
         "options": {}
       },
       "id": "start-conversational-call",
@@ -126,7 +126,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://your-server.com/call/inject/{{ $json.call_uuid }}",
+        "url": "=http://34.93.142.172:3001/call/inject/{{ $json.call_uuid }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({\n  \"phase\": $json.detected_phase,\n  \"context\": \"\",\n  \"data\": $json.captured_data\n}) }}",
