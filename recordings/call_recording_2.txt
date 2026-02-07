@@ -1,0 +1,929 @@
+00:00:00,440 --> 00:00:01,120 [Speaker 0]
+Hello. 
+
+00:00:01,120 --> 00:00:01,760 [Speaker 1]
+Hello? 
+
+00:00:01,760 --> 00:00:02,800 [Speaker 0]
+Uh, hi, Pawan. Really sorry. 
+
+00:00:02,800 --> 00:00:05,159 [Speaker 1]
+Yeah, yeah. That's all right. 
+
+00:00:05,160 --> 00:00:25,300 [Speaker 0]
+Cool. So, uh, as I told you that, uh, see, there are a number of AI tools which you can use actually in any particular domain. So for you, in financial planning and analysis, there are a few tools such as Data Rails, Pigment, uh, Planful. Like Planful is a AI tool, uh, AI-powered planning and forecasting, integrates ERP, CRMs, and Excel. So there's something called Cube- 
+
+00:00:25,300 --> 00:00:27,680 [Speaker 1]
+Tell me, which is Data Railing, huh? 
+
+00:00:27,680 --> 00:00:31,880 [Speaker 0]
+Data Rail, Data Rails. It's a end-to-end FP&A automation, like- 
+
+00:00:31,880 --> 00:00:33,660 [Speaker 1]
+Railings. R-A-I-L-E-S, is it? 
+
+00:00:33,660 --> 00:00:35,640 [Speaker 0]
+R-A-I-L-S, Rails. 
+
+00:00:35,640 --> 00:00:39,510 [Speaker 1]
+R-A-I-L-S. Okay, Data Rails, then Pigment. 
+
+00:00:39,510 --> 00:00:42,180 [Speaker 0]
+Uh, Pigment, uh, Planful. 
+
+00:00:42,180 --> 00:00:43,020 [Speaker 1]
+Plan? 
+
+00:00:43,020 --> 00:00:45,900 [Speaker 0]
+Planful, Planful. P-L-A-N-F-U-L. 
+
+00:00:45,900 --> 00:00:47,520 [Speaker 1]
+Okay. 
+
+00:00:47,520 --> 00:00:50,560 [Speaker 0]
+Cube Software. Like, I'll be sharing you the list, like, if you want to join with. 
+
+00:00:50,560 --> 00:00:52,140 [Speaker 1]
+Okay. Yeah, yeah. 
+
+00:00:52,140 --> 00:01:02,580 [Speaker 0]
+So this list of these tools, like, you can get it from anywhere, actually. Like, even if you go to any AI tool and give it a proper prompt, like, you just give it, uh, the 
+
+00:01:02,580 --> 00:01:04,720 [Speaker 0]
+description of your work profile- 
+
+00:01:04,720 --> 00:01:04,730 [Speaker 1]
+Yeah 
+
+00:01:04,730 --> 00:01:11,070 [Speaker 0]
+... stating that, um, how you can utilize AI tools, it's gonna give you a few AI tools, like the list of these AI tools. 
+
+00:01:11,070 --> 00:01:11,100 [Speaker 1]
+Okay. 
+
+00:01:11,100 --> 00:01:17,240 [Speaker 0]
+Getting the list is not a, uh, big thing, but utilizing the AI tools, it matters, right? 
+
+00:01:17,240 --> 00:01:26,920 [Speaker 1]
+No, no, I understand. I'm just asking because will I get to learn all these, uh, how to use these AI tools in your classes? 
+
+00:01:26,920 --> 00:01:30,440 [Speaker 0]
+Yes, we do. Uh, so that's what prompt engineering is, actually. 
+
+00:01:30,980 --> 00:01:35,400 [Speaker 1]
+Prompt. How to get the details from these, uh, tools, right? 
+
+00:01:35,400 --> 00:01:38,410 [Speaker 0]
+Yes. How to utilize these AI tools in the best way possible. 
+
+00:01:38,410 --> 00:01:38,420 [Speaker 1]
+Okay. 
+
+00:01:38,420 --> 00:01:42,380 [Speaker 0]
+Not only these AI tools, but any AI tool in any domain. 
+
+00:01:42,380 --> 00:01:44,700 [Speaker 1]
+Mm-hmm. Any AI tool, any domain. Okay. 
+
+00:01:44,700 --> 00:01:46,420 [Speaker 0]
+In any domain. 
+
+00:01:46,420 --> 00:01:46,500 [Speaker 1]
+So- 
+
+00:01:46,500 --> 00:02:00,240 [Speaker 0]
+Like, let's assume if you are a lawyer, you can use these AI tools for this, uh, previous case studies of these particular cases, as well as if... Let's assume if you are a medical representative, you can utilize the AI tools to understand the patient's previous history. 
+
+00:02:00,240 --> 00:02:00,750 [Speaker 1]
+Okay. 
+
+00:02:00,750 --> 00:02:04,330 [Speaker 0]
+So with these kind of AI tools, there are a number of AI tools in every domain. 
+
+00:02:04,330 --> 00:02:04,340 [Speaker 1]
+Okay. 
+
+00:02:04,340 --> 00:02:09,669 [Speaker 0]
+To utilize these AI tools, prompt is, prompting eng-- is important, and that's what we'll be teaching you. So basically- 
+
+00:02:09,669 --> 00:02:12,800 [Speaker 1]
+You will teach us. How many days class is this? 
+
+00:02:12,800 --> 00:02:20,000 [Speaker 0]
+So it actually depends upon the time which you are actually investing on the course. So the subscription of our course is for one year. 
+
+00:02:20,000 --> 00:02:22,100 [Speaker 1]
+Oh, okay, only one year. 
+
+00:02:22,100 --> 00:02:24,680 [Speaker 0]
+Yeah, subscription is for one year, but the duration- 
+
+00:02:24,680 --> 00:02:24,690 [Speaker 1]
+Okay 
+
+00:02:24,690 --> 00:02:30,280 [Speaker 0]
+... it depends upon the time. Let's as, let's assume if you're investing two to three hours of your time every day- 
+
+00:02:30,280 --> 00:02:30,680 [Speaker 1]
+Uh. 
+
+00:02:30,680 --> 00:02:36,540 [Speaker 0]
+-you can just complete the course within one twen-- maximum one twenty days, including the projects. 
+
+00:02:36,540 --> 00:02:37,260 [Speaker 1]
+Okay. 
+
+00:02:37,260 --> 00:02:38,420 [Speaker 0]
+And, uh, so the- 
+
+00:02:38,420 --> 00:02:40,100 [Speaker 1]
+What projects will you have? 
+
+00:02:40,100 --> 00:02:57,560 [Speaker 0]
+Yeah, so there will be six, uh, technical and six non-technical projects, like developing this kind of, uh, tools with AI, or else like automating things, data visualization part. Like, we do have similar... Like, each person will be getting other, other projects, uh, 
+
+00:02:57,560 --> 00:03:03,600 [Speaker 0]
+Pawan. Like, I really can't say which, uh, exactly which project, which you'll be getting. 
+
+00:03:03,600 --> 00:03:04,740 [Speaker 1]
+Hmm. 
+
+00:03:04,740 --> 00:03:08,200 [Speaker 0]
+So each person, depending upon their perspective, you'll be getting different projects. 
+
+00:03:08,240 --> 00:03:09,960 [Speaker 1]
+How many projects you will be- 
+
+00:03:09,960 --> 00:03:13,560 [Speaker 0]
+Uh, so as you are not a technical guy, you'll be having- 
+
+00:03:13,560 --> 00:03:13,570 [Speaker 1]
+Mm 
+
+00:03:13,570 --> 00:03:15,500 [Speaker 0]
+... six non-technical projects. 
+
+00:03:15,500 --> 00:03:16,900 [Speaker 1]
+Six non-technical? 
+
+00:03:16,900 --> 00:03:17,840 [Speaker 0]
+Yes. 
+
+00:03:17,840 --> 00:03:19,760 [Speaker 1]
+Projects. Okay. 
+
+00:03:19,760 --> 00:03:19,880 [Speaker 0]
+So- 
+
+00:03:19,880 --> 00:03:23,100 [Speaker 1]
+With that, uh... Yeah, tell me. 
+
+00:03:23,100 --> 00:03:26,740 [Speaker 0]
+No, no, no. Yeah. Yes, please go on. Ask your queries. 
+
+00:03:26,740 --> 00:03:30,700 [Speaker 1]
+No, no. Uh, yeah, go on, go on, go on. So after this, what happens? 
+
+00:03:30,700 --> 00:03:38,320 [Speaker 0]
+Post-completion of your project, you'll be getting an ISO individual certificate, like, which is the highest value certificate in the job market. 
+
+00:03:38,320 --> 00:03:39,740 [Speaker 1]
+ISO what certificate? 
+
+00:03:39,740 --> 00:03:41,560 [Speaker 0]
+ISO individual. Individual certificate. 
+
+00:03:41,560 --> 00:03:42,980 [Speaker 1]
+Individual certificate. 
+
+00:03:42,980 --> 00:03:43,020 [Speaker 0]
+Yes. 
+
+00:03:43,020 --> 00:03:44,460 [Speaker 1]
+Okay. 
+
+00:03:44,460 --> 00:03:44,720 [Speaker 0]
+So- 
+
+00:03:44,720 --> 00:03:46,020 [Speaker 1]
+That's given by whom? 
+
+00:03:46,020 --> 00:03:48,100 [Speaker 0]
+Uh, Sridham IT. 
+
+00:03:48,100 --> 00:03:50,299 [Speaker 1]
+That's your, your own certification? 
+
+00:03:50,300 --> 00:03:53,560 [Speaker 0]
+Yeah. So, like, we are ISO-integrated company, right? 
+
+00:03:53,560 --> 00:03:54,660 [Speaker 1]
+Uh-huh. 
+
+00:03:54,660 --> 00:04:07,490 [Speaker 0]
+So you'll be getting this certification. And, uh, see, let's assume if you are using AI to-- You can also use AI to make some passive income, too, right? Like the content creation part, which Avinash mentioned. So- 
+
+00:04:07,490 --> 00:04:07,490 [Speaker 1]
+Mm 
+
+00:04:07,490 --> 00:04:12,620 [Speaker 0]
+... as you told me that you don't have any prior knowledge about this, uh, coding thing, right? 
+
+00:04:12,620 --> 00:04:12,880 [Speaker 1]
+Mm. 
+
+00:04:12,880 --> 00:04:15,370 [Speaker 0]
+The AI itself is non-coding part. 
+
+00:04:15,370 --> 00:04:15,420 [Speaker 1]
+Mm. 
+
+00:04:15,420 --> 00:04:21,920 [Speaker 0]
+As I told you, there are two types of prompt engineers. One is a non-technical prompt engineer, other is a technical prompt engineer. 
+
+00:04:21,920 --> 00:04:32,300 [Speaker 1]
+What is the scope for this non-technical prompt engineer in the market for, uh... I mean, actually, I'm, uh, seventeen years experience I'm having. 
+
+00:04:32,300 --> 00:04:33,620 [Speaker 0]
+Mm-hmm, mm-hmm. 
+
+00:04:33,620 --> 00:04:37,260 [Speaker 1]
+So, uh, yeah, what is the scope for this 
+
+00:04:37,260 --> 00:04:37,540 [Speaker 1]
+for me? 
+
+00:04:37,540 --> 00:04:54,660 [Speaker 0]
+So, uh, let's talk, uh... See, as you already hold seventeen years of experience, I would highly recommend you not to, uh, switch your job at the moment, because you might be getting packages which are, uh, meant for freshers, like seven or most probably eight to ten LPA- 
+
+00:04:54,660 --> 00:04:54,700 [Speaker 1]
+Mm 
+
+00:04:54,700 --> 00:04:58,360 [Speaker 0]
+... is the starting fresher salary which prompt engineers would get. 
+
+00:04:58,360 --> 00:04:59,900 [Speaker 1]
+Okay. 
+
+00:04:59,900 --> 00:05:11,140 [Speaker 0]
+So basically, non-tech guys, non-technical prompt engineers are those, like, who utilize AI tools to create apps, websites, custom chatbots, or other tools. 
+
+00:05:11,140 --> 00:05:11,240 [Speaker 1]
+Okay. 
+
+00:05:11,240 --> 00:05:16,340 [Speaker 0]
+So technical prompt engineers are those who create AI tools. 
+
+00:05:16,340 --> 00:05:17,020 [Speaker 1]
+Okay. 
+
+00:05:17,020 --> 00:05:17,160 [Speaker 0]
+So- 
+
+00:05:17,160 --> 00:05:22,100 [Speaker 1]
+Non-technical, what is, what, what is the, what is the role, non-technical? Can you please tell again? 
+
+00:05:22,100 --> 00:05:31,500 [Speaker 0]
+Non-technical guys are those who create, uh, uh, websites or scalable apps, or, uh, custom chatbots or voicebots, or develop any- 
+
+00:05:31,500 --> 00:05:32,580 [Speaker 1]
+Chatbots? 
+
+00:05:32,580 --> 00:05:33,660 [Speaker 0]
+Chatbots, yes. 
+
+00:05:33,660 --> 00:05:35,300 [Speaker 1]
+Developing chatbots? 
+
+00:05:35,300 --> 00:05:40,099 [Speaker 0]
+Yeah, developing chatbots, voicebots, websites- 
+
+00:05:40,160 --> 00:05:40,469 [Speaker 1]
+Uh. 
+
+00:05:40,469 --> 00:05:41,580 [Speaker 0]
+-uh, 
+
+00:05:41,580 --> 00:05:43,620 [Speaker 0]
+apps, mobile applications. 
+
+00:05:43,620 --> 00:05:46,039 [Speaker 1]
+Uh, even mobile applications, is it? 
+
+00:05:46,040 --> 00:05:47,270 [Speaker 0]
+Yes. 
+
+00:05:47,270 --> 00:05:47,280 [Speaker 1]
+Okay. 
+
+00:05:47,280 --> 00:05:55,900 [Speaker 0]
+There's something called build.new, which, uh, you can use, uh, and you can create a website, and you can deploy it on Play Store or App Store. 
+
+00:05:55,900 --> 00:05:57,060 [Speaker 1]
+Okay. 
+
+00:05:57,060 --> 00:05:58,420 [Speaker 0]
+So 
+
+00:05:58,420 --> 00:05:59,780 [Speaker 0]
+non-tech guys, what other- 
+
+00:05:59,780 --> 00:06:06,960 [Speaker 1]
+What other, uh-... what are the will, roles will, uh, non-technical guys have? 
+
+00:06:06,960 --> 00:06:12,360 [Speaker 0]
+See, AI trainer, AI business analyst, AI manager, AI consultant. 
+
+00:06:12,360 --> 00:06:20,400 [Speaker 1]
+No, no, no. Uh, the activities, like what you said, developing chatbots, websites, mobile apps. 
+
+00:06:20,400 --> 00:06:26,120 [Speaker 0]
+Voice bots. So anything like, uh... See, developing anything using AI tool. 
+
+00:06:26,120 --> 00:06:26,720 [Speaker 1]
+Okay. 
+
+00:06:26,720 --> 00:06:34,000 [Speaker 0]
+Is an, uh, work of non-technical prompt engineer. Developing AI tool is a work of technical prompt engineer. 
+
+00:06:34,000 --> 00:06:38,080 [Speaker 1]
+Oh, okay. Use- By using AI, whatever we can, we can develop? 
+
+00:06:38,080 --> 00:06:39,120 [Speaker 0]
+Yes. 
+
+00:06:39,120 --> 00:06:41,480 [Speaker 1]
+Ah, okay. Non-technical guys, okay. 
+
+00:06:41,480 --> 00:06:42,500 [Speaker 0]
+Yes. 
+
+00:06:42,500 --> 00:06:42,620 [Speaker 1]
+Mm-hmm. 
+
+00:06:42,620 --> 00:06:48,930 [Speaker 0]
+And that's what we'll be teaching you, so that you can utilize any AI tool in any domain to create anything. 
+
+00:06:48,930 --> 00:06:49,840 [Speaker 1]
+Mm. 
+
+00:06:49,840 --> 00:06:50,770 [Speaker 0]
+So you, uh, see, nowadays- 
+
+00:06:50,770 --> 00:06:55,760 [Speaker 1]
+Now, you're telling the scope for this is, uh, seven to ten lakhs, right? 
+
+00:06:55,760 --> 00:06:57,120 [Speaker 0]
+For the fresher. 
+
+00:06:57,120 --> 00:07:04,600 [Speaker 1]
+Yeah, fresher. So for me, if I go, will I be a f- Will they treat me as a fresher or a experienced? 
+
+00:07:04,600 --> 00:07:10,790 [Speaker 0]
+Uh, so, uh, like if you... That's what I told you, right? Like, if you completely shift your domain- 
+
+00:07:10,790 --> 00:07:10,810 [Speaker 1]
+Ah. 
+
+00:07:10,810 --> 00:07:13,310 [Speaker 0]
+-like, you would be treated as a fresher itself. 
+
+00:07:13,310 --> 00:07:13,820 [Speaker 1]
+Ah. 
+
+00:07:13,820 --> 00:07:16,920 [Speaker 0]
+I would highly recommend you to not to completely shift your domain- 
+
+00:07:16,920 --> 00:07:16,930 [Speaker 1]
+Ah. 
+
+00:07:16,930 --> 00:07:27,820 [Speaker 0]
+-but you can do one thing. You can integrate AI in your work, which is gonna give you, uh, scope on completing your work as soon as possible, like, uh, automate your work, and then- 
+
+00:07:27,820 --> 00:07:27,830 [Speaker 1]
+Mm 
+
+00:07:27,830 --> 00:07:34,040 [Speaker 0]
+... you, you will be getting some free time, wherein you can use it to create some side hustle. 
+
+00:07:34,040 --> 00:07:35,340 [Speaker 1]
+Yeah, side hustle, right? 
+
+00:07:35,340 --> 00:07:37,820 [Speaker 0]
+Yes. It's like passive income. 
+
+00:07:37,820 --> 00:07:37,840 [Speaker 1]
+Ah. 
+
+00:07:37,840 --> 00:07:40,990 [Speaker 0]
+See, most of the people are not only aligned with one job, right? 
+
+00:07:40,990 --> 00:07:41,000 [Speaker 1]
+Right. 
+
+00:07:41,000 --> 00:07:44,720 [Speaker 0]
+Like, they will be doing freelancing or other things to earn more money. 
+
+00:07:44,720 --> 00:07:45,330 [Speaker 1]
+Ah. 
+
+00:07:45,330 --> 00:07:50,820 [Speaker 0]
+And we'll be teaching you how to do this freelancing stuff, too, in the AI monetization module. 
+
+00:07:50,820 --> 00:07:53,860 [Speaker 1]
+Okay. AI monetization mod- 
+
+00:07:53,860 --> 00:08:03,840 [Speaker 0]
+Like, uh, so, uh, achha, you're not clear with the things which we... So do you actually know what exactly we'll be teaching you in Freedom with AI? 
+
+00:08:03,840 --> 00:08:18,070 [Speaker 1]
+No, uh, see, I seriously don't know what you're going to do, teach us. Uh, but, uh, what I, uh, know is that you will be giving access to all the, uh, you know, materials, what needs to be learned, self-study. 
+
+00:08:18,070 --> 00:08:18,120 [Speaker 0]
+Okay. 
+
+00:08:18,120 --> 00:08:23,750 [Speaker 1]
+And, uh, yeah, I know that you will be having two classes where you can clear all the doubts. That's what I know. 
+
+00:08:23,750 --> 00:08:28,760 [Speaker 0]
+So for doubt clarification, you'll be having your community managers, actually. And- 
+
+00:08:28,760 --> 00:08:29,980 [Speaker 1]
+Uh, sorry, communities? 
+
+00:08:29,980 --> 00:08:32,140 [Speaker 0]
+Community managers. You can just ping them- 
+
+00:08:32,140 --> 00:08:32,720 [Speaker 1]
+Okay 
+
+00:08:32,720 --> 00:08:34,770 [Speaker 0]
+... and your doubts will be clarified. 
+
+00:08:34,770 --> 00:08:34,799 [Speaker 1]
+Mm. 
+
+00:08:34,799 --> 00:08:35,640 [Speaker 0]
+So live classes- 
+
+00:08:35,640 --> 00:08:35,700 [Speaker 1]
+Okay 
+
+00:08:35,700 --> 00:08:41,640 [Speaker 0]
+... are different. Like, you'll be having Q&A session in the live classes, too, but live classes something different- 
+
+00:08:41,640 --> 00:08:41,789 [Speaker 1]
+Mm 
+
+00:08:41,789 --> 00:08:43,390 [Speaker 0]
+... when compared to this pre-recorded content. 
+
+00:08:43,390 --> 00:08:43,420 [Speaker 1]
+Mm. 
+
+00:08:43,420 --> 00:08:47,140 [Speaker 0]
+Live classes, uh, will be conducted on new topics. 
+
+00:08:47,140 --> 00:08:47,880 [Speaker 1]
+Mm. 
+
+00:08:47,880 --> 00:09:01,320 [Speaker 0]
+Wherein this pre-recorded content, so the reason why we are putting it as a one-year subscription is, see, let's assume, uh, prompting is standard, but the tools which we'll be teaching you on prompting, they might be changing, right? 
+
+00:09:01,320 --> 00:09:02,060 [Speaker 1]
+Mm. 
+
+00:09:02,060 --> 00:09:05,559 [Speaker 0]
+And then we'll be updating the content on a daily basis. 
+
+00:09:05,560 --> 00:09:11,500 [Speaker 1]
+But, uh, you're saying, uh, any tool you will be giving the, uh... I mean, I can use that prompts, right? 
+
+00:09:11,500 --> 00:09:13,120 [Speaker 0]
+Yes. Prompting is standard. 
+
+00:09:13,120 --> 00:09:19,700 [Speaker 1]
+But now will you be teaching us, uh, any prompts? I mean, prompt tools. 
+
+00:09:19,760 --> 00:09:27,380 [Speaker 0]
+Like, on an average, in the complete course, you'll get to know about, uh, almost seventy-two tools. 
+
+00:09:27,380 --> 00:09:29,540 [Speaker 1]
+Seventy-two prompting tools? 
+
+00:09:29,540 --> 00:09:29,670 [Speaker 0]
+AI tools. 
+
+00:09:29,670 --> 00:09:30,720 [Speaker 1]
+Where... AI tools, where- 
+
+00:09:30,720 --> 00:09:30,770 [Speaker 0]
+AI tools 
+
+00:09:30,770 --> 00:09:32,220 [Speaker 1]
+-I can use the prompts. 
+
+00:09:32,220 --> 00:09:33,980 [Speaker 0]
+Yes, seventy-two AI tools. 
+
+00:09:33,980 --> 00:09:37,700 [Speaker 1]
+Okay, seventy-two. And I will have subscription for it only for one year? 
+
+00:09:37,700 --> 00:09:41,330 [Speaker 0]
+Yes, subscription of the course for one year. And also you'll be getting access- 
+
+00:09:41,330 --> 00:09:42,940 [Speaker 1]
+Of the course, you're saying? 
+
+00:09:42,940 --> 00:09:43,180 [Speaker 0]
+Yes. 
+
+00:09:43,180 --> 00:09:46,700 [Speaker 1]
+Or I can use those tools, is it? 
+
+00:09:46,700 --> 00:09:51,420 [Speaker 0]
+See, uh, you won't be getting access to the tools directly. 
+
+00:09:51,420 --> 00:09:52,960 [Speaker 1]
+No access to the tools. Okay. 
+
+00:09:52,960 --> 00:09:57,440 [Speaker 0]
+Mm-hmm. So the only access of... You'll be getting access to two tools. 
+
+00:09:57,440 --> 00:09:57,470 [Speaker 1]
+Okay. 
+
+00:09:57,470 --> 00:09:59,400 [Speaker 0]
+One is Canva Pro. 
+
+00:09:59,400 --> 00:10:00,240 [Speaker 1]
+Which one? 
+
+00:10:00,240 --> 00:10:01,640 [Speaker 0]
+Canva Pro. 
+
+00:10:01,640 --> 00:10:02,520 [Speaker 1]
+Okay. 
+
+00:10:02,520 --> 00:10:09,080 [Speaker 0]
+And the other one is invideo.io or Microsoft Office 365. You need to choose between one. 
+
+00:10:09,080 --> 00:10:10,720 [Speaker 1]
+Microsoft Office? 
+
+00:10:10,720 --> 00:10:13,240 [Speaker 0]
+365. 
+
+00:10:13,240 --> 00:10:16,420 [Speaker 1]
+Microsoft Office 365, that is the Copilot, right? 
+
+00:10:16,420 --> 00:10:18,340 [Speaker 0]
+Yes. 
+
+00:10:18,340 --> 00:10:20,119 [Speaker 1]
+Okay, you'll give access to Copilot. 
+
+00:10:20,119 --> 00:10:27,240 [Speaker 0]
+Yeah, we'll be giving access to complete Microsoft Office 365, wherein you can also use Microsoft Copilot. It's for one year. 
+
+00:10:27,240 --> 00:10:37,720 [Speaker 1]
+Okay, okay. So Microsoft 365, that, uh, we have it in our office, uh, only. Canva Pro, Microsoft 365, and then which other option? 
+
+00:10:37,720 --> 00:10:40,300 [Speaker 0]
+invideo.io. 
+
+00:10:40,300 --> 00:10:41,220 [Speaker 1]
+Nvidia? 
+
+00:10:41,220 --> 00:10:43,060 [Speaker 0]
+InVideo. InVideo. 
+
+00:10:43,060 --> 00:10:44,260 [Speaker 1]
+InVideo. Oh, okay. 
+
+00:10:44,260 --> 00:10:46,880 [Speaker 0]
+Uh, it's a video editor. 
+
+00:10:46,880 --> 00:10:47,540 [Speaker 1]
+Sorry? 
+
+00:10:47,540 --> 00:10:50,160 [Speaker 0]
+It's a video editing tool. 
+
+00:10:50,160 --> 00:10:53,500 [Speaker 1]
+Oh, okay. InVideo editing tool, okay. 
+
+00:10:53,500 --> 00:10:54,380 [Speaker 0]
+Yes. 
+
+00:10:54,380 --> 00:10:55,720 [Speaker 1]
+That's for one year, you are saying? 
+
+00:10:55,720 --> 00:10:58,420 [Speaker 0]
+Yeah, that's for one year. 
+
+00:10:58,420 --> 00:11:03,900 [Speaker 1]
+Okay. So you're saying I can do side, uh, side hustles, uh, right? 
+
+00:11:03,900 --> 00:11:06,020 [Speaker 0]
+Yes. 
+
+00:11:06,020 --> 00:11:12,140 [Speaker 1]
+Uh, in that, uh, like, what kind of side hustles would, would be, would I be able to do? 
+
+00:11:12,200 --> 00:11:25,819 [Speaker 0]
+So, uh, it again depends. Uh, see, if you're looking for the YouTube content creation or else like, uh, see, there are a few people, like, who will be creating... See, nowadays, you see these faceless AI-generated videos, right? 
+
+00:11:25,819 --> 00:11:26,720 [Speaker 1]
+Sorry? 
+
+00:11:26,720 --> 00:11:30,360 [Speaker 0]
+AI faceless, faceless generate- faceless videos, AI-generated. 
+
+00:11:30,360 --> 00:11:31,240 [Speaker 1]
+Okay. Ah. 
+
+00:11:31,240 --> 00:11:38,000 [Speaker 0]
+So I- You are seeing this a number of, uh, videos in Instagram or else like Facebook, you see a number of videos- 
+
+00:11:38,000 --> 00:11:38,009 [Speaker 1]
+Ah 
+
+00:11:38,009 --> 00:11:40,660 [Speaker 0]
+... which just have some voiceover, and even that- 
+
+00:11:40,660 --> 00:11:40,940 [Speaker 1]
+Yeah 
+
+00:11:40,940 --> 00:11:44,880 [Speaker 0]
+... uh, the voiceover is of AI, not a real human. 
+
+00:11:44,880 --> 00:11:46,040 [Speaker 1]
+Ah. 
+
+00:11:46,040 --> 00:11:56,319 [Speaker 0]
+So how to create these, uh, videos, or else like let's assume, creating a website and selling it, or else, like creating a custom chatbot and selling it. Or- 
+
+00:11:56,319 --> 00:11:57,660 [Speaker 1]
+I could sell it, is it? 
+
+00:11:57,660 --> 00:12:00,100 [Speaker 0]
+Yeah, you could sell it. Digital arts- 
+
+00:12:00,100 --> 00:12:00,660 [Speaker 1]
+eBooks 
+
+00:12:00,660 --> 00:12:05,260 [Speaker 0]
+... eBooks. So it depends, right, like which, uh... See, I actually- 
+
+00:12:05,260 --> 00:12:05,270 [Speaker 1]
+Ah 
+
+00:12:05,270 --> 00:12:10,759 [Speaker 0]
+... have my own interest in eBooks. If you have interest in creating, uh, content, like video content- 
+
+00:12:10,760 --> 00:12:11,260 [Speaker 1]
+Ah, ah.
+
+00:12:11,883 --> 00:12:13,863 [Speaker 0]
+... So some other guy might be having- 
+
+00:12:13,863 --> 00:12:13,934 [Speaker 1]
+Actually- 
+
+00:12:13,934 --> 00:12:15,204 [Speaker 0]
+Yes, please. Sorry. 
+
+00:12:15,204 --> 00:12:17,804 [Speaker 1]
+Yeah, uh, 
+
+00:12:17,804 --> 00:12:21,123 [Speaker 1]
+I wanted to check, like, digital marketing is there, right? 
+
+00:12:21,123 --> 00:12:22,034 [Speaker 0]
+Yes, digital marketing. 
+
+00:12:22,034 --> 00:12:26,784 [Speaker 1]
+Uh, would I be able to implement this in the digital marketing side? 
+
+00:12:26,784 --> 00:12:35,603 [Speaker 0]
+Yeah, like, we do actually have, uh, AI for business owners/marketers, wherein we'll be teaching you about digital marketing, too. 
+
+00:12:35,603 --> 00:12:37,324 [Speaker 1]
+Uh-huh. It covers? 
+
+00:12:37,324 --> 00:12:39,804 [Speaker 0]
+It covers digital marketing also. 
+
+00:12:39,804 --> 00:12:42,284 [Speaker 1]
+AI in? What is it called? 
+
+00:12:42,284 --> 00:12:46,863 [Speaker 0]
+AI for business owners and marketers. I have shared you the browser. Can you please open that? 
+
+00:12:46,863 --> 00:12:50,542 [Speaker 1]
+Oh, uh, I've not seen that. Uh, is it in my mail? 
+
+00:12:50,544 --> 00:12:52,804 [Speaker 0]
+No, no. Over WhatsApp. 
+
+00:12:52,804 --> 00:13:02,863 [Speaker 1]
+WhatsApp? Ah. Okay, one second. Mm. 
+
+00:13:03,603 --> 00:13:08,763 [Speaker 1]
+Uh, will you be able to give any references, uh, in job? 
+
+00:13:08,763 --> 00:13:15,503 [Speaker 0]
+Yes, like, uh, if... I'll be explaining you everything, like what exactly we'll be teaching you. So just open the browser- 
+
+00:13:15,503 --> 00:13:15,513 [Speaker 1]
+Yeah 
+
+00:13:15,513 --> 00:13:23,223 [Speaker 0]
+- and jump into page number ten. So I'll be explaining it one by one, okay? 
+
+00:13:24,424 --> 00:13:25,214 [Speaker 1]
+Mm. Done. 
+
+00:13:25,214 --> 00:13:26,623 [Speaker 0]
+So- 
+
+00:13:26,623 --> 00:13:31,444 [Speaker 1]
+Uh, can I just give-- I'll just, uh... See, actually I'm getting a ping in my office chat. 
+
+00:13:31,444 --> 00:13:31,483 [Speaker 0]
+Okay. 
+
+00:13:31,483 --> 00:13:35,483 [Speaker 1]
+I'll just give it to my wife. She will be asking you some, uh, doubts. 
+
+00:13:35,483 --> 00:13:39,743 [Speaker 0]
+Done, done, done. No worries. 
+
+00:13:39,743 --> 00:13:44,784 [Speaker 1]
+Just one second. 
+
+00:13:44,784 --> 00:13:48,123 [Speaker 0]
+No, I'm comfortable with Telugu. Uh, like, where are you from? 
+
+00:13:48,123 --> 00:13:49,184 [Speaker 1]
+Bangalore. 
+
+00:13:49,184 --> 00:13:52,184 [Speaker 0]
+Bangalore. Okay, okay. Okay. 
+
+00:13:52,184 --> 00:13:53,564 [Speaker 1]
+Uh, what's your name? I forgot- 
+
+00:13:53,564 --> 00:13:55,113 [Speaker 0]
+This is Samir. 
+
+00:13:55,113 --> 00:13:56,023 [Speaker 1]
+Samir, uh? 
+
+00:13:56,023 --> 00:13:57,144 [Speaker 0]
+Yes. 
+
+00:13:57,144 --> 00:14:06,103 [Speaker 1]
+One second, Samir. 
+
+00:14:06,164 --> 00:14:29,843 [Speaker 1]
+Just getting a ping from my office. Like, yeah. I've opened your Masters, uh... Page number ten, is it? 
+
+00:14:29,843 --> 00:14:45,223 [Speaker 0]
+Yes, page number ten. From there, the course curriculum starts. Before page number ten, you'll be having testimonials of two people, like students, one guy, like, who is doing the digital marketing stuff, digital marketing agency. 
+
+00:14:45,223 --> 00:14:46,704 [Speaker 1]
+Sorry, can you c-come again? 
+
+00:14:46,704 --> 00:14:53,924 [Speaker 0]
+Uh, so before page number ten, I believe in page number six or seven, you'll be having testimonials of two, two students, I believe. 
+
+00:14:53,924 --> 00:14:59,723 [Speaker 1]
+Oh, okay. Six or seven. 
+
+00:15:00,804 --> 00:15:07,784 [Speaker 1]
+Yeah. Vinay Palwe. 
+
+00:15:07,784 --> 00:15:09,824 [Speaker 1]
+Harikrishna Gandla. 
+
+00:15:09,824 --> 00:15:11,663 [Speaker 0]
+Yes. 
+
+00:15:16,223 --> 00:15:17,404 [Speaker 1]
+Yeah, tell me. 
+
+00:15:17,404 --> 00:15:30,824 [Speaker 0]
+So those are the testimonials, and, uh, just jump into page number ten. The first thing is a Freedom with AI blueprint, and that's where we'll be teaching you from the foundations of artificial intelligence to eight core techniques of prompt engineering. 
+
+00:15:30,824 --> 00:15:32,363 [Speaker 1]
+Okay, second module is? 
+
+00:15:32,363 --> 00:15:47,983 [Speaker 0]
+Second module is AI Tools Arsenal. So that's where you'll be getting the list of three hundred and fifty plus currently trending AI tools with their pros and cons. And also you'll be getting the walkthrough videos of those tools so that you can understand which AI tool to use at what situation. 
+
+00:15:47,983 --> 00:15:49,144 [Speaker 1]
+Mm. 
+
+00:15:49,144 --> 00:15:58,964 [Speaker 0]
+And the third one is Advanced Prompt Library. So basically, an advanced prompt should be around five lines, ten lines, fifteen lines, depending upon the requirement of the user. Right? 
+
+00:15:58,964 --> 00:16:14,464 [Speaker 0]
+So, uh, this prompt library has around five hundred plus non-technical, hundred plus programming, which is gonna help you to create your own scalable website or app. Like, each prompt will be having its own description, and you'll be getting a complete six hundred of them. 
+
+00:16:14,464 --> 00:16:17,763 [Speaker 1]
+Oh, what will be the course fee for your course? The- 
+
+00:16:17,763 --> 00:16:33,924 [Speaker 0]
+Uh, at the moment, like, uh, it's the same discounted price which Avinash mentioned, which is ten thousand rupees. But, uh, from the website, like, if you're willing to register later or else, like, if you're willing to register from the website, it's forty thousand rupees I enter. Like, I'm also sharing you the website's link for your reference. 
+
+00:16:33,924 --> 00:16:34,923 [Speaker 1]
+Yeah. Okay. 
+
+00:16:34,924 --> 00:16:43,664 [Speaker 0]
+Like, we do have a few slots available, and that's the reason I'm connecting with you today. Because you have attended the master class, uh, maybe in March, right? 
+
+00:16:43,664 --> 00:16:45,424 [Speaker 1]
+No. Yeah, correct, March. 
+
+00:16:45,424 --> 00:16:56,483 [Speaker 0]
+Yes, you have attended this master class in March, but, uh, we do have few slots available, so that's the reason we are connecting with you. And if you're interested, we can provide you with the same discounted price of ten thousand rupees. 
+
+00:16:56,483 --> 00:16:58,454 [Speaker 1]
+Ten thousand. Okay. 
+
+00:16:58,454 --> 00:16:58,904 [Speaker 0]
+Uh- 
+
+00:16:58,904 --> 00:17:01,742 [Speaker 1]
+Um, the fourth one- 
+
+00:17:01,743 --> 00:17:04,683 [Speaker 0]
+Sorry? Yes, ye- you were saying something. 
+
+00:17:04,684 --> 00:17:07,144 [Speaker 1]
+Yeah, I'm getting a call from my office. 
+
+00:17:07,144 --> 00:17:07,283 [Speaker 0]
+Mm-hmm. 
+
+00:17:07,283 --> 00:17:09,763 [Speaker 1]
+I'll go through this, uh, in detail- 
+
+00:17:09,763 --> 00:17:09,773 [Speaker 0]
+Mm-hmm. 
+
+00:17:09,773 --> 00:17:15,654 [Speaker 1]
+- then I'll come up with my questions, if I have anything, then I'll, uh, I'll ping you, maybe in the same number, right? 
+
+00:17:15,654 --> 00:17:15,673 [Speaker 0]
+Yes. 
+
+00:17:15,673 --> 00:17:17,144 [Speaker 1]
+We can have a discussion. Is that fine? 
+
+00:17:17,144 --> 00:17:21,364 [Speaker 0]
+Yes. Sure, no worries. So, uh, at what time will you be available? 
+
+00:17:21,364 --> 00:17:31,074 [Speaker 1]
+I am not sure. Now, I have some work, um, I'll have to finish that first. So... And tomorrow and day after, I'm out, so only on Monday. 
+
+00:17:31,074 --> 00:17:31,103 [Speaker 0]
+Okay. 
+
+00:17:31,103 --> 00:17:34,964 [Speaker 1]
+I'll try to go through this. Probably on Monday, I will catch you up. 
+
+00:17:34,964 --> 00:17:43,504 [Speaker 0]
+Uh, so on Monday, I'm sorry, like, you won't be getting the same discounted price. As I mentioned, like, uh, we do have the live class today, actually. 
+
+00:17:43,504 --> 00:17:44,083 [Speaker 1]
+No, okay. 
+
+00:17:44,083 --> 00:17:49,164 [Speaker 0]
+As I told you, like, uh, there are only few slots available, and that's the reason we are connecting with you. 
+
+00:17:49,164 --> 00:17:49,543 [Speaker 1]
+Okay. 
+
+00:17:49,543 --> 00:17:53,783 [Speaker 0]
+Once the class has started, we can't provide you with the same fees. 
+
+00:17:53,783 --> 00:17:56,004 [Speaker 1]
+So 
+
+00:17:56,004 --> 00:17:59,464 [Speaker 1]
+what to do? Uh, right. 
+
+00:17:59,464 --> 00:18:07,844 [Speaker 0]
+Yeah, I completely understand. So, so most probably, uh, would you be available at seven thirty or eight pm? 
+
+00:18:07,844 --> 00:18:10,563 [Speaker 1]
+Okay, I will see. PM. 
+
+00:18:10,563 --> 00:18:13,644 [Speaker 0]
+Uh, okay, Pavan. Thank you. 
+
+00:18:13,704 --> 00:18:13,984 [Speaker 1]
+Thank you.

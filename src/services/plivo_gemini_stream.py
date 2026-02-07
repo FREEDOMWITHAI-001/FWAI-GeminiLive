@@ -187,6 +187,12 @@ class PlivoGeminiSession:
         self._session_refresh_task = None
         self.GOOGLE_SESSION_LIMIT = 9 * 60  # Refresh at 9 minutes (before 10-min disconnect)
 
+        # Dual-model: Second WebSocket for transcription (Gemini 2.0 Flash)
+        self._transcription_ws = None
+        self._transcription_task = None
+        self._transcription_buffer = bytearray(b"")
+        self._transcription_setup_complete = False
+
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
         text_lower = text.lower()
@@ -504,7 +510,12 @@ Rules:
         try:
             logger.info(f"[{self.call_uuid[:8]}] STEP:PRELOAD_START | Preloading Gemini session")
             self.is_active = True
+            # Start main voice session (native audio)
             self._session_task = asyncio.create_task(self._run_google_live_session())
+            # Start transcription session (Gemini 2.0 Flash) if webhook configured
+            if self._transcript_webhook_url:
+                self._transcription_task = asyncio.create_task(self._run_transcription_session())
+                logger.info(f"[{self.call_uuid[:8]}] STEP:DUAL_MODEL | Starting transcription model for real-time transcripts")
             # Wait for setup to complete (with timeout - 8s max for better greeting)
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
@@ -729,6 +740,116 @@ Rules:
 
         self.goog_live_ws = None
         logger.info(f"[{self.call_uuid[:8]}] STEP:SESSION_ENDED | Google Live session ended")
+
+    async def _run_transcription_session(self):
+        """Run a parallel Gemini 2.0 Flash session for real-time transcription only"""
+        if not self._transcript_webhook_url:
+            logger.info(f"[{self.call_uuid[:8]}] No transcript webhook - skipping transcription model")
+            return
+
+        url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+
+        reconnect_attempts = 0
+        max_reconnects = 3
+
+        while self.is_active and reconnect_attempts < max_reconnects:
+            try:
+                async with websockets.connect(url, ping_interval=30, ping_timeout=20) as ws:
+                    self._transcription_ws = ws
+                    reconnect_attempts = 0
+                    logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_CONNECTED | Gemini 2.0 Flash for transcription")
+                    await self._send_transcription_setup()
+                    async for message in ws:
+                        if not self.is_active:
+                            break
+                        await self._receive_transcription(message)
+            except websockets.exceptions.ConnectionClosed as e:
+                logger.warning(f"[{self.call_uuid[:8]}] Transcription WS closed: {e.code}")
+                if self.is_active and not self._closing_call:
+                    reconnect_attempts += 1
+                    await asyncio.sleep(0.5)
+                    continue
+            except Exception as e:
+                logger.error(f"Transcription session error: {e}")
+                if self.is_active and not self._closing_call:
+                    reconnect_attempts += 1
+                    await asyncio.sleep(0.5)
+                    continue
+            break
+
+        self._transcription_ws = None
+        logger.info(f"[{self.call_uuid[:8]}] Transcription session ended")
+
+    async def _send_transcription_setup(self):
+        """Setup Gemini 2.0 Flash for transcription only"""
+        msg = {
+            "setup": {
+                "model": "models/gemini-2.0-flash-live-001",
+                "generation_config": {
+                    "response_modalities": ["TEXT"],  # Text only for transcription
+                },
+                "system_instruction": {"parts": [{"text": "You are a transcription assistant. Listen to the audio and transcribe what you hear. Output ONLY the transcription, nothing else."}]}
+            }
+        }
+        await self._transcription_ws.send(json.dumps(msg))
+        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent")
+
+    async def _receive_transcription(self, message):
+        """Handle transcription responses from Gemini 2.0 Flash"""
+        try:
+            resp = json.loads(message)
+
+            if "setupComplete" in resp:
+                self._transcription_setup_complete = True
+                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_READY | Gemini 2.0 Flash ready for transcription")
+                return
+
+            if "serverContent" in resp:
+                sc = resp["serverContent"]
+
+                # Get user speech transcript
+                if "inputTranscript" in sc:
+                    user_text = sc["inputTranscript"]
+                    if user_text and user_text.strip():
+                        logger.info(f"[{self.call_uuid[:8]}] STEP:LIVE_TRANSCRIPT | User: {user_text}")
+                        # Save transcript
+                        self._save_transcript("USER", user_text.strip())
+                        self._log_conversation("user", user_text.strip())
+                        # Send to n8n webhook for state machine
+                        asyncio.create_task(send_transcript_to_webhook(self, "user", user_text.strip()))
+                        # Track goodbye
+                        if self._is_goodbye_message(user_text):
+                            self.user_said_goodbye = True
+                            self._check_mutual_goodbye()
+
+                # Get model text response (agent transcript)
+                if "modelTurn" in sc:
+                    parts = sc.get("modelTurn", {}).get("parts", [])
+                    for p in parts:
+                        if p.get("text"):
+                            # This would be agent's transcribed speech - but we don't need it
+                            # as native audio model handles the actual response
+                            pass
+
+        except Exception as e:
+            logger.error(f"Transcription receive error: {e}")
+
+    async def _send_audio_to_transcription(self, audio_b64: str):
+        """Send audio to transcription model"""
+        if not self._transcription_ws or not self._transcription_setup_complete:
+            return
+        try:
+            msg = {
+                "realtime_input": {
+                    "media_chunks": [{
+                        "mime_type": "audio/pcm;rate=16000",
+                        "data": audio_b64
+                    }]
+                }
+            }
+            await self._transcription_ws.send(json.dumps(msg))
+        except Exception as e:
+            logger.debug(f"Error sending to transcription: {e}")
 
     async def _send_session_setup(self):
         # Concise accent instruction (shorter = faster responses)
@@ -1151,11 +1272,15 @@ Rules:
                 ac = self.inbuffer[:self.BUFFER_SIZE]
                 msg = {"realtime_input": {"media_chunks": [{"mime_type": "audio/pcm;rate=16000", "data": base64.b64encode(bytes(ac)).decode()}]}}
                 try:
+                    # Send to main voice model (native audio)
                     await self.goog_live_ws.send(json.dumps(msg))
+                    # Also send to transcription model (Gemini 2.0 Flash) for real-time transcript
+                    audio_b64_chunk = base64.b64encode(bytes(ac)).decode()
+                    asyncio.create_task(self._send_audio_to_transcription(audio_b64_chunk))
                     chunks_sent += 1
                     # Log first chunk sent to Gemini for this user speech
                     if chunks_sent == 1 and self._user_speaking:
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TO_GEMINI -> Sending user audio to Gemini")
+                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TO_GEMINI -> Sending user audio to Gemini (voice + transcription)")
                 except Exception as send_err:
                     logger.error(f"Error sending audio to Google: {send_err} - continuing")
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
@@ -1205,6 +1330,16 @@ Rules:
                 pass
         if self._session_task:
             self._session_task.cancel()
+
+        # Stop transcription session (dual-model)
+        if self._transcription_ws:
+            try:
+                await self._transcription_ws.close()
+            except:
+                pass
+        if self._transcription_task:
+            self._transcription_task.cancel()
+
         self._save_transcript("SYSTEM", "Call ended")
 
         # Stop recording thread

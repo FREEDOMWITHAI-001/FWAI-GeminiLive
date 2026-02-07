@@ -1,0 +1,986 @@
+00:00:00,210 --> 00:00:02,660 [Speaker 0]
+Am I having a word with Geeta? 
+
+00:00:02,660 --> 00:00:03,620 [Speaker 1]
+Yes, who is this? 
+
+00:00:03,620 --> 00:00:08,420 [Speaker 0]
+Hi, Geeta, this is Samir. I'm calling you from Freedom with AI. 
+
+00:00:08,420 --> 00:00:09,120 [Speaker 1]
+Okay. 
+
+00:00:09,120 --> 00:00:10,800 [Speaker 0]
+How are you doing? 
+
+00:00:10,800 --> 00:00:12,180 [Speaker 1]
+Yeah, good. How are you, Samir? 
+
+00:00:12,180 --> 00:00:19,480 [Speaker 0]
+I'm doing great. Thank you so much for asking. So, Geeta, I believe that you have recently attended the AI masterclass with Avinash Mada, right? 
+
+00:00:19,480 --> 00:00:20,620 [Speaker 1]
+Yes, I did. 
+
+00:00:20,620 --> 00:00:26,260 [Speaker 0]
+Mm-hmm. So I just want to understand, like, why did you register for this masterclass, Geeta? 
+
+00:00:26,260 --> 00:00:39,700 [Speaker 1]
+Uh, because I want to upskill my, uh, upgrade my skills. So, uh, recently, AI is becoming so much, uh, trend, so I just want to upskill myself, so I've attended the masterca- masterclass. 
+
+00:00:39,700 --> 00:00:44,540 [Speaker 0]
+Got it. So where did you find out about this masterclass, Geeta? 
+
+00:00:44,540 --> 00:00:50,600 [Speaker 1]
+I've been following, uh, Avinash from Instagram, so I've watched the post regarding the masterclass. 
+
+00:00:50,600 --> 00:00:54,280 [Speaker 0]
+Got it. So you got to know from Avinash's account? 
+
+00:00:54,280 --> 00:00:54,880 [Speaker 1]
+Yeah. 
+
+00:00:54,880 --> 00:00:58,760 [Speaker 0]
+Got it. And what attracted you the most from the session, Geeta? 
+
+00:00:58,760 --> 00:01:02,920 [Speaker 1]
+Uh, the five hundred part of which Avinash mentioned in the masterclass. 
+
+00:01:02,920 --> 00:01:09,250 [Speaker 0]
+Got it. Got it. So, Geeta, the reason I'm asking you these questions is to understand more about your profile- 
+
+00:01:09,250 --> 00:01:09,320 [Speaker 1]
+Okay 
+
+00:01:09,320 --> 00:01:18,340 [Speaker 0]
+... and to see, like, if we could help you to integrate AI in your work, which is gonna help you to grow in your career personally and financially. Is that okay? 
+
+00:01:18,340 --> 00:01:19,120 [Speaker 1]
+Yeah. Yeah. 
+
+00:01:19,120 --> 00:01:24,600 [Speaker 0]
+Got it. So, Geeta, I just want to understand your profile. Like, what are you doing right now? 
+
+00:01:24,600 --> 00:01:27,860 [Speaker 1]
+Uh, I'm working as a front-end developer. 
+
+00:01:27,860 --> 00:01:32,500 [Speaker 0]
+Got it. Uh, and can I know, like, how many years of experience do you hold? 
+
+00:01:32,500 --> 00:01:36,900 [Speaker 1]
+I have, uh, recently started my career. It's been five months. 
+
+00:01:36,900 --> 00:01:39,100 [Speaker 0]
+Got it. So you have recently started your career. 
+
+00:01:39,100 --> 00:01:39,520 [Speaker 1]
+Yes. 
+
+00:01:39,520 --> 00:01:44,400 [Speaker 0]
+So you got this job on your own, or else like you got it from the campus placements? 
+
+00:01:44,400 --> 00:01:46,300 [Speaker 1]
+Uh, from the campus placement. 
+
+00:01:46,300 --> 00:01:58,039 [Speaker 0]
+Got it. Got it. Got it. So, Geeta, as you told me that you are a software developer, so are you using ChatGPT or any other AI tools in your personal or professional work? 
+
+00:01:58,040 --> 00:02:06,200 [Speaker 1]
+Yeah, I've been using ChatGPT to draft some emails and to do some other works, but I'm not using any AI tools. I'm just using ChatGPT. 
+
+00:02:06,200 --> 00:02:10,900 [Speaker 0]
+Okay, you're just using ChatGPT for personal purposes. 
+
+00:02:10,900 --> 00:02:17,780 [Speaker 0]
+Got it. So, Geeta, do you have any friends or known people, like, who can guide you to understand the future trends? 
+
+00:02:17,780 --> 00:02:19,180 [Speaker 1]
+Yes. 
+
+00:02:19,180 --> 00:02:23,520 [Speaker 0]
+Cool. Uh, so can I know, like, what exactly they are doing? 
+
+00:02:23,520 --> 00:02:27,260 [Speaker 1]
+Uh, same like my, the software developers from MNT. 
+
+00:02:27,260 --> 00:02:28,060 [Speaker 0]
+Mm-hmm. 
+
+00:02:28,060 --> 00:02:34,859 [Speaker 1]
+So, uh, basically, they have suggested me to attend these webinars to gain my knowledge on the AI part. 
+
+00:02:34,860 --> 00:02:36,070 [Speaker 0]
+Okay. 
+
+00:02:36,070 --> 00:02:36,120 [Speaker 1]
+Yeah. 
+
+00:02:36,120 --> 00:02:38,980 [Speaker 0]
+So they suggested you to learn more about AI? 
+
+00:02:38,980 --> 00:02:39,880 [Speaker 1]
+Yes. 
+
+00:02:39,880 --> 00:02:47,320 [Speaker 0]
+Got it. Got it. So, Geeta, as you told me that you are looking to upskill or learn new things about AI, right? 
+
+00:02:47,320 --> 00:02:47,880 [Speaker 1]
+Yeah. 
+
+00:02:47,880 --> 00:02:52,420 [Speaker 0]
+So what sort of resources are you using to upskill yourself? 
+
+00:02:52,420 --> 00:02:56,820 [Speaker 1]
+Uh, I recently attended, uh, two to three masterclasses as well. 
+
+00:02:56,820 --> 00:02:58,060 [Speaker 0]
+Mm-hmm. 
+
+00:02:58,060 --> 00:03:14,560 [Speaker 1]
+And I've been looking for, uh, offline co- uh, offline thing to upskill myself, but I couldn't find, uh, these, uh... where I have attended two to, two to three masterclasses. I've not, uh, find out them very informative as such. 
+
+00:03:14,560 --> 00:03:15,780 [Speaker 0]
+Mm-hmm. 
+
+00:03:15,780 --> 00:03:21,180 [Speaker 1]
+So I'm attending webinars, and I'm looking in, uh, like, YouTubes to 
+
+00:03:21,180 --> 00:03:23,320 [Speaker 1]
+learn something like that. 
+
+00:03:23,320 --> 00:03:30,000 [Speaker 0]
+Got it. So you didn't feel that, uh, this Freedom with AI's masterclass is informative? Like, is it not informative? 
+
+00:03:30,000 --> 00:03:35,380 [Speaker 1]
+No, no, no, not this, not this. Actually, I've attended two to, uh, three masterclasses before this- 
+
+00:03:35,380 --> 00:03:35,690 [Speaker 0]
+Okay 
+
+00:03:35,690 --> 00:03:55,760 [Speaker 1]
+... from other guy, so I don't find it informative. That's why I've, uh, watched-- and one of my friends suggested to follow Avinash. So I've started following them, and I found out this post about the masterclass, and I've attended. This is informative and, uh, the class was very nice. The class was very nice. 
+
+00:03:55,760 --> 00:04:04,300 [Speaker 0]
+Got it. Thank you. So, uh, Geeta, as you told me that you are specifically, specifically looking for this, uh, offline courses, right? 
+
+00:04:04,360 --> 00:04:04,829 [Speaker 1]
+Yeah. 
+
+00:04:04,829 --> 00:04:09,840 [Speaker 0]
+So why exactly you're looking for this offline thing? 
+
+00:04:09,840 --> 00:04:12,700 [Speaker 1]
+Uh, because, uh, 
+
+00:04:12,700 --> 00:04:22,920 [Speaker 1]
+due to some, um... Like, if I attend it online, due to some, uh, like, network issues or some- something, I couldn't able to, uh, concentrate. 
+
+00:04:22,920 --> 00:04:23,110 [Speaker 0]
+Mm-hmm. 
+
+00:04:23,110 --> 00:04:35,280 [Speaker 1]
+If it's offline, I can, uh, put my, uh, thoughts, everything. So I couldn't find online will be much, uh, like, I don't find that- 
+
+00:04:35,280 --> 00:04:38,780 [Speaker 0]
+Got it. Like, you feel that you couldn't concentrate more if it's online rather- 
+
+00:04:38,780 --> 00:04:38,890 [Speaker 1]
+Yeah 
+
+00:04:38,890 --> 00:04:40,380 [Speaker 0]
+... than if it's offline. 
+
+00:04:40,380 --> 00:04:47,980 [Speaker 1]
+And even if I have any doubts or if I want to put my thoughts in that- - I couldn't do it in online. 
+
+00:04:47,980 --> 00:04:48,000 [Speaker 0]
+Got- 
+
+00:04:48,000 --> 00:04:52,680 [Speaker 1]
+If it's offline, I can do better. I think I can do better in offline courses. 
+
+00:04:52,680 --> 00:04:55,000 [Speaker 0]
+Got it. Got it, uh, Geeta, makes sense. 
+
+00:04:55,000 --> 00:04:55,720 [Speaker 1]
+Yeah. 
+
+00:04:55,720 --> 00:05:11,190 [Speaker 0]
+So, Geeta, let me explain you one small difference between offline co- teaching and online teaching. See, I completely understand your perspective that, uh, you feel that you couldn't invest more time on this online thing, and you couldn't, uh, resolve your queries faster. 
+
+00:05:11,190 --> 00:05:11,200 [Speaker 1]
+Yeah. 
+
+00:05:11,200 --> 00:05:19,190 [Speaker 0]
+But the difference is, see, uh, the mentors, like, who will be teaching you in the offline part is a guy, like, who just completed their certification, and they will be having- 
+
+00:05:19,190 --> 00:05:19,190 [Speaker 1]
+Okay 
+
+00:05:19,190 --> 00:05:21,400 [Speaker 0]
+... some limited knowledge, right? 
+
+00:05:21,400 --> 00:05:21,640 [Speaker 1]
+Yeah. 
+
+00:05:21,640 --> 00:05:32,060 [Speaker 0]
+But the mentors who are teaching online, they are already like, uh, let's talk about Freedom with AI's mentors. Let's say Avinash or Madhavam Shenoy or Leela Shankar, these guys are already industry experts. They are working with- 
+
+00:05:32,060 --> 00:05:32,120 [Speaker 1]
+Okay 
+
+00:05:32,120 --> 00:05:34,620 [Speaker 0]
+... the system as well as they will be teaching this. 
+
+00:05:34,620 --> 00:05:34,920 [Speaker 1]
+Okay. 
+
+00:05:34,920 --> 00:05:41,560 [Speaker 0]
+So they will be having, uh, much information than compared to the guys, like, who are just teaching in offline thing, right? 
+
+00:05:41,560 --> 00:05:42,880 [Speaker 1]
+So I have a doubt. 
+
+00:05:42,880 --> 00:05:44,480 [Speaker 0]
+Mm-hmm. 
+
+00:05:44,480 --> 00:05:48,040 [Speaker 1]
+So, uh, as I said, I have attended online, okay? 
+
+00:05:48,040 --> 00:05:49,220 [Speaker 0]
+Mm-hmm. 
+
+00:05:49,220 --> 00:05:52,920 [Speaker 1]
+But I got some doubts, but I couldn't answer it in the online class. 
+
+00:05:52,920 --> 00:05:54,520 [Speaker 0]
+Mm-hmm. 
+
+00:05:54,520 --> 00:06:04,900 [Speaker 1]
+Uh, can, uh, can I get those, uh, can I get their numbers to text personally and to get any further information if I have any doubts, uh?
+
+00:06:06,164 --> 00:06:17,304 [Speaker 0]
+... Yeah, I'll be definitely helping you out with this. Like, Avinash has mentioned you about these things, right? Like the portal thing and community access of Freedom with AI. So I'll just give you a glance 
+
+00:06:17,304 --> 00:06:20,634 [Speaker 0]
+of Freedom with AI, like what exactly we'll be teaching you. But before- 
+
+00:06:20,634 --> 00:06:20,634 [Speaker 1]
+Yeah 
+
+00:06:20,634 --> 00:06:30,004 [Speaker 0]
+... that, uh, one more question, Geeta. So how important do you feel that learning AI is mandatory thing for you to survive in this market? 
+
+00:06:30,004 --> 00:06:34,004 [Speaker 1]
+Yes, it's really important as there has been a lot of layoffs recently- 
+
+00:06:34,004 --> 00:06:34,014 [Speaker 0]
+Mm 
+
+00:06:34,014 --> 00:06:41,204 [Speaker 1]
+... and people who have learned AI are on safer side. This is what I, uh, observed mostly. So 
+
+00:06:41,204 --> 00:06:45,464 [Speaker 1]
+learning AI is mandatory thing for me to survive in this market. 
+
+00:06:45,464 --> 00:07:00,444 [Speaker 0]
+Yeah. So, uh, I believe, like, if you know this news or not, but recently, even Google has fired their entire Python development team just because they didn't learn automation, and the whole work of that team is being done by two AI engineers. So- 
+
+00:07:00,444 --> 00:07:00,454 [Speaker 1]
+Wow! 
+
+00:07:00,454 --> 00:07:05,284 [Speaker 0]
+... without learning this AI thing, like, no job is actually safer, right? 
+
+00:07:05,284 --> 00:07:05,854 [Speaker 1]
+Yeah. 
+
+00:07:05,854 --> 00:07:13,433 [Speaker 0]
+Got it. So, uh, let's dive deep into the Freedom with AI thing. So I'll just give you a glance about it, okay? So at Freedom- 
+
+00:07:13,433 --> 00:07:13,433 [Speaker 1]
+Okay 
+
+00:07:13,433 --> 00:07:14,084 [Speaker 0]
+... with AI- 
+
+00:07:14,084 --> 00:07:14,094 [Speaker 1]
+Yeah 
+
+00:07:14,094 --> 00:07:17,524 [Speaker 0]
+... what we'll be teaching you is prompt engineering. 
+
+00:07:17,524 --> 00:07:17,944 [Speaker 1]
+Okay. 
+
+00:07:17,944 --> 00:07:23,804 [Speaker 0]
+So prompt engineering is nothing but the way you communicate with the AI tool to get the best out of it. 
+
+00:07:23,804 --> 00:07:24,444 [Speaker 1]
+Okay. 
+
+00:07:24,444 --> 00:07:36,484 [Speaker 0]
+So, uh, see, some people might be telling you that, uh, learn this particular thing or tool or software, but here, again, see, as you are a software developer, I believe you had this glance, right? See, no software- 
+
+00:07:36,484 --> 00:07:36,644 [Speaker 1]
+Yeah 
+
+00:07:36,644 --> 00:07:42,704 [Speaker 0]
+... or AI tools will be, uh, available in the market for a longer period. 
+
+00:07:42,704 --> 00:07:43,264 [Speaker 1]
+Hmm. 
+
+00:07:43,264 --> 00:07:46,433 [Speaker 0]
+So tools will be changing on a daily basis. But if you learn- 
+
+00:07:46,433 --> 00:07:46,624 [Speaker 1]
+Yeah 
+
+00:07:46,624 --> 00:07:55,224 [Speaker 0]
+... the technique of communicating or utilizing these tools, you can utilize any tool in the best way possible, like, which comes to you in the future. 
+
+00:07:55,224 --> 00:07:56,054 [Speaker 1]
+True, true. 
+
+00:07:56,054 --> 00:07:58,474 [Speaker 0]
+And that's what we'll be actually teaching you. 
+
+00:07:58,474 --> 00:07:58,484 [Speaker 1]
+Okay. 
+
+00:07:58,484 --> 00:08:13,563 [Speaker 0]
+And then we'll be teaching you for the domains, like, which are related to AI, such as the AI for developers thing, AI for UI/UX designers, and all other stuff. So, uh, Geeta, allow me one moment. I'm just sharing you the brochure of Freedom with AI. Can you please open that? 
+
+00:08:13,563 --> 00:08:14,644 [Speaker 1]
+Sure, uh, please share 
+
+00:08:19,764 --> 00:08:19,774 [Speaker 1]
+it. 
+
+00:08:19,774 --> 00:08:26,164 [Speaker 0]
+Yep. Uh, yep, Geeta, I just shared you the brochure. Uh, just jump into page number ten. From there, you can understand, like- 
+
+00:08:26,164 --> 00:08:29,084 [Speaker 1]
+Just a minute. Uh, I'll open. Just a minute. 
+
+00:08:29,084 --> 00:08:30,224 [Speaker 0]
+Done. 
+
+00:08:30,224 --> 00:08:33,004 [Speaker 1]
+Yeah, I've got it. 
+
+00:08:33,004 --> 00:08:34,364 [Speaker 1]
+Which page number, sorry? 
+
+00:08:34,364 --> 00:08:36,084 [Speaker 0]
+It's page number ten. 
+
+00:08:36,084 --> 00:08:39,744 [Speaker 1]
+Yeah. Okay. 
+
+00:08:39,744 --> 00:08:41,683 [Speaker 1]
+Done. Uh, yeah, please tell me. 
+
+00:08:41,683 --> 00:08:52,044 [Speaker 0]
+Yeah. So the first thing is Freedom with AI Blueprint. This is where we'll be teaching you from the foundations of artificial intelligence to eight core techniques of prompt engineering. 
+
+00:08:52,044 --> 00:08:52,104 [Speaker 1]
+Okay. 
+
+00:08:52,104 --> 00:09:07,524 [Speaker 0]
+So that, like, if, uh, see, there will be some people, like, who already have some knowledge about AI part, and there will be some people, like, who don't even have, uh, any knowledge. So that we'll be teaching you everything from the scratch itself so that, uh, you won't lose on any other things. 
+
+00:09:07,524 --> 00:09:08,354 [Speaker 1]
+Okay. 
+
+00:09:08,354 --> 00:09:27,004 [Speaker 0]
+Yeah, and the second thing is AI tools arsenal. So this is where we'll be teaching-- uh, you'll be getting the list of three hundred and fifty plus currently trending AI tools with their pros and cons. And also, you'll be getting the walkthrough videos of these tools so that you can understand which AI tools to use at what situation. 
+
+00:09:27,004 --> 00:09:27,804 [Speaker 1]
+Okay. 
+
+00:09:27,804 --> 00:09:40,044 [Speaker 0]
+Yep. And the third one is advanced prompt library. So as Avinash mentioned in the master class, an advanced prompt should be something around five lines, ten lines, and fifteen lines, depending upon the requirement of the user. Right? 
+
+00:09:40,044 --> 00:09:40,884 [Speaker 1]
+Okay. Yeah. 
+
+00:09:40,884 --> 00:09:56,764 [Speaker 0]
+So you'll be getting five hundred plus non-technical prompts and hundred plus programming prompts, and these prompts will be helpful for you to create your own scalable website or a scalable app. So depending upon your requirement, like, each prompt will be having its own description, and you'll be getting six hundred of them. 
+
+00:09:56,764 --> 00:09:57,864 [Speaker 1]
+Okay. 
+
+00:09:57,864 --> 00:10:21,444 [Speaker 0]
+Yeah. And the fourth one is AI for business owners and marketers. So, uh, as you told me that you are interested in starting your side hustle part, so this might be helpful for you. Like, uh, apart from working, so you could just start your own online business, and you can do it. And we'll be training you on how to start your own business, how to do the marketing stuff, and everything with AI in this module. 
+
+00:10:21,444 --> 00:10:22,284 [Speaker 1]
+Great. Yeah. 
+
+00:10:22,284 --> 00:10:28,944 [Speaker 0]
+And fifth one is, uh, text to image blueprint. So I believe you heard about this AI-generated photos and videos, right? 
+
+00:10:28,944 --> 00:10:29,424 [Speaker 1]
+Yes. 
+
+00:10:29,424 --> 00:10:36,424 [Speaker 0]
+So how to do this, we'll be teaching you in this part. Like, recently, the Ghibli art something is trending in the market. 
+
+00:10:36,424 --> 00:10:36,464 [Speaker 1]
+Yeah, yeah. 
+
+00:10:36,464 --> 00:10:40,344 [Speaker 0]
+So these are all AI-generated things, and we'll be training you on how to do it. 
+
+00:10:40,344 --> 00:10:40,983 [Speaker 1]
+Okay. 
+
+00:10:40,983 --> 00:10:48,004 [Speaker 0]
+Yeah. And the sixth one is AI-enhanced Excel mastery. So we'll use Excel in our day-to-day lives, right? 
+
+00:10:48,004 --> 00:10:48,304 [Speaker 1]
+Yeah. 
+
+00:10:48,304 --> 00:10:53,964 [Speaker 0]
+And in recent times, even ChatGPT is integrated with Excel, and we'll be training you on that part. 
+
+00:10:53,964 --> 00:10:55,424 [Speaker 1]
+Okay. 
+
+00:10:55,424 --> 00:11:21,723 [Speaker 0]
+Yeah. And the seventh one is AI for UI/UX designers. So this is where we'll be teaching you how to create your own scalable website or a scalable app without any coding knowledge. Like, there are a few platforms such as no-code and low-code. So low-code is where, like, you need to have some minimal coding knowledge, and no-code is where, like, you don't need any coding knowledge, such as dora.ai, which Avinash mentioned in the master class. 
+
+00:11:21,723 --> 00:11:22,784 [Speaker 1]
+Hmm. 
+
+00:11:22,784 --> 00:11:23,723 [Speaker 0]
+Just give a prompt- 
+
+00:11:23,723 --> 00:11:23,774 [Speaker 1]
+Yeah 
+
+00:11:23,774 --> 00:11:27,144 [Speaker 0]
+... and your website will be generated. 
+
+00:11:27,144 --> 00:11:27,664 [Speaker 1]
+Okay. 
+
+00:11:27,664 --> 00:11:39,183 [Speaker 0]
+And the eighth one is AI for developers. So basically, this is for every software guy, not for those, like, who only do the technical stuff, but for every software engineer, like, who is working in the IT field. 
+
+00:11:39,184 --> 00:11:39,544 [Speaker 1]
+Hmm. 
+
+00:11:39,544 --> 00:11:40,584 [Speaker 0]
+So this relates- 
+
+00:11:40,584 --> 00:11:40,614 [Speaker 1]
+Okay 
+
+00:11:40,614 --> 00:11:48,384 [Speaker 0]
+... to every domain, such as the developing, testing, analysis, and other stuff will be included in this module itself. 
+
+00:11:48,384 --> 00:11:49,483 [Speaker 1]
+Okay. 
+
+00:11:49,483 --> 00:11:59,623 [Speaker 0]
+Got it. So the ninth one is AI automation agency. So this is where we'll be teaching you how to create your own custom chatbots. It would be from the basics. 
+
+00:11:59,624 --> 00:12:01,204 [Speaker 1]
+Okay. 
+
+00:12:01,204 --> 00:12:13,983 [Speaker 0]
+And again, like, if you are willing to change your domain, like, if you're willing to go into this Python development or else, like, LangChain, so this would be helpful for you, the tenth one. So did you hear about LangChain?
+
+00:12:15,240 --> 00:12:16,430 [Speaker 1]
+... Yeah, I did. 
+
+00:12:16,430 --> 00:12:23,480 [Speaker 0]
+Cool. So LangChain is a language used to build applications, and, uh, are you using LangChain software or something? 
+
+00:12:23,480 --> 00:12:24,939 [Speaker 1]
+Yes, we are doing that. 
+
+00:12:24,939 --> 00:12:31,189 [Speaker 0]
+Okay, got it. Got it. And the eleventh one is AI monetization part. So this is where- 
+
+00:12:31,189 --> 00:12:31,189 [Speaker 1]
+Mm 
+
+00:12:31,189 --> 00:12:33,620 [Speaker 0]
+... we'll be teaching you how to 
+
+00:12:33,620 --> 00:12:35,919 [Speaker 0]
+make money using AI. 
+
+00:12:35,920 --> 00:12:36,010 [Speaker 1]
+Okay. 
+
+00:12:36,010 --> 00:12:39,579 [Speaker 0]
+Like the side hustle part, which you told me that you are interested, right? 
+
+00:12:39,579 --> 00:12:39,589 [Speaker 1]
+Yeah. 
+
+00:12:39,589 --> 00:12:48,579 [Speaker 0]
+The content creation, digital marketing stuff, everything will be covered in here. And how to do it, we'll be teaching you. Like, you'll be having the walkthrough videos too. 
+
+00:12:48,579 --> 00:12:49,540 [Speaker 1]
+Yeah, okay. 
+
+00:12:49,540 --> 00:13:02,260 [Speaker 0]
+Cool. And the twelfth one is AI Bootcamp. So basically, it's a three-day live class. It will be conducted once a month. So your community manager will be updating you once you onboard into the Freedom with AI's community. 
+
+00:13:02,260 --> 00:13:03,380 [Speaker 1]
+Okay. 
+
+00:13:03,380 --> 00:13:12,300 [Speaker 0]
+And thirteenth one is Capstone Projects. So Geetha, what we believe is learning is not only the important thing, but implementing what you have learned is important, right? 
+
+00:13:12,300 --> 00:13:13,280 [Speaker 1]
+Yes, true. 
+
+00:13:13,280 --> 00:13:19,380 [Speaker 0]
+Yeah. So that's the reason we'll be providing you twelve capstone projects, which are six technical and six non-technical. 
+
+00:13:19,380 --> 00:13:19,420 [Speaker 1]
+Okay. 
+
+00:13:19,420 --> 00:13:28,640 [Speaker 0]
+And post-completion of these projects, you'll be getting, uh, an ISO individual certificate, which is the highest valued certificate in the job market. 
+
+00:13:28,640 --> 00:13:29,640 [Speaker 1]
+Oh, great! 
+
+00:13:29,640 --> 00:13:30,130 [Speaker 0]
+Yeah. 
+
+00:13:30,130 --> 00:13:30,160 [Speaker 1]
+Okay. 
+
+00:13:30,160 --> 00:13:53,449 [Speaker 0]
+And finally, Dream Job Achievers Pack. So this Dream Job Achievers Pack, uh, is something like we'll be providing you job assistance. Like, we'll be helping you out to create your own ATS-friendly resume. We'll be helping you out to crack interviews, in the sense like you'll be having mock interview training sessions with AI. And also you'll be having job roles mastership, so that you can apply for- 
+
+00:13:53,449 --> 00:13:53,599 [Speaker 1]
+Yeah 
+
+00:13:53,599 --> 00:13:56,279 [Speaker 0]
+... AI-related jobs directly from here. 
+
+00:13:56,280 --> 00:13:57,079 [Speaker 1]
+Okay. 
+
+00:13:57,079 --> 00:14:07,079 [Speaker 0]
+Yeah. So, uh, Geetha, like, uh, what exactly is your future plan? Like, do you want to continue in the same domain? Like, what exactly you're thinking about? 
+
+00:14:07,079 --> 00:14:10,120 [Speaker 1]
+Yes, I want to continue it. 
+
+00:14:10,120 --> 00:14:17,540 [Speaker 0]
+Okay. So you want to continue with the same company, or else like you're looking for a job switch? 
+
+00:14:17,599 --> 00:14:25,240 [Speaker 1]
+I don't, uh, really think, uh, thinking about this right now, because I've just started my career and it's been only five months. 
+
+00:14:25,240 --> 00:14:25,760 [Speaker 0]
+Mm-hmm. 
+
+00:14:25,760 --> 00:14:35,920 [Speaker 1]
+I'll think about it future. Like, if I want to change, if I found anything better, or if I want to gain more knowledge on this, I would definitely like to change my job. 
+
+00:14:35,920 --> 00:14:36,199 [Speaker 0]
+Mm-hmm. 
+
+00:14:36,199 --> 00:14:38,760 [Speaker 1]
+But recently, I have no plans of changing my job. 
+
+00:14:38,760 --> 00:14:40,120 [Speaker 0]
+Mm-hmm. 
+
+00:14:40,120 --> 00:14:40,180 [Speaker 1]
+Yeah. 
+
+00:14:40,180 --> 00:14:47,220 [Speaker 0]
+So, uh, can I know, like, uh, you're working with a MNC or else like you're working with a... 
+
+00:14:47,220 --> 00:14:48,480 [Speaker 1]
+I'm working with a startup. 
+
+00:14:48,480 --> 00:14:56,800 [Speaker 0]
+Got it. Got it. So at the moment, like, you feel that gaining experience here would be helpful for you to get a-- secure a good package in big companies, right? 
+
+00:14:56,800 --> 00:14:58,859 [Speaker 1]
+Yes. True, true. 
+
+00:14:58,859 --> 00:15:03,439 [Speaker 0]
+Got it. Got it, Geetha. So do you have any further queries? 
+
+00:15:03,439 --> 00:15:13,280 [Speaker 1]
+Uh, yes. Uh, in the master class, uh, uh, Avinash mentioned that the price of the course, is it the same? 
+
+00:15:13,280 --> 00:15:22,339 [Speaker 0]
+Yeah. So at the moment, like we actually are providing the learners, like who have attended the master class previously, at the same discounted price. 
+
+00:15:22,339 --> 00:15:22,960 [Speaker 1]
+Okay. 
+
+00:15:22,960 --> 00:15:24,880 [Speaker 0]
+So 
+
+00:15:24,880 --> 00:15:32,929 [Speaker 0]
+again, uh, because as I told you, like you'll be having two live classes, okay? So one thing is, it's a pre-recorded content, as well as- 
+
+00:15:32,929 --> 00:15:32,929 [Speaker 1]
+Right 
+
+00:15:32,929 --> 00:15:36,230 [Speaker 0]
+... you'll be having two live classes every week, so that, uh- 
+
+00:15:36,230 --> 00:15:36,230 [Speaker 1]
+Yeah 
+
+00:15:36,230 --> 00:15:39,550 [Speaker 0]
+... one would be on Friday and one would be on Sunday. And this new- 
+
+00:15:39,550 --> 00:15:39,550 [Speaker 1]
+Oh 
+
+00:15:39,550 --> 00:15:47,000 [Speaker 0]
+... live classes would be covering new topics, apart from the things which are covered in the LMS portal, like the pre-recorded content. 
+
+00:15:47,000 --> 00:15:48,179 [Speaker 1]
+Okay. 
+
+00:15:48,240 --> 00:15:53,720 [Speaker 0]
+And, uh, as you know that the subscription of the course is for one year, not the duration. 
+
+00:15:53,720 --> 00:15:54,400 [Speaker 1]
+Okay. 
+
+00:15:54,400 --> 00:16:00,180 [Speaker 0]
+So duration actually depends upon the time which you are investing on the course. 
+
+00:16:00,180 --> 00:16:00,980 [Speaker 1]
+Okay. Okay. I- 
+
+00:16:00,980 --> 00:16:06,189 [Speaker 0]
+So let's assume if you could invest around two to three hours of your time on this course, you could complete- 
+
+00:16:06,189 --> 00:16:06,189 [Speaker 1]
+Mm 
+
+00:16:06,189 --> 00:16:10,300 [Speaker 0]
+... the course within ninety to one hundred and twenty days, including the projects. 
+
+00:16:10,300 --> 00:16:11,220 [Speaker 1]
+Okay. 
+
+00:16:11,220 --> 00:16:21,520 [Speaker 0]
+Yeah, and then, like, uh, you can just attend the live classes for the next, uh, eight to nine months, which are available. And if you are willing to renew it, you can do it later, like post one month. 
+
+00:16:21,520 --> 00:16:24,000 [Speaker 1]
+Yeah. Okay, understood, understood. 
+
+00:16:24,000 --> 00:16:29,520 [Speaker 0]
+So how did you feel about this course, uh, Geetha? Did you find it as a helpful thing for you? 
+
+00:16:29,520 --> 00:16:30,400 [Speaker 1]
+Yes. 
+
+00:16:30,400 --> 00:16:30,900 [Speaker 0]
+Mm-hmm. 
+
+00:16:30,900 --> 00:16:37,260 [Speaker 1]
+Uh, actually, uh, I found it very helpful, and 
+
+00:16:37,260 --> 00:16:39,300 [Speaker 1]
+it's informative and it's nice. 
+
+00:16:39,300 --> 00:16:41,500 [Speaker 0]
+Mm-hmm. 
+
+00:16:41,500 --> 00:16:46,540 [Speaker 1]
+But actually, uh, right now, I'm not financially well to start the course. 
+
+00:16:46,540 --> 00:16:47,939 [Speaker 0]
+Mm-hmm. 
+
+00:16:47,939 --> 00:16:52,099 [Speaker 1]
+So I, I, as I said before, I have started, uh, my career recently- 
+
+00:16:52,099 --> 00:16:52,410 [Speaker 0]
+Mm-hmm, mm-hmm 
+
+00:16:52,410 --> 00:16:57,520 [Speaker 1]
+... and I'm living with my parents, so I don't want to be a burden for them as of now. 
+
+00:16:57,520 --> 00:16:59,849 [Speaker 0]
+Mm-hmm. Mm-hmm. 
+
+00:16:59,849 --> 00:17:01,319 [Speaker 1]
+So- 
+
+00:17:01,319 --> 00:17:01,920 [Speaker 0]
+Yeah, I completely understand. 
+
+00:17:01,920 --> 00:17:04,800 [Speaker 1]
+I'll let you know about this later. 
+
+00:17:04,800 --> 00:17:07,220 [Speaker 0]
+Yeah, I completely understand, uh, Geetha- 
+
+00:17:07,220 --> 00:17:07,230 [Speaker 1]
+Yeah 
+
+00:17:07,230 --> 00:17:12,839 [Speaker 0]
+... like what exactly you're saying. See, you have recently started your career, and uh- 
+
+00:17:12,839 --> 00:17:12,849 [Speaker 1]
+Yeah 
+
+00:17:12,849 --> 00:17:15,230 [Speaker 0]
+... you are having these financial constraints. 
+
+00:17:15,230 --> 00:17:15,260 [Speaker 1]
+Yeah. 
+
+00:17:15,260 --> 00:17:37,900 [Speaker 0]
+But one thing which I would like to add here is: so see, uh, we are in this loop of this financial constraints, right? And the one thing which you are doing, like once you upskill yourself, only then, like, you can get some bigger packages and you will be financially free. That's what I feel, right? Even you feel, like we are working to take care of our families, like to feed them- 
+
+00:17:37,900 --> 00:17:37,909 [Speaker 1]
+Yeah 
+
+00:17:37,909 --> 00:17:40,020 [Speaker 0]
+... and earn some good money, right? 
+
+00:17:40,020 --> 00:17:40,720 [Speaker 1]
+Yeah. 
+
+00:17:40,720 --> 00:17:51,080 [Speaker 0]
+But at the moment, as you told me, that you are having these financial constraints, and if you are continuing in the same way, don't you think that you're stuck in a loop? 
+
+00:17:51,080 --> 00:17:54,400 [Speaker 1]
+Yeah, but, uh, 
+
+00:17:54,400 --> 00:17:57,179 [Speaker 1]
+I'm not saying that I, I don't want to upskill myself- 
+
+00:17:57,179 --> 00:17:57,190 [Speaker 0]
+Mm 
+
+00:17:57,190 --> 00:17:59,940 [Speaker 1]
+... but I want some time to 
+
+00:17:59,940 --> 00:18:03,800 [Speaker 1]
+gain some money, and I have, uh-- I want to earn some money first. 
+
+00:18:03,800 --> 00:18:04,159 [Speaker 0]
+Mm-hmm. 
+
+00:18:04,159 --> 00:18:07,139 [Speaker 1]
+Like, and I have EMIs to pay. 
+
+00:18:07,139 --> 00:18:07,240 [Speaker 0]
+Oh. 
+
+00:18:07,240 --> 00:18:13,100 [Speaker 1]
+So if those come, if those are completed and that, and then I'll definitely contact you. 
+
+00:18:13,100 --> 00:18:14,780 [Speaker 0]
+Got it. Makes sense. So- 
+
+00:18:14,780 --> 00:18:14,830 [Speaker 1]
+Yeah 
+
+00:18:14,830 --> 00:18:18,699 [Speaker 0]
+... you are interested in the course, but at the moment, due to your financial- 
+
+00:18:18,700 --> 00:18:20,440 [Speaker 1]
+I'm really interested, yes. I'm really interested into the course. 
+
+00:18:20,440 --> 00:18:20,710 [Speaker 0]
+Mm-hmm. 
+
+00:18:20,710 --> 00:18:24,920 [Speaker 1]
+But I have something, I have some work to do, and I have some work to finish. 
+
+00:18:24,920 --> 00:18:25,400 [Speaker 0]
+Mm-hmm, mm-hmm. 
+
+00:18:25,400 --> 00:18:29,760 [Speaker 1]
+So after that, I'm ve- I'm, I'm very much sure I'll definitely contact you for this?
+
+00:18:30,720 --> 00:18:36,669 [Speaker 0]
+... Got it. I completely understand. So, uh, as you told me that you're already paying EMIs part, so- 
+
+00:18:36,669 --> 00:18:36,679 [Speaker 1]
+Yeah 
+
+00:18:36,679 --> 00:18:55,360 [Speaker 0]
+-let me guide you with something. Like, Avinash has told you about the EMI options, which we do really offer, right? So see, like, uh, investing something around, uh, sixteen hundred rupees per a month for the next six months, do you really feel that it's a financial burden for you at the moment? 
+
+00:18:55,360 --> 00:18:57,000 [Speaker 1]
+Uh, not actually. 
+
+00:18:57,000 --> 00:19:06,080 [Speaker 0]
+Mm-hmm. Then what exactly do you feel that, uh, it's a thing like which is gonna be a burden for you? 
+
+00:19:06,080 --> 00:19:16,740 [Speaker 1]
+Uh, like I have some, uh, few things to be done. I'll definitely contact you like I don't, uh... Not like that I don't want to attend the course or not like that. 
+
+00:19:16,740 --> 00:19:18,320 [Speaker 0]
+Mm-hmm. Mm-hmm. So- 
+
+00:19:18,320 --> 00:19:22,399 [Speaker 1]
+But I, I have some work to do, and I have some things to finish. 
+
+00:19:22,399 --> 00:19:24,040 [Speaker 0]
+Okay, so your schedule is packed. 
+
+00:19:24,040 --> 00:19:26,040 [Speaker 1]
+After that I'll definitely contact you. 
+
+00:19:26,040 --> 00:19:27,939 [Speaker 0]
+Your schedule is packed? 
+
+00:19:27,939 --> 00:19:29,179 [Speaker 1]
+Yeah. 
+
+00:19:29,179 --> 00:19:38,179 [Speaker 0]
+Got it. Got it. So, uh, can I know, like, uh, you are working in this company, and your schedule is packed because of it, right? 
+
+00:19:38,179 --> 00:19:42,699 [Speaker 1]
+Yes, and some personal issues as well, both. 
+
+00:19:42,699 --> 00:19:42,780 [Speaker 0]
+Got- 
+
+00:19:42,780 --> 00:19:47,300 [Speaker 1]
+I want to sort out everything. I want to concentrate on myself first. 
+
+00:19:47,300 --> 00:19:47,580 [Speaker 0]
+Mm-hmm. 
+
+00:19:47,580 --> 00:19:59,860 [Speaker 1]
+So before learning into something new, I want to concentrate on it first. So if I am into this busy schedule, and if I attended the classes, I wouldn't able to learn, right? 
+
+00:19:59,860 --> 00:20:01,419 [Speaker 0]
+Mm-hmm. Mm-hmm. 
+
+00:20:01,419 --> 00:20:06,520 [Speaker 1]
+So I want to finish everything, and then I want to start it fresh. 
+
+00:20:06,520 --> 00:20:06,929 [Speaker 0]
+Got it. 
+
+00:20:06,929 --> 00:20:06,939 [Speaker 1]
+That's all actually. 
+
+00:20:06,939 --> 00:20:12,460 [Speaker 0]
+Like, how much time are you, uh, willing to take, uh, Geetha? 
+
+00:20:12,460 --> 00:20:16,020 [Speaker 1]
+So as Avinash mentioned in the previous master class- 
+
+00:20:16,020 --> 00:20:16,159 [Speaker 0]
+Mm-hmm 
+
+00:20:16,159 --> 00:20:20,679 [Speaker 1]
+... uh, he said he'll, uh, arrange some more master class like this. 
+
+00:20:20,679 --> 00:20:21,020 [Speaker 0]
+Mm-hmm. 
+
+00:20:21,020 --> 00:20:31,520 [Speaker 1]
+So I'll look into it. So if Avinash again, uh, arranged a class for this, I'll definitely, uh, join the class, and then I'll think about it later. 
+
+00:20:31,520 --> 00:20:38,159 [Speaker 0]
+Got it. Like, uh, it would be great, like, if you could just let me any specific time frame, like one month or two months. 
+
+00:20:38,159 --> 00:20:41,159 [Speaker 1]
+Uh, uh, two months. Yeah. 
+
+00:20:41,159 --> 00:20:44,580 [Speaker 0]
+Okay, so you're willing to go for the course two months? 
+
+00:20:44,580 --> 00:20:45,580 [Speaker 1]
+Yeah. 
+
+00:20:45,580 --> 00:20:55,510 [Speaker 0]
+Got it. Got it, Geetha. Uh, so the only thing is, like, uh, so you have- having some financial constraints, as well as you are having some time issues which you need to take care of. 
+
+00:20:55,510 --> 00:20:55,520 [Speaker 1]
+Yeah. 
+
+00:20:55,520 --> 00:20:56,730 [Speaker 0]
+And once you're free- 
+
+00:20:56,730 --> 00:20:56,730 [Speaker 1]
+Yeah 
+
+00:20:56,730 --> 00:20:59,719 [Speaker 0]
+... uh, you will, you will be going further. 
+
+00:20:59,719 --> 00:21:01,159 [Speaker 1]
+Yeah. Sure. 
+
+00:21:01,159 --> 00:21:04,240 [Speaker 0]
+Done, Geetha. So do you have any other further queries? 
+
+00:21:04,240 --> 00:21:05,580 [Speaker 1]
+No. Thank you. 
+
+00:21:05,580 --> 00:21:07,688 [Speaker 0]
+Done. Done. Thank you so much, Geetha. Have a great day. 
+
+00:21:07,688 --> 00:21:07,719 [Speaker 1]
+Yeah. 
+
+00:21:07,719 --> 00:21:09,270 [Speaker 0]
+So also, I'll be doing one thing- 
+
+00:21:09,270 --> 00:21:12,050 [Speaker 1]
+Thank you for explaining and thank you for spending your time. 
+
+00:21:12,050 --> 00:21:12,060 [Speaker 0]
+Yeah. 
+
+00:21:12,060 --> 00:21:13,000 [Speaker 1]
+Thank you so much. 
+
+00:21:13,000 --> 00:21:19,379 [Speaker 0]
+Done. Done. Thank you, Geetha. So also, I'll be doing one thing. I'll be just sharing you a few YouTube links for your reference- 
+
+00:21:19,379 --> 00:21:19,510 [Speaker 1]
+Okay 
+
+00:21:19,510 --> 00:21:21,699 [Speaker 0]
+... about AI and prompt engineering. 
+
+00:21:21,699 --> 00:21:22,179 [Speaker 1]
+Okay. 
+
+00:21:22,179 --> 00:21:26,260 [Speaker 0]
+So just go through it, and if you have any further queries, you can just ping me at the same number. 
+
+00:21:26,260 --> 00:21:27,020 [Speaker 1]
+Sure. Sure. 
+
+00:21:27,020 --> 00:21:28,550 [Speaker 0]
+Done. Thank you, Geetha. Have a great day. 
+
+00:21:28,550 --> 00:21:29,500 [Speaker 1]
+Sorry, your name, please? 
+
+00:21:29,500 --> 00:21:31,120 [Speaker 0]
+Uh, this is Samir. 
+
+00:21:31,120 --> 00:21:32,300 [Speaker 1]
+Yeah. Thank you, Samir. 
+
+00:21:32,300 --> 00:21:33,740 [Speaker 0]
+Have a great day. 
+
+00:21:33,740 --> 00:21:35,419 [Speaker 1]
+Have a great day, too. Thank you.
