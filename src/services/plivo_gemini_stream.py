@@ -164,23 +164,30 @@ TOOL_DECLARATIONS = [
 ]
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = None, use_question_flow: bool = True):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
+        self.client_name = client_name or "fwai"
         self.use_question_flow = use_question_flow  # Use built-in question flow state machine
 
         # Question Flow Mode: Use minimal prompt + inject questions one by one
         if use_question_flow:
-            customer_name = self.context.get("customer_name", "there")
-            agent_name = self.context.get("agent_name", "Rahul")
-            self._question_flow = get_or_create_flow(call_uuid, customer_name, agent_name)
+            # Create flow with client config - loads questions, voice, etc from config file
+            self._question_flow = get_or_create_flow(
+                call_uuid=call_uuid,
+                client_name=self.client_name,
+                context=self.context
+            )
             self.prompt = self._question_flow.get_base_prompt()
-            logger.info(f"[{call_uuid[:8]}] QuestionFlow mode enabled for {customer_name}")
+            # Get voice from config (not hardcoded)
+            self._config_voice = self._question_flow.get_voice()
+            logger.info(f"[{call_uuid[:8]}] QuestionFlow: client={self.client_name}, voice={self._config_voice}")
         else:
             # Legacy mode: Load full prompt from file
             self._question_flow = None
+            self._config_voice = None
             if prompt:
                 raw_prompt = prompt
             elif client_name:
@@ -999,8 +1006,12 @@ Rules:
                 logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_CONTEXT | Loaded {len(file_history)} messages from file")
                 self._is_reconnecting = False
 
-        # Detect voice based on prompt content (female -> Kore, default -> Puck)
-        voice_name = detect_voice_from_prompt(self.prompt)
+        # Use voice from config (if question flow mode) or detect from prompt
+        if self._config_voice:
+            voice_name = self._config_voice
+            logger.info(f"[{self.call_uuid[:8]}] Using voice from config: {voice_name}")
+        else:
+            voice_name = detect_voice_from_prompt(self.prompt)
 
         # Model name differs between Google AI Studio and Vertex AI
         if config.use_vertex_ai:
