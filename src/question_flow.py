@@ -1,9 +1,15 @@
 # Question Flow State Machine
 # Manages conversation flow internally - passes ONE question at a time
 
+import json
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
+from pathlib import Path
 from loguru import logger
+
+# Directory for saving flow data (persists across disconnects)
+FLOW_DATA_DIR = Path(__file__).parent.parent / "flow_data"
+FLOW_DATA_DIR.mkdir(exist_ok=True)
 
 
 @dataclass
@@ -12,6 +18,7 @@ class QuestionFlow:
     Tracks conversation state and provides next question.
     Each call session gets its own QuestionFlow instance.
     """
+    call_uuid: str = ""
     customer_name: str = "there"
     agent_name: str = "Rahul"
     current_step: int = 0
@@ -180,6 +187,10 @@ EMPATHY PHRASES: "I understand", "That makes sense", "Got it"
         # Move to next question
         self.current_step += 1
 
+        # Save after each response (survives disconnects/crashes)
+        if self.call_uuid:
+            self.save_to_file(self.call_uuid)
+
         # Check if done
         if self.current_step >= len(self.QUESTIONS):
             return "[SAY THIS]: Great talking to you, {customer_name}! I'll send details on WhatsApp. Take care!\n[THEN USE end_call TOOL]".format(
@@ -192,10 +203,24 @@ EMPATHY PHRASES: "I understand", "That makes sense", "Got it"
         """Get all collected data from the conversation"""
         return {
             "customer_name": self.customer_name,
+            "agent_name": self.agent_name,
             "current_step": self.current_step,
             "total_steps": len(self.QUESTIONS),
+            "completed": self.current_step >= len(self.QUESTIONS),
             "responses": self.collected_data
         }
+
+    def save_to_file(self, call_uuid: str):
+        """Save current state to file (survives crashes/disconnects)"""
+        try:
+            data = self.get_collected_data()
+            data["call_uuid"] = call_uuid
+            file_path = FLOW_DATA_DIR / f"{call_uuid}.json"
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"[{call_uuid[:8]}] Saved flow data to file")
+        except Exception as e:
+            logger.error(f"Error saving flow data: {e}")
 
 
 # Store flows per call
@@ -206,6 +231,7 @@ def get_or_create_flow(call_uuid: str, customer_name: str = "there", agent_name:
     """Get existing flow or create new one for a call"""
     if call_uuid not in _call_flows:
         _call_flows[call_uuid] = QuestionFlow(
+            call_uuid=call_uuid,
             customer_name=customer_name,
             agent_name=agent_name
         )
@@ -214,8 +240,23 @@ def get_or_create_flow(call_uuid: str, customer_name: str = "there", agent_name:
 
 
 def remove_flow(call_uuid: str) -> Optional[Dict]:
-    """Remove flow and return collected data"""
+    """Remove flow from memory and return collected data"""
     if call_uuid in _call_flows:
         flow = _call_flows.pop(call_uuid)
-        return flow.get_collected_data()
+        data = flow.get_collected_data()
+        # Save final state to file
+        flow.save_to_file(call_uuid)
+        return data
+    return None
+
+
+def get_flow_data_from_file(call_uuid: str) -> Optional[Dict]:
+    """Load flow data from file (for analytics/recovery)"""
+    try:
+        file_path = FLOW_DATA_DIR / f"{call_uuid}.json"
+        if file_path.exists():
+            with open(file_path, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading flow data: {e}")
     return None
