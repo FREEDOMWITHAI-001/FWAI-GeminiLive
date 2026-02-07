@@ -14,6 +14,7 @@ from pathlib import Path
 import websockets
 from src.core.config import config
 from src.tools import execute_tool
+from src.conversational_prompts import BASE_PROMPT, DEFAULT_CONTEXT, render_prompt
 
 
 def get_vertex_ai_token():
@@ -43,15 +44,74 @@ LATENCY_THRESHOLD_MS = 500
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
 
-# Load default FWAI prompt (used when no prompt passed from API)
+# Prompts directory for client-specific prompts
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+PROMPTS_DIR.mkdir(exist_ok=True)
+
+
+def load_client_prompt(client_name: str = None) -> str:
+    """
+    Load client-specific prompt from file.
+
+    Looks for prompts in this order:
+    1. prompts/{client_name}_prompt.txt (e.g., fwai_prompt.txt, ridhi_prompt.txt)
+    2. prompts/{client_name}.txt
+    3. prompts/default_prompt.txt
+    4. Falls back to BASE_PROMPT from conversational_prompts.py
+
+    Args:
+        client_name: Client identifier (e.g., 'fwai', 'ridhi', 'acme')
+
+    Returns:
+        Prompt template string with {{placeholders}}
+    """
+    if client_name:
+        client_name = client_name.lower().replace(" ", "_")
+
+        # Try client-specific files
+        possible_files = [
+            PROMPTS_DIR / f"{client_name}_prompt.txt",
+            PROMPTS_DIR / f"{client_name}_prompt_questions.txt",
+            PROMPTS_DIR / f"{client_name}.txt",
+        ]
+
+        for prompt_file in possible_files:
+            if prompt_file.exists():
+                try:
+                    with open(prompt_file, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        if content:
+                            logger.info(f"Loaded prompt from: {prompt_file.name}")
+                            return content
+                except Exception as e:
+                    logger.warning(f"Error reading {prompt_file}: {e}")
+
+    # Try default file
+    default_file = PROMPTS_DIR / "default_prompt.txt"
+    if default_file.exists():
+        try:
+            with open(default_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if content:
+                    logger.info("Loaded prompt from: default_prompt.txt")
+                    return content
+        except Exception as e:
+            logger.warning(f"Error reading default_prompt.txt: {e}")
+
+    # Final fallback to BASE_PROMPT
+    logger.info("Using BASE_PROMPT from conversational_prompts.py")
+    return BASE_PROMPT
+
+
+# Legacy: Load from prompts.json if it exists (backward compatibility)
 def load_default_prompt():
     try:
         prompts_file = Path(__file__).parent.parent.parent / "prompts.json"
         with open(prompts_file) as f:
             prompts = json.load(f)
-            return prompts.get("FWAI_Core", {}).get("prompt", "You are a helpful AI assistant.")
+            return prompts.get("FWAI_Core", {}).get("prompt", BASE_PROMPT)
     except:
-        return "You are a helpful AI assistant."
+        return BASE_PROMPT
 
 DEFAULT_PROMPT = load_default_prompt()
 
@@ -103,12 +163,23 @@ TOOL_DECLARATIONS = [
 ]
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = None):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
-        self.prompt = prompt or DEFAULT_PROMPT  # Use passed prompt or default
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
+
+        # Load client-specific prompt or use provided prompt
+        if prompt:
+            raw_prompt = prompt
+        elif client_name:
+            raw_prompt = load_client_prompt(client_name)
+        else:
+            raw_prompt = DEFAULT_PROMPT
+
+        # Render template placeholders with context
+        self.prompt = render_prompt(raw_prompt, self.context)
+        logger.info(f"[{call_uuid[:8]}] Prompt loaded for client: {client_name or 'default'}, context keys: {list(self.context.keys())}")
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self._transcript_webhook_url = transcript_webhook_url  # URL for real-time transcript (n8n state machine)
         if transcript_webhook_url:

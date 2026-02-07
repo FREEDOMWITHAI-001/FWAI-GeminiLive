@@ -657,47 +657,55 @@ class ConversationalCallRequest(BaseModel):
     n8nWebhookUrl: str  # URL where n8n receives user speech
     callEndWebhookUrl: Optional[str] = None  # URL when call ends
     context: Optional[dict] = None
+    clientName: Optional[str] = None  # Client name for loading specific prompt (e.g., 'fwai', 'ridhi')
 
 
 @app.post("/call/conversational")
 async def start_conversational_call(request: ConversationalCallRequest):
     """
     Start a call with conversational flow mode.
-    Uses minimal base prompt, n8n controls the conversation via webhooks.
+    Loads client-specific prompt from prompts/{clientName}_prompt.txt
+    AI handles the flow naturally (no phase injection).
     """
-    from src.services.plivo_gemini_stream import preload_session_conversational
-    from src.conversational_prompts import BASE_PROMPT, PHASE_PROMPTS
+    from src.services.plivo_gemini_stream import preload_session_conversational, load_client_prompt
+    from src.conversational_prompts import BASE_PROMPT, render_prompt
 
-    logger.info(f"Starting conversational call to {request.phoneNumber}")
+    logger.info(f"Starting conversational call to {request.phoneNumber}, client: {request.clientName}")
 
     try:
         import uuid
         call_uuid = str(uuid.uuid4())
 
-        # Add customer_name to context
+        # Build context with customer name
         context = request.context or {}
         context.setdefault("customer_name", request.contactName)
         context["n8n_webhook_url"] = request.n8nWebhookUrl  # For sending transcripts
         context["conversational_mode"] = True
 
+        # Load client-specific prompt (or default)
+        raw_prompt = load_client_prompt(request.clientName)
+        # Render template placeholders with context
+        rendered_prompt = render_prompt(raw_prompt, context)
+
+        logger.info(f"[{call_uuid[:8]}] Loaded prompt for client: {request.clientName or 'default'}")
+
         # Store call data
         _pending_call_data[call_uuid] = {
             "phone": request.phoneNumber,
-            "prompt": BASE_PROMPT,  # Minimal base prompt
+            "prompt": rendered_prompt,
             "context": context,
             "webhookUrl": request.callEndWebhookUrl,
             "n8nWebhookUrl": request.n8nWebhookUrl,
-            "conversational_mode": True
+            "conversational_mode": True,
+            "clientName": request.clientName
         }
 
-        # Preload with base prompt + opening phase
-        opening_prompt = BASE_PROMPT + "\n\n" + PHASE_PROMPTS["opening"].replace("[NAME]", request.contactName)
-
+        # Preload session with the rendered prompt
         await preload_session_conversational(
             call_uuid,
             request.phoneNumber,
-            base_prompt=BASE_PROMPT,
-            initial_phase_prompt=PHASE_PROMPTS["opening"].replace("[NAME]", request.contactName),
+            base_prompt=rendered_prompt,
+            initial_phase_prompt="",  # No phase injection, AI handles flow from prompt
             context=context,
             n8n_webhook_url=request.n8nWebhookUrl,
             call_end_webhook_url=request.callEndWebhookUrl
