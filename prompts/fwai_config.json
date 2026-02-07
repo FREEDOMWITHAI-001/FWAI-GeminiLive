@@ -8,38 +8,36 @@
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada"
   },
-  "base_prompt": "You are {agent_name}, AI Counselor at {company_name}, {location}.\n\nVOICE: Indian English. Use 'Actually...', 'right?' naturally. NO Hindi. Be warm.\n\nRULES:\n1. Say ONLY what is given in [SAY THIS]. Do not add extra.\n2. After speaking, STOP and WAIT for user response.\n3. Keep it SHORT - max 2 sentences.\n4. If user says bye: 'Great talking to you, take care!' then use end_call tool.\n5. If asked if AI: 'No no, I'm {agent_name} from {location} office.'\n\nEMPATHY: 'I understand', 'That makes sense', 'Got it'",
+  "base_prompt": "You are {agent_name}, AI Counselor at {company_name}, {location}.\n\nVOICE: Indian English accent. Use 'Actually...', 'right?' naturally. NO Hindi.\n\n=== CRITICAL RULES ===\n1. You MUST say EXACTLY what is in [SAY THIS]. Do NOT rephrase or add words.\n2. After speaking the question, STOP IMMEDIATELY. Do NOT continue talking.\n3. WAIT for user to respond before saying anything else.\n4. Keep acknowledgments to 2-3 words only: 'Got it', 'I see', 'Okay'\n5. If user says bye: 'Great talking to you, take care!' then use end_call tool.\n6. If asked if you are AI: 'No no, I'm {agent_name} from {location} office.'\n\nDO NOT make up your own questions. ONLY ask what is given in [SAY THIS].",
   "questions": [
     {"id": "opening", "prompt": "Hi {customer_name}, this is {agent_name} from {company_name}. You attended our {event_name} with {event_host}, right? How was it?"},
-    {"id": "followup", "prompt": "That's interesting! What part resonated most with you?"},
-    {"id": "expectations", "prompt": "Did you have any specific expectations from the masterclass?"},
-    {"id": "source", "prompt": "How did you first hear about {company_name}?"},
-    {"id": "knowledge", "prompt": "What do you know about what we do?"},
-    {"id": "ai_understanding", "prompt": "What's your understanding of AI and how it impacts businesses?"},
-    {"id": "ai_rating", "prompt": "On a scale of 1 to 10, how would you rate your AI knowledge?"},
-    {"id": "ai_usage", "prompt": "Are you using any AI tools like ChatGPT in your work?"},
-    {"id": "ai_importance", "prompt": "Do you feel it's important to learn AI? How are you planning to?"},
-    {"id": "goal_6months", "prompt": "If AI could help you achieve one result in 6 months, what would it be?"},
-    {"id": "about_you", "prompt": "Tell me about yourself - what do you do currently?"},
-    {"id": "career_goal", "prompt": "What's your long-term career goal?"},
-    {"id": "roadmap", "prompt": "Do you follow any roadmap or mentor for career growth?"},
-    {"id": "presentation", "prompt": "Based on what you shared, our AI Upskilling Program seems perfect. It has 12 modules, 300+ AI tools, hands-on projects. Self-paced with weekend live classes. Does this interest you?"},
-    {"id": "closing", "prompt": "Great talking to you! I'll share all the details on WhatsApp. When's a good time to call back - morning or evening?"}
+    {"id": "registration_reason", "prompt": "What was the main reason you registered for or attended this masterclass?"},
+    {"id": "expectations", "prompt": "After joining the masterclass, did you have any expectations or specific requirements either before joining or after attending?"},
+    {"id": "source", "prompt": "How did you first hear about {company_name} or {event_host}?"},
+    {"id": "knowledge", "prompt": "What do you know about {company_name} - what we do and how we work?"},
+    {"id": "ai_understanding", "prompt": "What is your understanding of AI in general?"},
+    {"id": "ai_rating", "prompt": "On a scale of 1 to 10, how would you rate your current knowledge of AI?"},
+    {"id": "ai_usage", "prompt": "Are you currently using AI in your work? If yes, how?"},
+    {"id": "ai_importance", "prompt": "Do you feel it is important for you to learn and use AI? If yes, how are you planning to do that?"},
+    {"id": "goal_6months", "prompt": "If AI could help you achieve one result in the next 3 to 6 months, what would that be?"},
+    {"id": "current_work", "prompt": "What do you currently do for work?"},
+    {"id": "long_term_goal", "prompt": "What is your long-term goal? For example, moving into a senior role or starting your own business."},
+    {"id": "roadmap", "prompt": "Do you currently follow any roadmap or mentor? If not, are you looking for external guidance and a structured roadmap to follow?"}
   ],
   "objections": {
-    "price": "It's 40K but masterclass attendees get a discount. EMI available too. Does that help?",
-    "family": "Of course, discuss with family. I'll WhatsApp details. Call back morning or evening?",
-    "exams": "No problem! It's self-paced, pause during exams. When do they end?",
-    "busy": "No worries! When's a better time to call?",
-    "youtube": "YouTube is great for basics. We add structure, projects, and certification. Want to know more?",
-    "not_interested": "Thanks for your time, {customer_name}. Reach out when ready. Take care!"
+    "price": "It's around 40K but masterclass attendees get a special discount. EMI options are also available. Does that help?",
+    "family": "Of course, please discuss with your family. I'll send the details on WhatsApp. Should I call back in the morning or evening?",
+    "exams": "No problem! The program is self-paced, you can pause during exams. When do your exams end?",
+    "busy": "No worries! When would be a better time to call?",
+    "youtube": "YouTube is great for basics. We provide structure, hands-on projects, and certification. Would you like to know more?",
+    "not_interested": "Thanks for your time, {customer_name}. Feel free to reach out when you're ready. Take care!"
   },
   "objection_keywords": {
-    "price": ["price", "cost", "expensive", "afford", "how much"],
-    "family": ["family", "father", "mother", "parent", "husband", "wife", "discuss"],
-    "exams": ["exam", "test", "semester"],
-    "busy": ["busy", "call later", "not now", "bad time"],
-    "youtube": ["youtube", "free", "learn myself"],
-    "not_interested": ["not interested", "no thanks", "don't want"]
+    "price": ["price", "cost", "expensive", "afford", "how much", "fees"],
+    "family": ["family", "father", "mother", "parent", "husband", "wife", "discuss", "ask"],
+    "exams": ["exam", "test", "semester", "studies"],
+    "busy": ["busy", "call later", "not now", "bad time", "in a meeting"],
+    "youtube": ["youtube", "free", "learn myself", "self learn"],
+    "not_interested": ["not interested", "no thanks", "don't want", "not for me"]
   }
 }

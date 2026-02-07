@@ -120,9 +120,15 @@ class QuestionFlow:
         step_num = self.current_step + 1
         total = len(self.questions)
 
-        return f"""[QUESTION {step_num}/{total}]
-[SAY THIS]: {question}
-[THEN WAIT FOR USER RESPONSE - DO NOT CONTINUE TALKING]"""
+        return f"""=== QUESTION {step_num} OF {total} ===
+YOU MUST SAY THIS EXACTLY (word for word):
+"{question}"
+
+AFTER SAYING THIS:
+- STOP talking immediately
+- WAIT for user to respond
+- Do NOT add anything else
+- Do NOT rephrase the question"""
 
     def detect_objection(self, user_text: str) -> Optional[str]:
         """Detect if user raised an objection"""

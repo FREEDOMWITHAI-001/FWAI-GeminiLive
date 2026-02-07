@@ -971,7 +971,7 @@ Rules:
 
     def _buffer_user_audio(self, audio_chunk: bytes):
         """Buffer user audio for transcription"""
-        if not self._transcript_webhook_url:
+        if not self._transcript_webhook_url and not self.use_question_flow:
             return
 
         # Add to buffer (with size limit)
@@ -1293,7 +1293,7 @@ YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
 
                     # AFTER AI finishes speaking, transcribe buffered user audio via REST API
                     # This ensures transcription happens after user speaks and AI responds
-                    if self._turn_count > 1 and self._transcript_webhook_url:
+                    if self._turn_count > 1 and (self._transcript_webhook_url or self.use_question_flow):
                         asyncio.create_task(self._process_user_audio_for_transcription())
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
