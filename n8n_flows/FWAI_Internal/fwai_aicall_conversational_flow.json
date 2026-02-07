@@ -13,7 +13,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 300],
-      "webhookId": "start-conversational-call"
+      "webhookId": "conv-start-call"
     },
     {
       "parameters": {
@@ -53,7 +53,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 520],
-      "webhookId": "transcript-receiver"
+      "webhookId": "conv-transcript"
     },
     {
       "parameters": {
@@ -86,10 +86,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Analyze user intent from transcript\nconst text = $input.first().json.body.text.toLowerCase();\nconst callId = $input.first().json.body.call_uuid;\n\n// Simple intent detection - customize based on your needs\nlet nextPhase = null;\nlet data = {};\n\n// Check for various intents\nif (text.includes('yes') || text.includes('great') || text.includes('good') || text.includes('loved it')) {\n  nextPhase = 'connection_liked';\n} else if (text.includes('okay') || text.includes('fine') || text.includes('alright')) {\n  nextPhase = 'connection_neutral';\n} else if (text.includes('no') || text.includes(\"don't remember\") || text.includes('not really')) {\n  nextPhase = 'connection_dislike';\n} else if (text.includes('bye') || text.includes('goodbye') || text.includes('talk later')) {\n  nextPhase = 'closing_cold';\n} else if (text.includes('busy') || text.includes('call later') || text.includes('not now')) {\n  nextPhase = 'objection_busy';\n} else if (text.includes('price') || text.includes('cost') || text.includes('how much')) {\n  nextPhase = 'objection_price';\n} else if (text.includes('youtube') || text.includes('free')) {\n  nextPhase = 'objection_youtube';\n}\n\n// Extract data from conversation\nif (text.includes('developer') || text.includes('engineer') || text.includes('analyst')) {\n  data.role = text;\n}\n\nreturn {\n  call_uuid: callId,\n  transcript: text,\n  detected_phase: nextPhase,\n  captured_data: data,\n  should_inject: nextPhase !== null\n};"
+        "jsCode": "// FWAI Conversational Flow - State Machine\n// Analyzes user speech and determines next phase\n\nconst text = $input.first().json.body.text.toLowerCase();\nconst callId = $input.first().json.body.call_uuid;\n\n// Get current state from static data (persists across executions)\nconst staticData = $getWorkflowStaticData('global');\nconst callStates = staticData.callStates || {};\nconst currentState = callStates[callId] || { phase: 'opening', data: {} };\n\nlet nextPhase = null;\nlet capturedData = currentState.data || {};\n\n// ============ PHASE: OPENING (Masterclass feedback) ============\nif (currentState.phase === 'opening') {\n  if (text.includes('good') || text.includes('great') || text.includes('loved') || text.includes('amazing') || text.includes('helpful') || text.includes('excellent')) {\n    nextPhase = 'connection_liked';\n  } else if (text.includes('okay') || text.includes('fine') || text.includes('alright') || text.includes('decent')) {\n    nextPhase = 'connection_neutral';\n  } else if (text.includes('not good') || text.includes('bad') || text.includes(\"didn't like\") || text.includes(\"don't remember\") || text.includes('boring')) {\n    nextPhase = 'connection_dislike';\n  }\n}\n\n// ============ PHASE: CONNECTION RESPONSE ============\nelse if (currentState.phase.startsWith('connection_')) {\n  // After connection response, move to situation phase\n  nextPhase = 'situation_role';\n}\n\n// ============ PHASE: SITUATION (Role, Company, Experience) ============\nelse if (currentState.phase === 'situation_role') {\n  // Capture role from response\n  const roleKeywords = ['developer', 'engineer', 'analyst', 'manager', 'designer', 'consultant', 'student', 'fresher', 'working', 'job'];\n  for (const keyword of roleKeywords) {\n    if (text.includes(keyword)) {\n      capturedData.role = text;\n      break;\n    }\n  }\n  nextPhase = 'situation_company';\n}\nelse if (currentState.phase === 'situation_company') {\n  capturedData.company = text;\n  nextPhase = 'situation_experience';\n}\nelse if (currentState.phase === 'situation_experience') {\n  // Extract years\n  const yearsMatch = text.match(/(\\d+)\\s*(year|yr)/i);\n  if (yearsMatch) {\n    capturedData.experience_years = parseInt(yearsMatch[1]);\n  }\n  nextPhase = 'situation_ai_usage';\n}\nelse if (currentState.phase === 'situation_ai_usage') {\n  capturedData.ai_usage = text.includes('yes') || text.includes('using') || text.includes('chatgpt') || text.includes('gemini');\n  nextPhase = 'pain_job_market';\n}\n\n// ============ PHASE: PAIN POINTS ============\nelse if (currentState.phase === 'pain_job_market') {\n  capturedData.job_market_concern = text;\n  nextPhase = 'pain_challenges';\n}\nelse if (currentState.phase === 'pain_challenges') {\n  capturedData.biggest_challenge = text;\n  nextPhase = 'pain_future';\n}\nelse if (currentState.phase === 'pain_future') {\n  capturedData.future_concern = text;\n  nextPhase = 'goals_success';\n}\n\n// ============ PHASE: GOALS ============\nelse if (currentState.phase === 'goals_success') {\n  capturedData.success_definition = text;\n  nextPhase = 'goals_preference';\n}\nelse if (currentState.phase === 'goals_preference') {\n  capturedData.preference = text.includes('hike') || text.includes('salary') ? 'salary_hike' : 'side_income';\n  // Now qualify the lead\n  nextPhase = qualifyLead(capturedData);\n}\n\n// ============ OBJECTION HANDLING ============\nif (text.includes('price') || text.includes('cost') || text.includes('how much') || text.includes('fees')) {\n  nextPhase = 'objection_price';\n}\nelse if (text.includes('youtube') || text.includes('free') || text.includes('online')) {\n  nextPhase = 'objection_youtube';\n}\nelse if (text.includes('not interested') || text.includes('no thanks')) {\n  nextPhase = 'objection_not_interested';\n}\nelse if (text.includes('busy') || text.includes('call later') || text.includes('not now') || text.includes('bad time')) {\n  nextPhase = 'objection_busy';\n}\nelse if (text.includes('bye') || text.includes('goodbye') || text.includes('thank you') || text.includes('thanks')) {\n  // Check if we should end or if this is mid-conversation\n  if (currentState.phase.startsWith('closing_') || currentState.phase.startsWith('objection_not')) {\n    nextPhase = null; // Let the call end naturally\n  }\n}\n\n// ============ LEAD QUALIFICATION ============\nfunction qualifyLead(data) {\n  const years = data.experience_years || 0;\n  const hasRole = data.role && !data.role.includes('student');\n  const hasPain = data.biggest_challenge || data.job_market_concern;\n  \n  // HOT: Working professional 2+ years, clear pain, has budget\n  if (years >= 2 && hasRole && hasPain) {\n    return 'closing_hot';\n  }\n  // WARM: Interested but less experience or unclear pain\n  else if (years >= 1 || hasRole) {\n    return 'closing_warm';\n  }\n  // COLD: Student or just exploring\n  else {\n    return 'closing_cold';\n  }\n}\n\n// Update state\nif (nextPhase) {\n  callStates[callId] = { phase: nextPhase, data: capturedData };\n  staticData.callStates = callStates;\n}\n\nreturn {\n  call_uuid: callId,\n  transcript: text,\n  current_phase: currentState.phase,\n  next_phase: nextPhase,\n  captured_data: capturedData,\n  should_inject: nextPhase !== null\n};"
       },
       "id": "analyze-intent",
-      "name": "Analyze Intent",
+      "name": "Analyze Intent (State Machine)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [680, 520]
@@ -129,7 +129,7 @@
         "url": "=http://34.93.142.172:3001/call/inject/{{ $json.call_uuid }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  \"phase\": $json.detected_phase,\n  \"context\": \"\",\n  \"data\": $json.captured_data\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  \"phase\": $json.next_phase,\n  \"context\": \"\",\n  \"data\": $json.captured_data\n}) }}",
         "options": {}
       },
       "id": "inject-phase",
@@ -150,17 +150,66 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 740],
-      "webhookId": "call-ended"
+      "webhookId": "conv-call-ended"
     },
     {
       "parameters": {
-        "jsCode": "// Process call end - extract summary, lead type, etc.\nconst data = $input.first().json.body;\n\nreturn {\n  call_uuid: data.call_uuid,\n  caller_phone: data.caller_phone,\n  duration_seconds: data.duration_seconds,\n  transcript: data.transcript,\n  timestamp: data.timestamp,\n  // Add your lead classification logic here\n  lead_type: 'warm' // hot, warm, cold\n};"
+        "jsCode": "// Process call end - extract summary and lead classification\nconst data = $input.first().json.body;\nconst callId = data.call_uuid;\n\n// Get final state from static data\nconst staticData = $getWorkflowStaticData('global');\nconst callStates = staticData.callStates || {};\nconst finalState = callStates[callId] || { phase: 'unknown', data: {} };\n\n// Determine lead type from final phase\nlet leadType = 'cold';\nif (finalState.phase === 'closing_hot') leadType = 'hot';\nelse if (finalState.phase === 'closing_warm') leadType = 'warm';\n\n// Clean up state\ndelete callStates[callId];\nstaticData.callStates = callStates;\n\nreturn {\n  call_uuid: callId,\n  caller_phone: data.caller_phone,\n  duration_seconds: data.duration_seconds,\n  transcript: data.transcript,\n  timestamp: data.timestamp,\n  final_phase: finalState.phase,\n  captured_data: finalState.data,\n  lead_type: leadType,\n  // Summary for CRM\n  summary: {\n    name: finalState.data.name || data.caller_phone,\n    role: finalState.data.role || 'Unknown',\n    company: finalState.data.company || 'Unknown',\n    experience: finalState.data.experience_years || 0,\n    pain_point: finalState.data.biggest_challenge || 'Not captured',\n    lead_type: leadType\n  }\n};"
       },
       "id": "process-call-end",
       "name": "Process Call End",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [460, 740]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-hot",
+              "leftValue": "={{ $json.lead_type }}",
+              "rightValue": "hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-hot-lead",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 740]
+    },
+    {
+      "parameters": {
+        "jsCode": "// HOT LEAD - Schedule callback with senior counselor\nconst data = $input.first().json;\n\n// TODO: Integrate with your CRM/calendar system\n// Example: Google Calendar API, HubSpot, etc.\n\nreturn {\n  action: 'schedule_callback',\n  lead_type: 'HOT',\n  data: data.summary,\n  message: `HOT LEAD: ${data.summary.name} - ${data.summary.role} at ${data.summary.company} with ${data.summary.experience} years experience. Pain: ${data.summary.pain_point}`\n};"
+      },
+      "id": "handle-hot-lead",
+      "name": "Handle Hot Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 680]
+    },
+    {
+      "parameters": {
+        "jsCode": "// WARM/COLD LEAD - Log for follow-up\nconst data = $input.first().json;\n\nreturn {\n  action: data.lead_type === 'warm' ? 'nurture_sequence' : 'archive',\n  lead_type: data.lead_type.toUpperCase(),\n  data: data.summary,\n  message: `${data.lead_type.toUpperCase()} LEAD: ${data.summary.name} - ${data.summary.role}`\n};"
+      },
+      "id": "handle-other-lead",
+      "name": "Handle Warm/Cold Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 800]
     }
   ],
   "connections": {
@@ -201,14 +250,14 @@
       "main": [
         [
           {
-            "node": "Analyze Intent",
+            "node": "Analyze Intent (State Machine)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Analyze Intent": {
+    "Analyze Intent (State Machine)": {
       "main": [
         [
           {
@@ -240,17 +289,50 @@
           }
         ]
       ]
+    },
+    "Process Call End": {
+      "main": [
+        [
+          {
+            "node": "Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Handle Hot Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Warm/Cold Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": null,
+  "staticData": {
+    "global": {
+      "callStates": {}
+    }
+  },
   "meta": {
     "templateCredsSetupCompleted": true
   },
   "pinData": {},
-  "versionId": "1",
+  "versionId": "2",
   "triggerCount": 0,
   "tags": [
     {
@@ -260,6 +342,10 @@
     {
       "name": "Voice AI",
       "id": "2"
+    },
+    {
+      "name": "Conversational",
+      "id": "3"
     }
   ]
 }
