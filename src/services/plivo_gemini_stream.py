@@ -947,6 +947,13 @@ Rules:
                 logger.debug(f"[{self.call_uuid[:8]}] Ignoring short transcription: {transcription}")
                 return
 
+            # Filter out filler/hesitation sounds that aren't real responses
+            filler_words = {"um", "uh", "ah", "oh", "mhm", "hmm", "mm", "ugh", "hm", "eh"}
+            words = transcription.lower().strip().replace(".", "").replace(",", "").split()
+            if all(w in filler_words for w in words):
+                logger.debug(f"[{self.call_uuid[:8]}] Ignoring filler response: {transcription}")
+                return
+
             # Save transcript locally
             self._save_transcript("USER", transcription)
             self._log_conversation("user", transcription)
@@ -1309,7 +1316,8 @@ Wait for customer response after asking."""
                         asyncio.create_task(self._process_user_audio_for_transcription())
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
-                    if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
+                    # Skip nudging entirely in QuestionFlow mode - just wait for user
+                    if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call and not self.use_question_flow:
                         self._empty_turn_nudge_count += 1
                         if self._empty_turn_nudge_count <= 3:  # Max 3 nudges
                             logger.warning(f"[{self.call_uuid[:8]}] Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
