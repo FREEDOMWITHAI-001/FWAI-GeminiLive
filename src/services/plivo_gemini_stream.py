@@ -1026,8 +1026,13 @@ Rules:
                         await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
                 # Capture user speech transcription from Gemini
+                # Debug: log all serverContent keys to find transcript field
+                if sc_keys != ['modelTurn'] and sc_keys != ['turnComplete']:
+                    logger.info(f"[{self.call_uuid[:8]}] DEBUG:SC_KEYS | {sc_keys}")
+
                 if "inputTranscript" in sc:
                     user_text = sc["inputTranscript"]
+                    logger.info(f"[{self.call_uuid[:8]}] DEBUG:INPUT_TRANSCRIPT | raw={user_text}")
                     if user_text and user_text.strip():
                         self._last_user_speech_time = time.time()  # Track for latency
                         logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TRANSCRIPT | {user_text}")
@@ -1468,11 +1473,13 @@ async def send_transcript_to_webhook(session, role: str, text: str):
     Send real-time transcript to n8n for state machine processing.
     Called when user speaks (for intent detection) or agent speaks (for tracking).
     """
+    logger.info(f"[{session.call_uuid[:8]}] DEBUG:WEBHOOK_CALLED | role={role}, text={text[:30]}...")
+
     if not hasattr(session, '_transcript_webhook_url') or not session._transcript_webhook_url:
-        logger.debug(f"[{session.call_uuid[:8]}] No transcript webhook URL configured - skipping")
+        logger.warning(f"[{session.call_uuid[:8]}] No transcript webhook URL configured - skipping")
         return
 
-    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]}...")
+    logger.info(f"[{session.call_uuid[:8]}] STEP:TRANSCRIPT_WEBHOOK | Sending {role}: {text[:50]} to {session._transcript_webhook_url}")
 
     try:
         import httpx
