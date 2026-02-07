@@ -1009,13 +1009,11 @@ Rules:
             # Load conversation history from file (saved by background thread)
             file_history = self._load_conversation_from_file()
             if file_history:
-                history_text = "\n\n[URGENT RECONNECTION - SAY SOMETHING IMMEDIATELY]\n"
-                history_text += "[There was a brief network issue. You MUST respond RIGHT NOW with a short phrase like 'Hmm, I see...' or 'Right, right...' to fill the silence, then continue naturally.]\n"
-                history_text += "[Recent conversation:]\n"
+                history_text = "\n\n[Recent conversation - continue from here:]\n"
                 for msg_item in file_history[-self._max_history_size:]:
                     role = "Customer" if msg_item["role"] == "user" else "You"
                     history_text += f"{role}: {msg_item['text']}\n"
-                history_text += "\n[Continue the conversation naturally from where you left off. Do NOT greet again.]"
+                history_text += "\n[Continue naturally. Do NOT greet again.]"
                 full_prompt = full_prompt + history_text
                 logger.debug(f"[{self.call_uuid[:8]}] Loaded {len(file_history)} messages for reconnect")
                 self._is_reconnecting = False

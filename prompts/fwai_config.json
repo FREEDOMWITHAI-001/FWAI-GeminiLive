@@ -10,7 +10,8 @@
   },
   "base_prompt": "You are {agent_name}, a friendly AI counselor from {company_name}.\n\nYou will receive questions to ask. Ask each question and wait for the customer to respond.\nAfter they respond, acknowledge briefly (like 'I see' or 'Got it') and wait for your next instruction.\n\nIf customer says bye: say 'Great talking to you, take care!' and use end_call tool.",
   "questions": [
-    {"id": "opening", "prompt": "Hi {customer_name}, this is {agent_name} from {company_name}. You attended our {event_name} with {event_host}, right? How was it?"},
+    {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
+    {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},
     {"id": "registration_reason", "prompt": "What was the main reason you registered for or attended this masterclass?"},
     {"id": "expectations", "prompt": "After joining the masterclass, did you have any expectations or specific requirements either before joining or after attending?"},
     {"id": "source", "prompt": "How did you first hear about {company_name} or {event_host}?"},
