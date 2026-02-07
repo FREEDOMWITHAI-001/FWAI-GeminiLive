@@ -192,6 +192,8 @@ class PlivoGeminiSession:
         self._transcription_task = None
         self._transcription_buffer = bytearray(b"")
         self._transcription_setup_complete = False
+        # Buffer to collect user transcript during a turn, sent to n8n AFTER AI responds
+        self._pending_user_transcript = ""
 
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
@@ -807,16 +809,16 @@ Rules:
             if "serverContent" in resp:
                 sc = resp["serverContent"]
 
-                # Get user speech transcript
+                # Get user speech transcript - BUFFER it, don't send yet
                 if "inputTranscript" in sc:
                     user_text = sc["inputTranscript"]
                     if user_text and user_text.strip():
                         logger.info(f"[{self.call_uuid[:8]}] STEP:LIVE_TRANSCRIPT | User: {user_text}")
-                        # Save transcript
+                        # Save transcript locally
                         self._save_transcript("USER", user_text.strip())
                         self._log_conversation("user", user_text.strip())
-                        # Send to n8n webhook for state machine
-                        asyncio.create_task(send_transcript_to_webhook(self, "user", user_text.strip()))
+                        # BUFFER the transcript - will be sent to n8n AFTER AI responds
+                        self._pending_user_transcript += " " + user_text.strip()
                         # Track goodbye
                         if self._is_goodbye_message(user_text):
                             self.user_said_goodbye = True
@@ -1128,6 +1130,14 @@ Rules:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
                         logger.info(f"[{self.call_uuid[:8]}] STEP:TURN_COMPLETE | Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks in {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
+
+                    # AFTER AI finishes speaking, send buffered user transcript to n8n
+                    # This ensures phase injection is ready BEFORE next user turn
+                    if self._pending_user_transcript.strip() and self._turn_count > 1:
+                        transcript_to_send = self._pending_user_transcript.strip()
+                        self._pending_user_transcript = ""  # Clear buffer
+                        logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | After AI turn, sending: {transcript_to_send[:50]}...")
+                        asyncio.create_task(send_transcript_to_webhook(self, "user", transcript_to_send))
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
                     if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
