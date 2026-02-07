@@ -41,8 +41,51 @@ Then WAIT.""",
 Ask: 'What specifically attracted you to learn about AI?'
 Then WAIT.""",
 
+    # ============ DISCOVERY PHASES (12 Key Questions) ============
+    # Q1: Why they registered - covered by opening/connection phases above
+
+    "discovery_expectations": """CURRENT TASK: Understand expectations (Q2).
+Ask: 'Before attending or after the masterclass, did you have any specific expectations or requirements in mind?'
+Then WAIT.""",
+
+    "discovery_source": """CURRENT TASK: Find out how they heard about us (Q3).
+Ask: 'By the way, how did you first hear about Freedom With AI or Avinash Mada?'
+Then WAIT. Note: referral, social media, ads, YouTube, etc.""",
+
+    "discovery_knowledge_fwai": """CURRENT TASK: Check what they know about FWAI (Q4).
+Ask: 'What do you know about Freedom With AI - like what we do and how we work with people?'
+Then WAIT. If they don't know much, briefly explain after listening.""",
+
+    "discovery_ai_understanding": """CURRENT TASK: Gauge AI understanding (Q5).
+Ask: 'What's your general understanding of AI? Like, how do you see it impacting businesses today?'
+Then WAIT.""",
+
+    "discovery_ai_rating": """CURRENT TASK: Get self-rating on AI knowledge (Q6).
+Ask: 'On a scale of 1 to 10, how would you rate your current knowledge of AI?'
+Then WAIT. Note the rating for personalization.""",
+
+    # Q7: AI usage at work - covered by situation_ai_usage
+
+    "discovery_ai_importance": """CURRENT TASK: Check AI learning importance (Q8).
+Ask: 'Do you feel it's important for you to learn and use AI? If yes, how are you planning to go about it?'
+Then WAIT. Listen for self-study vs guided approach.""",
+
+    "discovery_ai_result": """CURRENT TASK: Desired outcome from AI (Q9).
+Ask: 'If AI could help you achieve one specific result in the next 3 to 6 months, what would that be?'
+Then WAIT. This reveals their priority - job, income, promotion, etc.""",
+
+    # Q10: Current work - covered by situation_role
+
+    "discovery_long_term_goal": """CURRENT TASK: Understand long-term vision (Q11).
+Ask: 'What's your long-term career goal? Like, are you looking to move into a senior role, start something of your own, or something else?'
+Then WAIT.""",
+
+    "discovery_roadmap": """CURRENT TASK: Check if they have guidance (Q12).
+Ask: 'Do you currently follow any roadmap or mentor for your career? Or are you looking for some external guidance and a structured path to follow?'
+Then WAIT. This is a great transition to present our program.""",
+
     # ============ SITUATION PHASES ============
-    "situation_role": """CURRENT TASK: Understand their profile.
+    "situation_role": """CURRENT TASK: Understand their profile (Q10).
 Ask: 'So tell me a bit about yourself - what do you do currently?'
 Then WAIT. Listen for: student/working, domain, experience.""",
 
@@ -212,30 +255,52 @@ QUALIFICATION_RULES = {
     ]
 }
 
-# Data fields to capture during call
+# Data fields to capture during call (12 Discovery Questions + Profile)
 DATA_FIELDS = {
+    "discovery": [
+        "registration_reason",      # Q1: Why they registered
+        "expectations",             # Q2: Expectations from masterclass
+        "lead_source",              # Q3: How they heard about FWAI
+        "lead_source_type",         # Q3: Categorized source (youtube/referral/ads/etc)
+        "fwai_knowledge",           # Q4: What they know about FWAI
+        "fwai_awareness",           # Q4: low/medium/high
+        "ai_understanding",         # Q5: General AI understanding
+        "ai_knowledge_rating",      # Q6: Self-rating 1-10
+        "ai_usage_description",     # Q7: How they use AI at work
+        "ai_importance",            # Q8: Why AI is important to them
+        "sees_ai_as_important",     # Q8: boolean
+        "learning_plan",            # Q8: self_study/guided/undecided
+        "desired_ai_result",        # Q9: What result they want from AI
+        "long_term_goal",           # Q11: Long-term career goal
+        "long_term_goal_type",      # Q11: senior_role/entrepreneurship/global_career/freelancing
+        "roadmap_response",         # Q12: Do they have a roadmap
+        "has_roadmap",              # Q12: boolean
+        "needs_guidance",           # Q12: boolean - key qualification signal
+    ],
     "profile": [
         "name",
-        "role_description",
-        "profile_type",  # student/working
-        "domain",  # finance/it/marketing/education
+        "role_description",         # Q10: Current work
+        "profile_type",             # student/working
+        "domain",                   # finance/it/marketing/education
         "experience_years",
+        "student_year",
     ],
     "intent": [
-        "primary_goal",  # job/passive_income/upskilling
+        "primary_goal",             # job/passive_income/upskilling/career_growth/entrepreneurship
         "uses_ai",
         "biggest_challenge",
     ],
     "objections": [
-        "objections_handled",  # list
+        "objections_handled",       # list
         "has_exams",
         "exam_end_date",
     ],
     "outcome": [
-        "lead_type",  # hot/warm/cold/scheduled
+        "lead_type",                # hot/warm/cold/scheduled
         "callback_time",
         "followup_scheduled",
-        "sentiment",  # positive/neutral/negative
+        "sentiment",                # positive/neutral/negative
         "engagement_score",
+        "discovery_completed",      # list of completed discovery questions
     ]
 }

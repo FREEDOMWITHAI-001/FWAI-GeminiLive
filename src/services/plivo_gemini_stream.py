@@ -802,16 +802,23 @@ Rules:
                 "generation_config": {
                     "response_modalities": ["TEXT"],  # Text only for transcription
                 },
-                "system_instruction": {"parts": [{"text": "You are a transcription assistant. Listen to the audio and transcribe what you hear. Output ONLY the transcription, nothing else."}]}
+                # Enable input audio transcription (critical for inputTranscript field)
+                "input_audio_transcription": {},  # Empty dict enables default transcription
+                "system_instruction": {"parts": [{"text": "You are a transcription assistant. Listen to the audio and output ONLY what you hear. Do not add commentary. Just transcribe."}]}
             }
         }
         await self._transcription_ws.send(json.dumps(msg))
-        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent (gemini-2.0-flash-live-001)")
+        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent (gemini-2.0-flash-live-001) with input_audio_transcription enabled")
 
     async def _receive_transcription(self, message):
         """Handle transcription responses from Gemini 2.0 Flash"""
         try:
             resp = json.loads(message)
+
+            # Debug: Log all response keys to understand what the transcription model returns
+            resp_keys = list(resp.keys())
+            if resp_keys not in [['serverContent'], ['setupComplete']]:
+                logger.info(f"[{self.call_uuid[:8]}] TRANSCRIPTION_RESP_KEYS | {resp_keys}")
 
             if "setupComplete" in resp:
                 self._transcription_setup_complete = True
@@ -820,6 +827,11 @@ Rules:
 
             if "serverContent" in resp:
                 sc = resp["serverContent"]
+                sc_keys = list(sc.keys())
+
+                # Debug: Log serverContent keys to find transcription fields
+                if sc_keys not in [['modelTurn'], ['turnComplete']]:
+                    logger.info(f"[{self.call_uuid[:8]}] TRANSCRIPTION_SC_KEYS | {sc_keys}")
 
                 # Get user speech transcript - BUFFER it, don't send yet
                 if "inputTranscript" in sc:
@@ -836,21 +848,31 @@ Rules:
                             self.user_said_goodbye = True
                             self._check_mutual_goodbye()
 
-                # Get model text response (agent transcript)
+                # Get model text response - this could be the transcription output
                 if "modelTurn" in sc:
                     parts = sc.get("modelTurn", {}).get("parts", [])
                     for p in parts:
                         if p.get("text"):
-                            # This would be agent's transcribed speech - but we don't need it
-                            # as native audio model handles the actual response
-                            pass
+                            text = p["text"].strip()
+                            if text:
+                                # Use model's text response as transcription
+                                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_TEXT | {text}")
+                                # This could be the user's speech transcribed by the model
+                                # Send it to n8n for processing
+                                self._save_transcript("USER", text)
+                                self._log_conversation("user", text)
+                                self._pending_user_transcript += " " + text
 
         except Exception as e:
             logger.error(f"Transcription receive error: {e}")
 
     async def _send_audio_to_transcription(self, audio_b64: str):
         """Send audio to transcription model"""
-        if not self._transcription_ws or not self._transcription_setup_complete:
+        if not self._transcription_ws:
+            logger.debug(f"[{self.call_uuid[:8]}] Transcription WS not connected - skipping audio")
+            return
+        if not self._transcription_setup_complete:
+            logger.debug(f"[{self.call_uuid[:8]}] Transcription setup not complete - skipping audio")
             return
         try:
             msg = {
@@ -862,8 +884,16 @@ Rules:
                 }
             }
             await self._transcription_ws.send(json.dumps(msg))
+            # Log every 100th chunk to avoid log spam but confirm audio is flowing
+            if not hasattr(self, '_transcription_audio_count'):
+                self._transcription_audio_count = 0
+            self._transcription_audio_count += 1
+            if self._transcription_audio_count == 1:
+                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_AUDIO | Sending first audio chunk to transcription model")
+            elif self._transcription_audio_count % 100 == 0:
+                logger.debug(f"[{self.call_uuid[:8]}] Transcription audio chunks sent: {self._transcription_audio_count}")
         except Exception as e:
-            logger.debug(f"Error sending to transcription: {e}")
+            logger.warning(f"Error sending to transcription: {e}")
 
     async def _send_session_setup(self):
         # Concise accent instruction (shorter = faster responses)
@@ -916,7 +946,8 @@ Rules:
                         "thinking_budget": 50
                     }
                 },
-                # Note: Transcription via Whisper offline (native audio model doesn't support real-time transcription)
+                # Enable input transcription to get real-time user speech transcripts
+                "input_audio_transcription": {},  # Empty dict enables default transcription
                 "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
