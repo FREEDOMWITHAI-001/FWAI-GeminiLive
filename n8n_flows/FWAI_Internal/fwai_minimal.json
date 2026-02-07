@@ -1,0 +1,81 @@
+{
+  "name": "FWAI AI Call - Minimal",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fwai-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "trigger",
+      "name": "Trigger Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "fwai-call"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://34.93.142.172:3001/call/conversational",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-ended\"\n}) }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-api",
+      "name": "Start Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fwai-ended",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "ended-webhook",
+      "name": "Call Ended",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "fwai-ended"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Call ended - add your CRM/notification logic here\nconst data = $input.first().json.body || $input.first().json;\n\nreturn {\n  call_uuid: data.call_uuid,\n  phone: data.caller_phone,\n  duration: data.duration_seconds,\n  transcript: data.transcript,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "process",
+      "name": "Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    }
+  ],
+  "connections": {
+    "Trigger Call": {
+      "main": [[{"node": "Start Call", "type": "main", "index": 0}]]
+    },
+    "Start Call": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    },
+    "Call Ended": {
+      "main": [[{"node": "Process", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"}
+}

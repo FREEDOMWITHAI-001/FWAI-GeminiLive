@@ -21,7 +21,7 @@
         "url": "http://34.93.142.172:3001/call/conversational",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/call-ended\",\n  \"context\": $json.body?.context || $json.context || {}\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-call-ended\",\n  \"context\": $json.body?.context || $json.context || {}\n}) }}",
         "options": {
           "timeout": 30000
         }
