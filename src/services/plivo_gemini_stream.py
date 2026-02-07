@@ -246,6 +246,7 @@ class PlivoGeminiSession:
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
+        self._last_question_time = 0  # Cooldown between question injections
 
         # Speech detection logging
         self._user_speaking = False  # Track if user is currently speaking
@@ -967,8 +968,15 @@ Rules:
 
             # Question Flow Mode: Get next question and inject
             if self.use_question_flow and self._question_flow:
+                # Cooldown check - don't advance if we just injected a question
+                now = time.time()
+                if hasattr(self, '_last_question_time') and (now - self._last_question_time) < 3.0:
+                    logger.debug(f"[{self.call_uuid[:8]}] Cooldown: ignoring quick response")
+                    return
+
                 next_instruction = self._question_flow.advance(transcription)
-                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | User: {transcription[:40]}...")
+                logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | User: {transcription}")
+                self._last_question_time = now
                 await self._inject_question(next_instruction)
 
             # Send to n8n webhook if configured
@@ -981,17 +989,18 @@ Rules:
             return
 
         try:
+            # Send as a system-like message that tells AI what to say next
             msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": f"[SYSTEM INSTRUCTION - FOLLOW EXACTLY]\n{instruction}"}]
+                        "parts": [{"text": instruction}]
                     }],
                     "turn_complete": True
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
-            logger.debug(f"[{self.call_uuid[:8]}] Injected: {instruction[:50]}...")
+            logger.info(f"[{self.call_uuid[:8]}] Sent next question to AI")
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
