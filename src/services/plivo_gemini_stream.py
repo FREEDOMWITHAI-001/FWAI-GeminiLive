@@ -751,6 +751,19 @@ Rules:
         self.goog_live_ws = None
         logger.info(f"[{self.call_uuid[:8]}] STEP:SESSION_ENDED | Google Live session ended")
 
+    def _pcm_to_wav(self, pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, bits_per_sample: int = 16) -> bytes:
+        """Convert raw PCM bytes to WAV format"""
+        import io
+        wav_buffer = io.BytesIO()
+
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(bits_per_sample // 8)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(pcm_bytes)
+
+        return wav_buffer.getvalue()
+
     async def _transcribe_audio_rest_api(self, audio_bytes: bytes) -> str:
         """Transcribe audio using Gemini REST API (gemini-2.0-flash)"""
         if not audio_bytes or len(audio_bytes) < 1600:  # Skip if less than 0.1 second of audio
@@ -762,8 +775,11 @@ Rules:
             # Gemini REST API endpoint
             api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={config.google_api_key}"
 
+            # Convert PCM to WAV format (Gemini REST API needs proper audio format)
+            wav_bytes = self._pcm_to_wav(audio_bytes, sample_rate=16000)
+
             # Encode audio as base64
-            audio_b64 = base64.standard_b64encode(audio_bytes).decode("utf-8")
+            audio_b64 = base64.standard_b64encode(wav_bytes).decode("utf-8")
 
             # Build request payload
             payload = {
@@ -771,7 +787,7 @@ Rules:
                     "parts": [
                         {
                             "inline_data": {
-                                "mime_type": "audio/L16;rate=16000",  # Linear PCM 16-bit, 16kHz
+                                "mime_type": "audio/wav",
                                 "data": audio_b64
                             }
                         },
@@ -786,7 +802,7 @@ Rules:
                 }
             }
 
-            logger.info(f"[{self.call_uuid[:8]}] STEP:REST_TRANSCRIBE | Sending {len(audio_bytes)} bytes to Gemini REST API")
+            logger.info(f"[{self.call_uuid[:8]}] STEP:REST_TRANSCRIBE | Sending {len(wav_bytes)} bytes WAV to Gemini REST API")
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(api_url, json=payload)
@@ -803,7 +819,7 @@ Rules:
                         logger.warning(f"[{self.call_uuid[:8]}] Transcription parse error: {e}")
                         return None
                 else:
-                    logger.warning(f"[{self.call_uuid[:8]}] Transcription API error: {response.status_code}")
+                    logger.warning(f"[{self.call_uuid[:8]}] Transcription API error: {response.status_code} - {response.text[:200]}")
                     return None
 
         except Exception as e:
