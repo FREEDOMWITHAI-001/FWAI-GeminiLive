@@ -661,7 +661,7 @@ Rules:
                 url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
                 extra_headers = None
             else:
-                url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.PublisherModelService.BidiGenerateContent"
+                url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
                 extra_headers = {"Authorization": f"Bearer {token}"}
                 logger.info(f"Using Vertex AI endpoint: {config.vertex_location}")
         else:
