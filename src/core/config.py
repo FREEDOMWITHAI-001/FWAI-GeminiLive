@@ -51,6 +51,12 @@ class Config(BaseModel):
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     tts_voice: str = os.getenv("TTS_VOICE", "Kore")
 
+    # Vertex AI settings (for lower latency with regional endpoints)
+    use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
+    vertex_project_id: str = os.getenv("VERTEX_PROJECT_ID", "")
+    vertex_location: str = os.getenv("VERTEX_LOCATION", "asia-south1")  # Mumbai
+    vertex_credentials_path: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+
     # Audio settings
     sample_rate: int = 16000
     channels: int = 1

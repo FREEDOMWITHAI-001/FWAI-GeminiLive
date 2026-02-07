@@ -15,6 +15,22 @@ import websockets
 from src.core.config import config
 from src.tools import execute_tool
 
+
+def get_vertex_ai_token():
+    """Get OAuth2 access token for Vertex AI"""
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+
+        credentials, project = google.auth.default(
+            scopes=['https://www.googleapis.com/auth/cloud-platform']
+        )
+        credentials.refresh(Request())
+        return credentials.token
+    except Exception as e:
+        logger.error(f"Failed to get Vertex AI token: {e}")
+        return None
+
 # Latency threshold - only log if slower than this (ms)
 LATENCY_THRESHOLD_MS = 500
 
@@ -545,13 +561,39 @@ Rules:
             logger.error(f"Error sending silence nudge: {e}")
 
     async def _run_google_live_session(self):
-        url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+        # Choose between Vertex AI (regional, lower latency) or Google AI Studio
+        if config.use_vertex_ai:
+            # Vertex AI Live API - regional endpoint (asia-south1 = Mumbai)
+            token = get_vertex_ai_token()
+            if not token:
+                logger.error("Failed to get Vertex AI token - falling back to Google AI Studio")
+                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                extra_headers = None
+            else:
+                url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.PublisherModelService.BidiGenerateContent"
+                extra_headers = {"Authorization": f"Bearer {token}"}
+                logger.info(f"Using Vertex AI endpoint: {config.vertex_location}")
+        else:
+            # Google AI Studio - global endpoint
+            url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+            extra_headers = None
+
         reconnect_attempts = 0
         max_reconnects = 5  # Increased for better stability
 
         while self.is_active and reconnect_attempts < max_reconnects:
             try:
-                async with websockets.connect(url, ping_interval=30, ping_timeout=20, close_timeout=5) as ws:
+                # Refresh token on reconnect for Vertex AI
+                if config.use_vertex_ai and reconnect_attempts > 0:
+                    token = get_vertex_ai_token()
+                    if token:
+                        extra_headers = {"Authorization": f"Bearer {token}"}
+
+                ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
+                if extra_headers:
+                    ws_kwargs["extra_headers"] = extra_headers
+
+                async with websockets.connect(url, **ws_kwargs) as ws:
                     self.goog_live_ws = ws
                     reconnect_attempts = 0  # Reset on successful connect
                     logger.info(f"[{self.call_uuid[:8]}] STEP:GEMINI_CONNECTED | Connected to Google Live API")
@@ -607,9 +649,15 @@ Rules:
         # Detect voice based on prompt content (female -> Kore, default -> Puck)
         voice_name = detect_voice_from_prompt(self.prompt)
 
+        # Model name differs between Google AI Studio and Vertex AI
+        if config.use_vertex_ai:
+            model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-2.0-flash-live-preview-04-09"
+        else:
+            model_name = "models/gemini-2.5-flash-native-audio-preview-09-2025"
+
         msg = {
             "setup": {
-                "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
+                "model": model_name,
                 "generation_config": {
                     "response_modalities": ["AUDIO"],  # Native audio model - audio only
                     "speech_config": {
