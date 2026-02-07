@@ -729,21 +729,22 @@ Rules:
             logger.error(f"Error in silence monitor: {e}")
 
     async def _send_silence_nudge(self):
-        """Send a nudge to AI to respond when silence detected"""
+        """Send a nudge to AI when silence detected"""
         if not self.goog_live_ws or self._closing_call:
             return
 
-        # In QuestionFlow mode, DON'T nudge AI to continue - wait for real user input
-        if self.use_question_flow:
-            logger.debug(f"[{self.call_uuid[:8]}] Silence detected but QuestionFlow mode - waiting for user")
-            return
-
         try:
+            # In QuestionFlow mode, ask if user is still there instead of continuing
+            if self.use_question_flow:
+                nudge_text = "[The customer has been silent. Say: 'Hello, are you still there?' and wait for response]"
+            else:
+                nudge_text = "[Continue the conversation - respond to what the customer just said]"
+
             msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "[Continue the conversation - respond to what the customer just said]"}]
+                        "parts": [{"text": nudge_text}]
                     }],
                     "turn_complete": True
                 }
@@ -1302,16 +1303,12 @@ THEN STOP AND WAIT FOR USER RESPONSE."""
                     if self._turn_count > 1 and (self._transcript_webhook_url or self.use_question_flow):
                         asyncio.create_task(self._process_user_audio_for_transcription())
 
-                    # Detect empty turn (AI didn't generate audio)
-                    # In QuestionFlow mode, DON'T nudge - just wait for user
+                    # Detect empty turn (AI didn't generate audio) - nudge to respond
                     if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
-                        if not self.use_question_flow:
-                            self._empty_turn_nudge_count += 1
-                            if self._empty_turn_nudge_count <= 3:
-                                logger.warning(f"[{self.call_uuid[:8]}] Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
-                                asyncio.create_task(self._send_silence_nudge())
-                        else:
-                            logger.debug(f"[{self.call_uuid[:8]}] Empty turn in QuestionFlow - waiting for user")
+                        self._empty_turn_nudge_count += 1
+                        if self._empty_turn_nudge_count <= 3:  # Max 3 nudges
+                            logger.warning(f"[{self.call_uuid[:8]}] Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
+                            asyncio.create_task(self._send_silence_nudge())
                     else:
                         self._empty_turn_nudge_count = 0
 
