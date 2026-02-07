@@ -709,12 +709,34 @@ Rules:
             logger.error(f"Error sending wrap-up message: {e}")
 
     async def _monitor_silence(self):
-        """Monitor for silence - nudge AI if no response within 3 second SLA"""
+        """Monitor for silence - detect when user finishes speaking and process their response"""
         try:
             while self.is_active and not self._closing_call:
-                await asyncio.sleep(1.0)  # Check every second
+                await asyncio.sleep(0.5)  # Check every 0.5 seconds for faster response
 
-                # Only check if user has spoken and we're waiting for response
+                # QuestionFlow mode: Detect when user finishes speaking after a question
+                if self.use_question_flow and self._waiting_for_user:
+                    # Check if user has spoken and then went silent
+                    if self._last_user_audio_time:
+                        silence_since_user = time.time() - self._last_user_audio_time
+                        time_since_question = time.time() - self._question_asked_time
+
+                        # If 1.5+ seconds of silence AFTER user spoke, and we have audio, process their response
+                        # Also require at least 2 seconds since question was asked
+                        if silence_since_user >= 1.5 and time_since_question >= 2.0 and len(self._user_audio_buffer) >= 8000:
+                            logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({silence_since_user:.1f}s silence, {len(self._user_audio_buffer)} bytes)")
+                            await self._process_user_audio_for_transcription()
+                            continue
+
+                    # If waiting too long (5 sec timeout) with no response, prompt user
+                    if (time.time() - self._question_asked_time) >= self._wait_timeout:
+                        if len(self._user_audio_buffer) < 8000:  # Less than 0.25 seconds of audio
+                            logger.info(f"[{self.call_uuid[:8]}] {self._wait_timeout}s timeout - prompting user")
+                            await self._send_silence_nudge()
+                            self._question_asked_time = time.time()  # Reset timeout
+                    continue
+
+                # Original silence monitoring for non-QuestionFlow mode
                 if self._last_user_speech_time is None:
                     continue
 
@@ -941,9 +963,27 @@ Rules:
         if not self._transcript_webhook_url and not self.use_question_flow:
             return
 
-        if len(self._user_audio_buffer) < 1600:  # Less than 0.1 second
+        # FIX 1: In QuestionFlow mode, only process if we're waiting for user response
+        # This prevents processing audio when AI just finished speaking (not after asking a question)
+        if self.use_question_flow and not self._waiting_for_user:
+            # Clear buffer to avoid processing stale audio later
             self._user_audio_buffer = bytearray(b"")
+            logger.debug(f"[{self.call_uuid[:8]}] Not waiting for user, clearing buffer")
             return
+
+        # FIX 2: Require minimum audio duration (at least 0.5 seconds = 16000 bytes at 16kHz, 16-bit)
+        MIN_AUDIO_FOR_RESPONSE = 16000  # 0.5 seconds of audio
+        if len(self._user_audio_buffer) < MIN_AUDIO_FOR_RESPONSE:
+            logger.debug(f"[{self.call_uuid[:8]}] Not enough audio ({len(self._user_audio_buffer)} bytes), need {MIN_AUDIO_FOR_RESPONSE}")
+            return  # Don't clear buffer - keep accumulating
+
+        # FIX 3: Don't process if question was asked very recently (< 2 seconds ago)
+        # User needs time to hear the question before responding
+        if self.use_question_flow and self._waiting_for_user:
+            time_since_question = time.time() - self._question_asked_time
+            if time_since_question < 2.0:
+                logger.debug(f"[{self.call_uuid[:8]}] Question asked {time_since_question:.1f}s ago, waiting for response...")
+                return  # Don't clear buffer - keep accumulating
 
         # Copy and clear buffer
         audio_to_transcribe = bytes(self._user_audio_buffer)
@@ -985,21 +1025,19 @@ Rules:
 
             # Question Flow Mode: Get next question and inject
             if self.use_question_flow and self._question_flow:
-                now = time.time()
-
-                # If we're waiting for user and got a response, process it
-                if self._waiting_for_user:
-                    self._waiting_for_user = False
-                    logger.info(f"[{self.call_uuid[:8]}] User responded: {transcription}")
-
-                # Cooldown check - don't advance if we just injected a question (< 2 sec ago)
-                if (now - self._last_question_time) < 2.0:
-                    logger.debug(f"[{self.call_uuid[:8]}] Cooldown: too quick, waiting")
+                # FIX 4: Only advance if we were actually waiting for user response
+                if not self._waiting_for_user:
+                    logger.debug(f"[{self.call_uuid[:8]}] Got transcription but not waiting for user, ignoring")
                     return
 
+                # Mark that we got the response
+                self._waiting_for_user = False
+                logger.info(f"[{self.call_uuid[:8]}] USER RESPONDED: {transcription}")
+
+                # Advance to next question
                 next_instruction = self._question_flow.advance(transcription)
                 logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
-                self._last_question_time = now
+                self._last_question_time = time.time()
                 await self._inject_question(next_instruction)
 
             # Send to n8n webhook if configured
@@ -1012,6 +1050,11 @@ Rules:
             return
 
         try:
+            # FIX: Clear audio buffer BEFORE asking question
+            # This ensures we only process audio that comes AFTER the question is asked
+            self._user_audio_buffer = bytearray(b"")
+            self._last_user_audio_time = None  # Reset user speech tracking
+
             # Send as a system-like message that tells AI what to say next
             msg = {
                 "client_content": {
@@ -1025,7 +1068,7 @@ Rules:
             await self.goog_live_ws.send(json.dumps(msg))
             self._waiting_for_user = True
             self._question_asked_time = time.time()
-            logger.info(f"[{self.call_uuid[:8]}] Sent next question - waiting for user response")
+            logger.info(f"[{self.call_uuid[:8]}] Injected question - waiting for user response")
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
@@ -1114,6 +1157,11 @@ Rules:
             first_instruction = self._question_flow.get_instruction_prompt()
             trigger_text = f"[START THE CALL NOW]\n{first_instruction}"
             logger.debug(f"[{self.call_uuid[:8]}] Starting with question #1")
+
+            # Clear audio buffer and set up waiting state for first question
+            self._user_audio_buffer = bytearray(b"")
+            self._waiting_for_user = True
+            self._question_asked_time = time.time()
         else:
             trigger_text = "Hi"
 
@@ -1346,9 +1394,11 @@ Wait for customer response after asking."""
                         logger.debug(f"[{self.call_uuid[:8]}] Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
-                    # AFTER AI finishes speaking, transcribe buffered user audio via REST API
-                    # This ensures transcription happens after user speaks and AI responds
-                    if self._turn_count > 1 and (self._transcript_webhook_url or self.use_question_flow):
+                    # FIX: In QuestionFlow mode, do NOT process transcription on turnComplete
+                    # The silence monitor will detect when user finishes speaking and process then
+                    # This prevents the AI from rapid-firing questions without waiting for responses
+                    if self._turn_count > 1 and self._transcript_webhook_url and not self.use_question_flow:
+                        # Only for non-QuestionFlow mode with webhook
                         asyncio.create_task(self._process_user_audio_for_transcription())
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond

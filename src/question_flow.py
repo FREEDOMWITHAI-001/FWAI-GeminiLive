@@ -120,7 +120,9 @@ class QuestionFlow:
         step_num = self.current_step + 1
         total = len(self.questions)
 
-        return f"""The customer is waiting. Say exactly this to them: "{question}" Then stop talking and wait for their reply."""
+        return f"""Say this to the customer: "{question}"
+
+IMPORTANT: After saying this, STOP and WAIT SILENTLY for the customer to respond. Do NOT say anything else until the customer speaks."""
 
     def detect_objection(self, user_text: str) -> Optional[str]:
         """Detect if user raised an objection"""
