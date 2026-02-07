@@ -1042,12 +1042,8 @@ Rules:
             self._user_audio_buffer.extend(audio_chunk[:remaining_space])
 
     async def _send_session_setup(self):
-        # Concise accent instruction (shorter = faster responses)
-        accent_instruction = """VOICE: Indian English accent (Bangalore professional). Use "Actually...", "Basically...", "Isn't it?" naturally. English only, no Hindi. Warm and professional tone.
-
-"""
-        # Combine: accent first, then main prompt
-        full_prompt = accent_instruction + self.prompt
+        # Simple prompt - no accent instructions that might confuse the AI
+        full_prompt = self.prompt
 
         # On reconnect, load conversation from FILE (not memory - avoids latency issues)
         if not self._is_first_connection:
@@ -1089,9 +1085,9 @@ Rules:
                             }
                         }
                     },
-                    # Minimal thinking budget
+                    # Disable thinking - just follow instructions
                     "thinking_config": {
-                        "thinking_budget": 64
+                        "thinking_budget": 0
                     }
                 },
                 # Enable input transcription to get real-time user speech transcripts
