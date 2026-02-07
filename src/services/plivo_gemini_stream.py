@@ -15,6 +15,7 @@ import websockets
 from src.core.config import config
 from src.tools import execute_tool
 from src.conversational_prompts import BASE_PROMPT, DEFAULT_CONTEXT, render_prompt
+from src.question_flow import QuestionFlow, get_or_create_flow, remove_flow
 
 
 def get_vertex_ai_token():
@@ -163,23 +164,31 @@ TOOL_DECLARATIONS = [
 ]
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = None, use_question_flow: bool = True):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
+        self.use_question_flow = use_question_flow  # Use built-in question flow state machine
 
-        # Load client-specific prompt or use provided prompt
-        if prompt:
-            raw_prompt = prompt
-        elif client_name:
-            raw_prompt = load_client_prompt(client_name)
+        # Question Flow Mode: Use minimal prompt + inject questions one by one
+        if use_question_flow:
+            customer_name = self.context.get("customer_name", "there")
+            agent_name = self.context.get("agent_name", "Rahul")
+            self._question_flow = get_or_create_flow(call_uuid, customer_name, agent_name)
+            self.prompt = self._question_flow.get_base_prompt()
+            logger.info(f"[{call_uuid[:8]}] QuestionFlow mode enabled for {customer_name}")
         else:
-            raw_prompt = DEFAULT_PROMPT
-
-        # Render template placeholders with context
-        self.prompt = render_prompt(raw_prompt, self.context)
-        logger.info(f"[{call_uuid[:8]}] Prompt loaded for client: {client_name or 'default'}, context keys: {list(self.context.keys())}")
+            # Legacy mode: Load full prompt from file
+            self._question_flow = None
+            if prompt:
+                raw_prompt = prompt
+            elif client_name:
+                raw_prompt = load_client_prompt(client_name)
+            else:
+                raw_prompt = DEFAULT_PROMPT
+            self.prompt = render_prompt(raw_prompt, self.context)
+            logger.info(f"[{call_uuid[:8]}] Full prompt mode for client: {client_name or 'default'}")
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self._transcript_webhook_url = transcript_webhook_url  # URL for real-time transcript (n8n state machine)
         if transcript_webhook_url:
@@ -898,8 +907,9 @@ Rules:
             return None
 
     async def _process_user_audio_for_transcription(self):
-        """Process buffered user audio and send transcription to n8n webhook"""
-        if not self._transcript_webhook_url:
+        """Process buffered user audio, transcribe, and advance question flow"""
+        # Question flow mode doesn't require webhook URL
+        if not self._transcript_webhook_url and not self.use_question_flow:
             return
 
         if len(self._user_audio_buffer) < 1600:  # Less than 0.1 second
@@ -923,9 +933,37 @@ Rules:
                 self.user_said_goodbye = True
                 self._check_mutual_goodbye()
 
-            # Send to n8n webhook
-            logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | User transcript: {transcription[:50]}...")
-            asyncio.create_task(send_transcript_to_webhook(self, "user", transcription))
+            # Question Flow Mode: Get next question and inject
+            if self.use_question_flow and self._question_flow:
+                next_instruction = self._question_flow.advance(transcription)
+                logger.info(f"[{self.call_uuid[:8]}] STEP:FLOW_ADVANCE | Step {self._question_flow.current_step}, injecting next question")
+                # Inject the next question into the AI
+                await self._inject_question(next_instruction)
+
+            # Also send to n8n webhook if configured (for data capture)
+            if self._transcript_webhook_url:
+                logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | User transcript: {transcription[:50]}...")
+                asyncio.create_task(send_transcript_to_webhook(self, "user", transcription))
+
+    async def _inject_question(self, instruction: str):
+        """Inject the next question instruction into the AI"""
+        if not self.goog_live_ws or not instruction:
+            return
+
+        try:
+            msg = {
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": f"[SYSTEM INSTRUCTION - FOLLOW EXACTLY]\n{instruction}"}]
+                    }],
+                    "turn_complete": True
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+            logger.info(f"[{self.call_uuid[:8]}] STEP:QUESTION_INJECTED | {instruction[:60]}...")
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
     def _buffer_user_audio(self, audio_chunk: bytes):
         """Buffer user audio for transcription"""
@@ -1000,15 +1038,24 @@ Rules:
         logger.info(f"Sent session setup with voice: {voice_name}, first_connection={self._is_first_connection}")
 
     async def _send_initial_greeting(self):
-        """Send initial trigger to make AI greet immediately"""
+        """Send initial trigger to make AI greet with first question"""
         if self.greeting_sent or not self.goog_live_ws:
             return
         self.greeting_sent = True
+
+        # Question Flow Mode: Include the first question in the greeting
+        if self.use_question_flow and self._question_flow:
+            first_instruction = self._question_flow.get_instruction_prompt()
+            trigger_text = f"[START THE CALL NOW]\n{first_instruction}"
+            logger.info(f"[{self.call_uuid[:8]}] STEP:FIRST_QUESTION | Starting with question #1")
+        else:
+            trigger_text = "Hi"
+
         msg = {
             "client_content": {
                 "turns": [{
                     "role": "user",
-                    "parts": [{"text": "Hi"}]
+                    "parts": [{"text": trigger_text}]
                 }],
                 "turn_complete": True
             }
@@ -1413,6 +1460,12 @@ Rules:
             duration = (datetime.now() - self.call_start_time).total_seconds()
             logger.info(f"[{self.call_uuid[:8]}] STEP:CALL_DURATION | {duration:.1f} seconds")
             self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s")
+
+        # Cleanup question flow and get collected data
+        if self.use_question_flow:
+            flow_data = remove_flow(self.call_uuid)
+            if flow_data:
+                logger.info(f"[{self.call_uuid[:8]}] STEP:FLOW_DATA | Collected {len(flow_data.get('responses', {}))} responses, step {flow_data.get('current_step')}/{flow_data.get('total_steps')}")
 
         if self.goog_live_ws:
             try:
