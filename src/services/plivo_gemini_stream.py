@@ -781,7 +781,7 @@ Rules:
         logger.info(f"[{self.call_uuid[:8]}] Transcription session ended")
 
     async def _send_transcription_setup(self):
-        """Setup Gemini 2.0 Flash for transcription only"""
+        """Setup Gemini 2.0 Flash Live for transcription only"""
         msg = {
             "setup": {
                 "model": "models/gemini-2.0-flash-live-001",
@@ -792,7 +792,7 @@ Rules:
             }
         }
         await self._transcription_ws.send(json.dumps(msg))
-        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent")
+        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent (gemini-2.0-flash-live-001)")
 
     async def _receive_transcription(self, message):
         """Handle transcription responses from Gemini 2.0 Flash"""
