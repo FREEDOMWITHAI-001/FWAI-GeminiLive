@@ -1,0 +1,215 @@
+{
+  "name": "FWAI AI Call - QuestionFlow (Simplified)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "start-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "trigger-start-call",
+      "name": "Start Call Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "start-call"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://34.93.142.172:3001/call/conversational",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/call-ended\",\n  \"context\": $json.body?.context || $json.context || {}\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "start-call-api",
+      "name": "Call Server API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, call_uuid: $json.call_uuid, message: 'Call initiated' } }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "transcript",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "transcript-webhook",
+      "name": "Transcript Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "transcript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log transcript for analytics (no phase injection needed)\n// Python QuestionFlow handles conversation flow internally\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\nreturn {\n  call_uuid: data.call_uuid,\n  role: data.role,\n  text: data.text,\n  timestamp: data.timestamp,\n  turn_count: data.turn_count,\n  logged_at: new Date().toISOString()\n};"
+      },
+      "id": "log-transcript",
+      "name": "Log Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "call-ended",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "call-ended-webhook",
+      "name": "Call Ended Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 700],
+      "webhookId": "call-ended"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process call end data\n// Flow data is saved in server: flow_data/{call_uuid}.json\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\n// Parse transcript to determine lead quality\nconst transcript = (data.transcript || '').toLowerCase();\nconst entries = data.transcript_entries || [];\n\n// Simple lead scoring based on keywords\nlet score = 0;\nlet leadType = 'cold';\n\n// Positive signals\nif (transcript.includes('interested')) score += 2;\nif (transcript.includes('yes')) score += 1;\nif (transcript.includes('tell me more')) score += 2;\nif (transcript.includes('how much') || transcript.includes('price')) score += 1;\nif (transcript.includes('sign up') || transcript.includes('enroll')) score += 3;\n\n// Negative signals\nif (transcript.includes('not interested')) score -= 3;\nif (transcript.includes('no thanks')) score -= 2;\nif (transcript.includes('busy')) score -= 1;\nif (transcript.includes('call later')) score -= 1;\n\n// Callback signals\nlet needsCallback = false;\nlet callbackTime = null;\nif (transcript.includes('call back') || transcript.includes('call later')) {\n  needsCallback = true;\n  if (transcript.includes('morning')) callbackTime = 'morning';\n  else if (transcript.includes('evening')) callbackTime = 'evening';\n  else if (transcript.includes('tomorrow')) callbackTime = 'tomorrow';\n}\n\n// Determine lead type\nif (score >= 3) leadType = 'hot';\nelse if (score >= 1) leadType = 'warm';\nelse if (needsCallback) leadType = 'scheduled';\nelse leadType = 'cold';\n\nreturn {\n  call_uuid: data.call_uuid,\n  caller_phone: data.caller_phone,\n  duration_seconds: data.duration_seconds,\n  timestamp: data.timestamp,\n  lead_type: leadType,\n  lead_score: score,\n  needs_callback: needsCallback,\n  callback_time: callbackTime,\n  turn_count: entries.length,\n  transcript_preview: transcript.substring(0, 500)\n};"
+      },
+      "id": "process-call-end",
+      "name": "Process Call End",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-hot",
+              "leftValue": "={{ $json.lead_type }}",
+              "rightValue": "hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-hot",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// HOT LEAD - Immediate action needed\nconst data = $input.first().json;\nreturn {\n  action: 'immediate_callback',\n  priority: 'HIGH',\n  emoji: '🔥',\n  lead_type: 'HOT',\n  phone: data.caller_phone,\n  call_uuid: data.call_uuid,\n  duration: data.duration_seconds,\n  message: `🔥 HOT LEAD: ${data.caller_phone} - Score: ${data.lead_score}`\n};"
+      },
+      "id": "handle-hot",
+      "name": "Hot Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 640]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-callback",
+              "leftValue": "={{ $json.needs_callback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-callback",
+      "name": "Needs Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 760]
+    },
+    {
+      "parameters": {
+        "jsCode": "// SCHEDULED CALLBACK\nconst data = $input.first().json;\nreturn {\n  action: 'schedule_callback',\n  priority: 'MEDIUM',\n  emoji: '📅',\n  lead_type: 'SCHEDULED',\n  phone: data.caller_phone,\n  callback_time: data.callback_time || 'not specified',\n  call_uuid: data.call_uuid,\n  message: `📅 CALLBACK: ${data.caller_phone} - Time: ${data.callback_time || 'TBD'}`\n};"
+      },
+      "id": "handle-callback",
+      "name": "Schedule Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// WARM/COLD LEAD - Nurture or archive\nconst data = $input.first().json;\nconst isWarm = data.lead_type === 'warm';\nreturn {\n  action: isWarm ? 'nurture' : 'archive',\n  priority: isWarm ? 'MEDIUM' : 'LOW',\n  emoji: isWarm ? '🟡' : '⚪',\n  lead_type: data.lead_type.toUpperCase(),\n  phone: data.caller_phone,\n  score: data.lead_score,\n  call_uuid: data.call_uuid,\n  message: `${isWarm ? '🟡' : '⚪'} ${data.lead_type.toUpperCase()}: ${data.caller_phone} - Score: ${data.lead_score}`\n};"
+      },
+      "id": "handle-other",
+      "name": "Warm/Cold Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 820]
+    }
+  ],
+  "connections": {
+    "Start Call Trigger": {
+      "main": [[{"node": "Call Server API", "type": "main", "index": 0}]]
+    },
+    "Call Server API": {
+      "main": [[{"node": "Respond Success", "type": "main", "index": 0}]]
+    },
+    "Transcript Webhook": {
+      "main": [[{"node": "Log Transcript", "type": "main", "index": 0}]]
+    },
+    "Call Ended Webhook": {
+      "main": [[{"node": "Process Call End", "type": "main", "index": 0}]]
+    },
+    "Process Call End": {
+      "main": [[{"node": "Is Hot Lead?", "type": "main", "index": 0}]]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [{"node": "Hot Lead", "type": "main", "index": 0}],
+        [{"node": "Needs Callback?", "type": "main", "index": 0}]
+      ]
+    },
+    "Needs Callback?": {
+      "main": [
+        [{"node": "Schedule Callback", "type": "main", "index": 0}],
+        [{"node": "Warm/Cold Lead", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
