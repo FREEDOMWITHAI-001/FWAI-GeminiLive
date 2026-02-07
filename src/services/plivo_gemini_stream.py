@@ -1064,14 +1064,34 @@ Rules:
         logger.info("Sent initial greeting trigger")
 
     async def _send_reconnection_trigger(self):
-        """Trigger AI to speak immediately after reconnection"""
+        """Trigger AI to speak immediately after reconnection, restoring question flow state"""
         if not self.goog_live_ws:
             return
+
+        # Restore question flow state on reconnect
+        if self.use_question_flow and self._question_flow:
+            current_step = self._question_flow.current_step
+            current_question = self._question_flow.get_current_question()
+
+            if current_question:
+                reconnect_text = f"""[SYSTEM: Connection restored. Brief issue on your end.
+Say "Hmm, sorry about that, small network issue..." then CONTINUE with the current question.
+
+YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
+[SAY THIS NEXT]: {current_question}
+[WAIT FOR USER RESPONSE]]"""
+            else:
+                reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
+
+            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FLOW | Restoring to question {current_step + 1}")
+        else:
+            reconnect_text = "[System: Connection restored. Say 'Hmm, sorry about that...' and continue]"
+
         msg = {
             "client_content": {
                 "turns": [{
                     "role": "user",
-                    "parts": [{"text": "[System: Connection restored. Say 'Hmm, sorry about that...' and continue]"}]
+                    "parts": [{"text": reconnect_text}]
                 }],
                 "turn_complete": True
             }
