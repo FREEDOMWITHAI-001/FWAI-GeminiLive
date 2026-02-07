@@ -633,26 +633,23 @@ Rules:
             logger.error(f"Error sending silence nudge: {e}")
 
     async def _send_reconnection_filler(self):
-        """Send filler message to user while reconnecting (via TTS or pre-recorded)"""
+        """Handle silence during reconnection - clear audio and prepare for resume"""
         if not self.plivo_ws or self._closing_call:
             return
         try:
-            # Use Plivo's TTS to say a filler phrase
-            import random
-            fillers = [
-                "I see, hmm...",
-                "Hmm, I understand...",
-                "Right, right...",
-                "Okay, let me think...",
-            ]
-            filler = random.choice(fillers)
-            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FILLER | Sending: {filler}")
+            logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_FILLER | Preparing for reconnection")
 
-            # Note: This uses Plivo's speak feature if available
-            # For now, we just log it - the AI will handle continuation after reconnect
-            # The main improvement is loading conversation from file on reconnect
+            # Clear any pending audio to prevent stale data
+            await self.plivo_ws.send_text(json.dumps({
+                "event": "clearAudio",
+                "stream_id": self.stream_id
+            }))
+
+            # The AI will say "Sorry, brief connection issue..." after reconnecting
+            # This is handled in _send_session_setup via the reconnection prompt
+
         except Exception as e:
-            logger.error(f"Error sending reconnection filler: {e}")
+            logger.error(f"Error in reconnection filler: {e}")
 
     async def _run_google_live_session(self):
         # Choose between Vertex AI (regional, lower latency) or Google AI Studio
@@ -737,12 +734,13 @@ Rules:
             # Load conversation history from file (saved by background thread)
             file_history = self._load_conversation_from_file()
             if file_history:
-                history_text = "\n\n[RECONNECTION - there was a brief network issue. Resume the call naturally.]\n"
+                history_text = "\n\n[URGENT RECONNECTION - SAY SOMETHING IMMEDIATELY]\n"
+                history_text += "[There was a brief network issue. You MUST respond RIGHT NOW with a short phrase like 'Hmm, I see...' or 'Right, right...' to fill the silence, then continue naturally.]\n"
                 history_text += "[Recent conversation:]\n"
                 for msg_item in file_history[-self._max_history_size:]:
                     role = "Customer" if msg_item["role"] == "user" else "You"
                     history_text += f"{role}: {msg_item['text']}\n"
-                history_text += "\n[Say something like 'Sorry, I think there was a brief connection issue. You were saying...' and continue from where you left off. Do NOT greet again.]"
+                history_text += "\n[IMPORTANT: Start speaking IMMEDIATELY with 'Hmm, sorry about that, there was a brief issue on my end...' then continue the conversation. Do NOT greet again. Do NOT stay silent.]"
                 full_prompt = full_prompt + history_text
                 logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_CONTEXT | Loaded {len(file_history)} messages from file")
                 self._is_reconnecting = False
@@ -802,6 +800,22 @@ Rules:
         }
         await self.goog_live_ws.send(json.dumps(msg))
         logger.info("Sent initial greeting trigger")
+
+    async def _send_reconnection_trigger(self):
+        """Trigger AI to speak immediately after reconnection"""
+        if not self.goog_live_ws:
+            return
+        msg = {
+            "client_content": {
+                "turns": [{
+                    "role": "user",
+                    "parts": [{"text": "[System: Connection restored. Say 'Hmm, sorry about that...' and continue]"}]
+                }],
+                "turn_complete": True
+            }
+        }
+        await self.goog_live_ws.send(json.dumps(msg))
+        logger.info(f"[{self.call_uuid[:8]}] STEP:RECONNECT_TRIGGER | Sent trigger to resume conversation")
 
     async def _handle_tool_call(self, tool_call):
         """Execute tool and send response back to Gemini - gracefully handles errors"""
@@ -946,8 +960,12 @@ Rules:
                 self.setup_complete = True
                 self._google_session_start = time.time()  # Track session start for 10-min limit
                 self._save_transcript("SYSTEM", "AI ready")
-                # Trigger immediate greeting during preload
-                await self._send_initial_greeting()
+                # On first connection: trigger greeting
+                # On reconnection: trigger resume with filler phrase
+                if self._is_first_connection:
+                    await self._send_initial_greeting()
+                else:
+                    await self._send_reconnection_trigger()
 
             # Handle GoAway message - 9-minute warning before 10-minute session limit
             if "goAway" in resp:
