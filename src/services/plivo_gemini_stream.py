@@ -859,10 +859,9 @@ Rules:
                 # Check if user already said goodbye
                 self._check_mutual_goodbye()
 
-                # Fallback: if user doesn't respond within 30 seconds, end anyway
-                # Increased from 10s to give user more time to respond
+                # Fallback: if user doesn't respond within 5 seconds, end anyway
                 if not self._closing_call:
-                    asyncio.create_task(self._fallback_hangup(30.0))
+                    asyncio.create_task(self._fallback_hangup(5.0))
                 return
 
             # Execute the tool with context for templates - graceful error handling
