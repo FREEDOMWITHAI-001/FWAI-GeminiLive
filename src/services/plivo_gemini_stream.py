@@ -912,9 +912,9 @@ Rules:
                             }
                         }
                     },
-                    # Reduced thinking for faster responses
+                    # Higher thinking budget for conversational flow with state management
                     "thinking_config": {
-                        "thinking_budget": 50
+                        "thinking_budget": 1024
                     }
                 },
                 # Enable input transcription to get real-time user speech transcripts
