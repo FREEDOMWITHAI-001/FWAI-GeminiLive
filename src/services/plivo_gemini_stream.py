@@ -1053,9 +1053,9 @@ Rules:
                             }
                         }
                     },
-                    # Low thinking budget to prevent AI from continuing on its own
+                    # Minimal thinking budget
                     "thinking_config": {
-                        "thinking_budget": 256
+                        "thinking_budget": 64
                     }
                 },
                 # Enable input transcription to get real-time user speech transcripts
