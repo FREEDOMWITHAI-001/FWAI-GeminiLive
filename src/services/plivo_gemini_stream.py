@@ -1733,43 +1733,36 @@ async def preload_session_conversational(
     initial_phase_prompt: str = None,
     context: dict = None,
     n8n_webhook_url: str = None,
-    call_end_webhook_url: str = None
+    call_end_webhook_url: str = None,
+    client_name: str = "fwai"
 ) -> bool:
     """
     Preload a session in conversational flow mode.
-    Uses minimal BASE_PROMPT and expects n8n to inject phase-specific prompts dynamically.
+    Uses QuestionFlow to inject questions one by one.
 
     Args:
         call_uuid: Unique call identifier
         caller_phone: Caller's phone number
-        base_prompt: Base prompt for the AI (from conversational_prompts.py)
-        initial_phase_prompt: Opening phase prompt (already has [NAME] replaced)
+        base_prompt: IGNORED - QuestionFlow uses config file
+        initial_phase_prompt: IGNORED - QuestionFlow handles this
         context: Context dict with customer_name, etc.
-        n8n_webhook_url: URL to send real-time transcripts (for n8n state machine)
+        n8n_webhook_url: URL to send real-time transcripts (optional)
         call_end_webhook_url: URL to call when call ends
+        client_name: Client config to use (e.g., 'fwai')
 
     Returns:
         True if preload succeeded
     """
-    from src.conversational_prompts import BASE_PROMPT
-
-    # Use provided prompts or defaults
-    if base_prompt is None:
-        base_prompt = BASE_PROMPT
-
-    # Build initial prompt: BASE + opening phase
-    initial_prompt = base_prompt
-    if initial_phase_prompt:
-        initial_prompt = initial_prompt + "\n\n" + initial_phase_prompt
-
-    # Create session with minimal prompt
+    # Create session with QuestionFlow enabled (uses config file, not passed prompt)
     session = PlivoGeminiSession(
         call_uuid,
         caller_phone,
-        prompt=initial_prompt,
+        prompt=None,  # QuestionFlow will use base_prompt from config
         context=context,
         webhook_url=call_end_webhook_url,
-        transcript_webhook_url=n8n_webhook_url
+        transcript_webhook_url=n8n_webhook_url,
+        client_name=client_name,
+        use_question_flow=True  # Explicitly enable QuestionFlow
     )
 
     _preloading_sessions[call_uuid] = session

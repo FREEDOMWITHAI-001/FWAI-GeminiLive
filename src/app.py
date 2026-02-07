@@ -682,33 +682,28 @@ async def start_conversational_call(request: ConversationalCallRequest):
         context["n8n_webhook_url"] = request.n8nWebhookUrl  # For sending transcripts
         context["conversational_mode"] = True
 
-        # Load client-specific prompt (or default)
-        raw_prompt = load_client_prompt(request.clientName)
-        # Render template placeholders with context
-        rendered_prompt = render_prompt(raw_prompt, context)
-
-        logger.info(f"[{call_uuid[:8]}] Loaded prompt for client: {request.clientName or 'default'}")
+        # QuestionFlow mode: Don't load full prompt file, let QuestionFlow use config
+        client_name = request.clientName or "fwai"
+        logger.info(f"[{call_uuid[:8]}] QuestionFlow mode for client: {client_name}")
 
         # Store call data
         _pending_call_data[call_uuid] = {
             "phone": request.phoneNumber,
-            "prompt": rendered_prompt,
             "context": context,
             "webhookUrl": request.callEndWebhookUrl,
             "n8nWebhookUrl": request.n8nWebhookUrl,
             "conversational_mode": True,
-            "clientName": request.clientName
+            "clientName": client_name
         }
 
-        # Preload session with the rendered prompt
+        # Preload session with QuestionFlow (uses config file, not full prompt)
         await preload_session_conversational(
             call_uuid,
             request.phoneNumber,
-            base_prompt=rendered_prompt,
-            initial_phase_prompt="",  # No phase injection, AI handles flow from prompt
             context=context,
             n8n_webhook_url=request.n8nWebhookUrl,
-            call_end_webhook_url=request.callEndWebhookUrl
+            call_end_webhook_url=request.callEndWebhookUrl,
+            client_name=client_name
         )
 
         # Make the Plivo call
