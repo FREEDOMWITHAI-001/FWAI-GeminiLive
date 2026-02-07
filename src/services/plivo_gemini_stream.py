@@ -1085,9 +1085,9 @@ Rules:
                 reconnect_text = f"""[SYSTEM: Connection restored. Brief issue on your end.
 Say "Hmm, sorry about that, small network issue..." then CONTINUE with the current question.
 
-YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.QUESTIONS)}.
-[SAY THIS NEXT]: {current_question}
-[WAIT FOR USER RESPONSE]]"""
+YOU ARE ON QUESTION {current_step + 1} OF {len(self._question_flow.questions)}.
+YOU MUST SAY THIS EXACTLY: "{current_question}"
+THEN STOP AND WAIT FOR USER RESPONSE."""
             else:
                 reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
 
