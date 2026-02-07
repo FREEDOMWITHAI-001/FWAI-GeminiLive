@@ -187,13 +187,10 @@ class PlivoGeminiSession:
         self._session_refresh_task = None
         self.GOOGLE_SESSION_LIMIT = 9 * 60  # Refresh at 9 minutes (before 10-min disconnect)
 
-        # Dual-model: Second WebSocket for transcription (Gemini 2.0 Flash)
-        self._transcription_ws = None
-        self._transcription_task = None
-        self._transcription_buffer = bytearray(b"")
-        self._transcription_setup_complete = False
-        # Buffer to collect user transcript during a turn, sent to n8n AFTER AI responds
-        self._pending_user_transcript = ""
+        # REST API transcription: Buffer user audio, transcribe when turn completes
+        self._user_audio_buffer = bytearray(b"")  # Buffer for user audio (16kHz PCM)
+        self._max_audio_buffer_size = 16000 * 2 * 30  # Max 30 seconds of audio (16kHz, 16-bit)
+        self._pending_user_transcript = ""  # Buffer to collect transcripts
 
         # Full transcript collection (in-memory backup for webhook)
         self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
@@ -526,10 +523,9 @@ Rules:
             self.is_active = True
             # Start main voice session (native audio)
             self._session_task = asyncio.create_task(self._run_google_live_session())
-            # Start transcription session (Gemini 2.0 Flash) if webhook configured
+            # REST API transcription enabled if webhook configured
             if self._transcript_webhook_url:
-                self._transcription_task = asyncio.create_task(self._run_transcription_session())
-                logger.info(f"[{self.call_uuid[:8]}] STEP:DUAL_MODEL | Starting transcription model for real-time transcripts")
+                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_ENABLED | REST API transcription active")
             # Wait for setup to complete (with timeout - 8s max for better greeting)
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
@@ -755,145 +751,104 @@ Rules:
         self.goog_live_ws = None
         logger.info(f"[{self.call_uuid[:8]}] STEP:SESSION_ENDED | Google Live session ended")
 
-    async def _run_transcription_session(self):
-        """Run a parallel Gemini 2.0 Flash session for real-time transcription only"""
-        if not self._transcript_webhook_url:
-            logger.info(f"[{self.call_uuid[:8]}] No transcript webhook - skipping transcription model")
-            return
+    async def _transcribe_audio_rest_api(self, audio_bytes: bytes) -> str:
+        """Transcribe audio using Gemini REST API (gemini-2.0-flash)"""
+        if not audio_bytes or len(audio_bytes) < 1600:  # Skip if less than 0.1 second of audio
+            return None
 
-        url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
-
-        reconnect_attempts = 0
-        max_reconnects = 3
-
-        while self.is_active and reconnect_attempts < max_reconnects:
-            try:
-                async with websockets.connect(url, ping_interval=30, ping_timeout=20) as ws:
-                    self._transcription_ws = ws
-                    reconnect_attempts = 0
-                    logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_CONNECTED | Gemini 2.0 Flash for transcription")
-                    await self._send_transcription_setup()
-                    async for message in ws:
-                        if not self.is_active:
-                            break
-                        await self._receive_transcription(message)
-            except websockets.exceptions.ConnectionClosed as e:
-                logger.warning(f"[{self.call_uuid[:8]}] Transcription WS closed: {e.code}")
-                if self.is_active and not self._closing_call:
-                    reconnect_attempts += 1
-                    await asyncio.sleep(0.5)
-                    continue
-            except Exception as e:
-                logger.error(f"Transcription session error: {e}")
-                if self.is_active and not self._closing_call:
-                    reconnect_attempts += 1
-                    await asyncio.sleep(0.5)
-                    continue
-            break
-
-        self._transcription_ws = None
-        logger.info(f"[{self.call_uuid[:8]}] Transcription session ended")
-
-    async def _send_transcription_setup(self):
-        """Setup Gemini 2.0 Flash for transcription only"""
-        msg = {
-            "setup": {
-                "model": "models/gemini-2.0-flash",
-                "generation_config": {
-                    "response_modalities": ["TEXT"],  # Text only for transcription
-                },
-                # Enable input audio transcription (critical for inputTranscript field)
-                "input_audio_transcription": {},  # Empty dict enables default transcription
-                "system_instruction": {"parts": [{"text": "You are a transcription assistant. Listen to the audio and output ONLY what you hear. Do not add commentary. Just transcribe."}]}
-            }
-        }
-        await self._transcription_ws.send(json.dumps(msg))
-        logger.info(f"[{self.call_uuid[:8]}] Transcription setup sent (gemini-2.0-flash) with input_audio_transcription enabled")
-
-    async def _receive_transcription(self, message):
-        """Handle transcription responses from Gemini 2.0 Flash"""
         try:
-            resp = json.loads(message)
+            import httpx
 
-            # Debug: Log all response keys to understand what the transcription model returns
-            resp_keys = list(resp.keys())
-            if resp_keys not in [['serverContent'], ['setupComplete']]:
-                logger.info(f"[{self.call_uuid[:8]}] TRANSCRIPTION_RESP_KEYS | {resp_keys}")
+            # Gemini REST API endpoint
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={config.google_api_key}"
 
-            if "setupComplete" in resp:
-                self._transcription_setup_complete = True
-                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_READY | Gemini 2.0 Flash ready for transcription")
-                return
+            # Encode audio as base64
+            audio_b64 = base64.standard_b64encode(audio_bytes).decode("utf-8")
 
-            if "serverContent" in resp:
-                sc = resp["serverContent"]
-                sc_keys = list(sc.keys())
-
-                # Debug: Log serverContent keys to find transcription fields
-                if sc_keys not in [['modelTurn'], ['turnComplete']]:
-                    logger.info(f"[{self.call_uuid[:8]}] TRANSCRIPTION_SC_KEYS | {sc_keys}")
-
-                # Get user speech transcript - BUFFER it, don't send yet
-                if "inputTranscript" in sc:
-                    user_text = sc["inputTranscript"]
-                    if user_text and user_text.strip():
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:LIVE_TRANSCRIPT | User: {user_text}")
-                        # Save transcript locally
-                        self._save_transcript("USER", user_text.strip())
-                        self._log_conversation("user", user_text.strip())
-                        # BUFFER the transcript - will be sent to n8n AFTER AI responds
-                        self._pending_user_transcript += " " + user_text.strip()
-                        # Track goodbye
-                        if self._is_goodbye_message(user_text):
-                            self.user_said_goodbye = True
-                            self._check_mutual_goodbye()
-
-                # Get model text response - this could be the transcription output
-                if "modelTurn" in sc:
-                    parts = sc.get("modelTurn", {}).get("parts", [])
-                    for p in parts:
-                        if p.get("text"):
-                            text = p["text"].strip()
-                            if text:
-                                # Use model's text response as transcription
-                                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_TEXT | {text}")
-                                # This could be the user's speech transcribed by the model
-                                # Send it to n8n for processing
-                                self._save_transcript("USER", text)
-                                self._log_conversation("user", text)
-                                self._pending_user_transcript += " " + text
-
-        except Exception as e:
-            logger.error(f"Transcription receive error: {e}")
-
-    async def _send_audio_to_transcription(self, audio_b64: str):
-        """Send audio to transcription model"""
-        if not self._transcription_ws:
-            logger.debug(f"[{self.call_uuid[:8]}] Transcription WS not connected - skipping audio")
-            return
-        if not self._transcription_setup_complete:
-            logger.debug(f"[{self.call_uuid[:8]}] Transcription setup not complete - skipping audio")
-            return
-        try:
-            msg = {
-                "realtime_input": {
-                    "media_chunks": [{
-                        "mime_type": "audio/pcm;rate=16000",
-                        "data": audio_b64
-                    }]
+            # Build request payload
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/L16;rate=16000",  # Linear PCM 16-bit, 16kHz
+                                "data": audio_b64
+                            }
+                        },
+                        {
+                            "text": "Transcribe this audio. Output ONLY the exact words spoken, nothing else. No timestamps, no labels."
+                        }
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 512
                 }
             }
-            await self._transcription_ws.send(json.dumps(msg))
-            # Log every 100th chunk to avoid log spam but confirm audio is flowing
-            if not hasattr(self, '_transcription_audio_count'):
-                self._transcription_audio_count = 0
-            self._transcription_audio_count += 1
-            if self._transcription_audio_count == 1:
-                logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_AUDIO | Sending first audio chunk to transcription model")
-            elif self._transcription_audio_count % 100 == 0:
-                logger.debug(f"[{self.call_uuid[:8]}] Transcription audio chunks sent: {self._transcription_audio_count}")
+
+            logger.info(f"[{self.call_uuid[:8]}] STEP:REST_TRANSCRIBE | Sending {len(audio_bytes)} bytes to Gemini REST API")
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(api_url, json=payload)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    try:
+                        text = result["candidates"][0]["content"]["parts"][0]["text"]
+                        transcription = text.strip()
+                        if transcription:
+                            logger.info(f"[{self.call_uuid[:8]}] STEP:TRANSCRIPTION_RESULT | {transcription}")
+                            return transcription
+                    except (KeyError, IndexError) as e:
+                        logger.warning(f"[{self.call_uuid[:8]}] Transcription parse error: {e}")
+                        return None
+                else:
+                    logger.warning(f"[{self.call_uuid[:8]}] Transcription API error: {response.status_code}")
+                    return None
+
         except Exception as e:
-            logger.warning(f"Error sending to transcription: {e}")
+            logger.error(f"[{self.call_uuid[:8]}] REST transcription error: {e}")
+            return None
+
+    async def _process_user_audio_for_transcription(self):
+        """Process buffered user audio and send transcription to n8n webhook"""
+        if not self._transcript_webhook_url:
+            return
+
+        if len(self._user_audio_buffer) < 1600:  # Less than 0.1 second
+            self._user_audio_buffer = bytearray(b"")
+            return
+
+        # Copy and clear buffer
+        audio_to_transcribe = bytes(self._user_audio_buffer)
+        self._user_audio_buffer = bytearray(b"")
+
+        # Transcribe using REST API
+        transcription = await self._transcribe_audio_rest_api(audio_to_transcribe)
+
+        if transcription:
+            # Save transcript locally
+            self._save_transcript("USER", transcription)
+            self._log_conversation("user", transcription)
+
+            # Track goodbye
+            if self._is_goodbye_message(transcription):
+                self.user_said_goodbye = True
+                self._check_mutual_goodbye()
+
+            # Send to n8n webhook
+            logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | User transcript: {transcription[:50]}...")
+            asyncio.create_task(send_transcript_to_webhook(self, "user", transcription))
+
+    def _buffer_user_audio(self, audio_chunk: bytes):
+        """Buffer user audio for transcription"""
+        if not self._transcript_webhook_url:
+            return
+
+        # Add to buffer (with size limit)
+        remaining_space = self._max_audio_buffer_size - len(self._user_audio_buffer)
+        if remaining_space > 0:
+            self._user_audio_buffer.extend(audio_chunk[:remaining_space])
 
     async def _send_session_setup(self):
         # Concise accent instruction (shorter = faster responses)
@@ -1174,13 +1129,10 @@ Rules:
                         logger.info(f"[{self.call_uuid[:8]}] STEP:TURN_COMPLETE | Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks in {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
-                    # AFTER AI finishes speaking, send buffered user transcript to n8n
-                    # This ensures phase injection is ready BEFORE next user turn
-                    if self._pending_user_transcript.strip() and self._turn_count > 1:
-                        transcript_to_send = self._pending_user_transcript.strip()
-                        self._pending_user_transcript = ""  # Clear buffer
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:SEND_TO_N8N | After AI turn, sending: {transcript_to_send[:50]}...")
-                        asyncio.create_task(send_transcript_to_webhook(self, "user", transcript_to_send))
+                    # AFTER AI finishes speaking, transcribe buffered user audio via REST API
+                    # This ensures transcription happens after user speaks and AI responds
+                    if self._turn_count > 1 and self._transcript_webhook_url:
+                        asyncio.create_task(self._process_user_audio_for_transcription())
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
                     if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
@@ -1327,13 +1279,12 @@ Rules:
                 try:
                     # Send to main voice model (native audio)
                     await self.goog_live_ws.send(json.dumps(msg))
-                    # Also send to transcription model (Gemini 2.0 Flash) for real-time transcript
-                    audio_b64_chunk = base64.b64encode(bytes(ac)).decode()
-                    asyncio.create_task(self._send_audio_to_transcription(audio_b64_chunk))
+                    # Buffer audio for REST API transcription (non-blocking)
+                    self._buffer_user_audio(bytes(ac))
                     chunks_sent += 1
                     # Log first chunk sent to Gemini for this user speech
                     if chunks_sent == 1 and self._user_speaking:
-                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TO_GEMINI -> Sending user audio to Gemini (voice + transcription)")
+                        logger.info(f"[{self.call_uuid[:8]}] STEP:USER_TO_GEMINI -> Sending user audio to Gemini")
                 except Exception as send_err:
                     logger.error(f"Error sending audio to Google: {send_err} - continuing")
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
