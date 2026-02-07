@@ -785,11 +785,8 @@ Rules:
         }
         await self.goog_live_ws.send(json.dumps(msg))
 
-        # Mark first connection done
-        if self._is_first_connection:
-            self._is_first_connection = False
-
-        logger.info(f"Sent session setup with voice: {voice_name}, reconnect={not self._is_first_connection}")
+        # Note: _is_first_connection is set to False in setupComplete handler, not here
+        logger.info(f"Sent session setup with voice: {voice_name}, first_connection={self._is_first_connection}")
 
     async def _send_initial_greeting(self):
         """Send initial trigger to make AI greet immediately"""
@@ -970,6 +967,7 @@ Rules:
                 # On first connection: trigger greeting
                 # On reconnection: trigger resume with filler phrase
                 if self._is_first_connection:
+                    self._is_first_connection = False  # Mark first connection done
                     await self._send_initial_greeting()
                 else:
                     await self._send_reconnection_trigger()
