@@ -185,6 +185,48 @@ class QuestionFlow:
             "responses": self.collected_data
         }
 
+    def get_statistics(self) -> Dict[str, Any]:
+        """Compute call statistics from conversation flow data"""
+        total = len(self.questions)
+        completed = min(self.current_step, total)
+
+        # Detect objections raised during the conversation
+        objections_found = []
+        for response_text in self.collected_data.values():
+            obj = self.detect_objection(str(response_text))
+            if obj and obj not in objections_found:
+                objections_found.append(obj)
+
+        # Derive interest level from completion + objections
+        if "not_interested" in objections_found:
+            interest = "not_interested"
+        elif completed >= total * 0.8 and "price" not in objections_found:
+            interest = "high"
+        elif completed >= total * 0.5:
+            interest = "medium"
+        else:
+            interest = "low"
+
+        # Build summary from key profiling responses
+        summary_parts = []
+        if self.collected_data.get("current_work"):
+            summary_parts.append(f"Role: {self.collected_data['current_work'][:100]}")
+        if self.collected_data.get("ai_rating"):
+            summary_parts.append(f"AI knowledge: {self.collected_data['ai_rating'][:50]}")
+        if self.collected_data.get("goal_6months"):
+            summary_parts.append(f"6mo goal: {self.collected_data['goal_6months'][:100]}")
+        if self.collected_data.get("long_term_goal"):
+            summary_parts.append(f"Long-term: {self.collected_data['long_term_goal'][:100]}")
+
+        return {
+            "questions_completed": completed,
+            "total_questions": total,
+            "completion_rate": round(completed / total * 100, 1) if total > 0 else 0,
+            "interest_level": interest,
+            "objections_raised": objections_found,
+            "call_summary": "; ".join(summary_parts) if summary_parts else "Call ended before profiling",
+        }
+
     def save_to_file(self, call_uuid: str):
         """Save current state to file"""
         try:

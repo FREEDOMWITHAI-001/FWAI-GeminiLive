@@ -19,6 +19,7 @@ import json
 from src.core.config import config
 from src.prompt_loader import FWAI_PROMPT
 from src.conversation_memory import add_message, get_history, clear_conversation
+from src.db.session_db import session_db
 from fastapi.staticfiles import StaticFiles
 
 # Audio directory for any generated audio files
@@ -86,10 +87,32 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Server starting on http://{config.host}:{config.port}")
     logger.info(f"Gemini Voice: {config.tts_voice}")
+    logger.info(f"Session DB: {session_db._db_path}")
+
+    # Start background cleanup task for stale pending data
+    async def _cleanup_stale_data():
+        while True:
+            await asyncio.sleep(300)  # Every 5 minutes
+            try:
+                # Clean stale in-memory dicts
+                stale_keys = [k for k, v in _pending_call_data.items()
+                              if not any(k in (s or {}) for s in [
+                                  getattr(getattr(globals().get('plivo_gemini_stream'), '_sessions', None), 'keys', lambda: [])()
+                              ])]
+                for k in stale_keys[:10]:  # Clean max 10 at a time
+                    _pending_call_data.pop(k, None)
+                # Clean stale DB records
+                session_db.cleanup_stale(max_age_minutes=10)
+            except Exception as e:
+                logger.debug(f"Cleanup task error: {e}")
+
+    cleanup_task = asyncio.create_task(_cleanup_stale_data())
 
     yield
 
     # Shutdown
+    cleanup_task.cancel()
+    session_db.shutdown()
     logger.info("Server shutting down...")
 
 
@@ -412,6 +435,12 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             "webhookUrl": request.webhookUrl
         }
 
+        # Record call in DB (non-blocking)
+        session_db.create_call(
+            call_uuid=call_uuid, phone=request.phoneNumber,
+            contact_name=request.contactName, webhook_url=request.webhookUrl
+        )
+
         # PRELOAD Gemini session FIRST (before phone rings)
         from src.services.plivo_gemini_stream import preload_session
         logger.info(f"Preloading Gemini session for {call_uuid}...")
@@ -546,6 +575,8 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
 
                 if session:
                     logger.info(f"Gemini Live session created for {call_uuid}")
+                    session_db.update_call(call_uuid, status="active",
+                                           started_at=datetime.now().isoformat())
                     # Ensure Plivo UUID is set (fallback if set_plivo_uuid missed it)
                     if not session.plivo_call_uuid:
                         # Try to get from pending call data or mapping
@@ -696,6 +727,16 @@ async def start_conversational_call(request: ConversationalCallRequest):
             "clientName": client_name
         }
 
+        # Record call in DB (non-blocking)
+        from src.question_flow import load_client_config
+        client_config = load_client_config(client_name)
+        session_db.create_call(
+            call_uuid=call_uuid, phone=request.phoneNumber,
+            contact_name=request.contactName, client_name=client_name,
+            webhook_url=request.callEndWebhookUrl,
+            total_questions=len(client_config.get("questions", []))
+        )
+
         # Preload session with QuestionFlow (uses config file, not full prompt)
         await preload_session_conversational(
             call_uuid,
@@ -736,6 +777,22 @@ async def start_conversational_call(request: ConversationalCallRequest):
     except Exception as e:
         logger.error(f"Error starting conversational call: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/call/history")
+async def get_call_history(limit: int = Query(default=50, le=200)):
+    """Get call history with statistics from session DB"""
+    calls = session_db.get_recent_calls(limit=limit)
+    return JSONResponse(content={"calls": calls, "total": len(calls)})
+
+
+@app.get("/call/{call_id}/details")
+async def get_call_details(call_id: str):
+    """Get full call details including responses and statistics"""
+    call = session_db.get_call(call_id)
+    if call:
+        return JSONResponse(content=call)
+    raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
 
 
 @app.get("/call/phases")

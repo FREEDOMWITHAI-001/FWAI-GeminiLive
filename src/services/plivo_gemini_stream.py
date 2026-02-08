@@ -16,6 +16,7 @@ from src.core.config import config
 from src.tools import execute_tool
 from src.conversational_prompts import BASE_PROMPT, DEFAULT_CONTEXT, render_prompt
 from src.question_flow import QuestionFlow, get_or_create_flow, remove_flow
+from src.db.session_db import session_db
 
 
 def get_vertex_ai_token():
@@ -111,7 +112,7 @@ def load_default_prompt():
         with open(prompts_file) as f:
             prompts = json.load(f)
             return prompts.get("FWAI_Core", {}).get("prompt", BASE_PROMPT)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return BASE_PROMPT
 
 DEFAULT_PROMPT = load_default_prompt()
@@ -595,7 +596,7 @@ Rules:
             # Clean up uploaded file
             try:
                 client.files.delete(name=audio_file.name)
-            except:
+            except Exception:
                 pass
 
             logger.info(f"Gemini transcription complete for {call_uuid}")
@@ -1040,12 +1041,13 @@ Rules:
             self._pending_user_transcript = ""
             self._last_user_transcript_time = 0
 
-            # Send as a system-like message that tells AI what to say next
+            # Wrap as [INSTRUCTION] so Gemini knows to SAY these words, not respond to them
+            instruction_text = f'[INSTRUCTION] Say the following naturally to the customer: "{text}" After saying this, STOP speaking completely and wait in silence for the customer to respond. Do NOT add any extra questions or comments.'
             msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": text}]
+                        "parts": [{"text": instruction_text}]
                     }],
                     "turn_complete": True
                 }
@@ -1142,7 +1144,7 @@ Rules:
         # Question Flow Mode: Include the first question in the greeting
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
-            trigger_text = first_instruction
+            trigger_text = f'[INSTRUCTION] You are starting a phone call. Say the following as your opening greeting naturally: "{first_instruction}" After saying this, STOP speaking and wait silently for the customer to respond.'
             logger.debug(f"[{self.call_uuid[:8]}] Starting with question #1")
 
             # Clear audio buffer and set up waiting state for first question
@@ -1177,9 +1179,9 @@ Rules:
             current_question = self._question_flow.get_current_question()
 
             if current_question:
-                reconnect_text = current_question
+                reconnect_text = f'[INSTRUCTION] Connection was briefly interrupted. Say "Sorry about that, where were we?" then say naturally: "{current_question}" Then STOP and wait for the customer to respond.'
             else:
-                reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
+                reconnect_text = "[INSTRUCTION] Connection restored. Say 'Sorry about that brief interruption. Great talking to you! Take care!' and use end_call tool."
 
             logger.debug(f"[{self.call_uuid[:8]}] Restoring to question {current_step + 1}")
         else:
@@ -1229,7 +1231,7 @@ Rules:
                         }
                     }
                     await self.goog_live_ws.send(json.dumps(tool_response))
-                except:
+                except Exception:
                     pass
 
                 # Check if user already said goodbye
@@ -1590,16 +1592,21 @@ Rules:
             logger.info(f"[{self.call_uuid[:8]}] Duration: {duration:.1f}s")
             self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s")
 
-        # Cleanup question flow and get collected data
+        # Cleanup question flow and get collected data + statistics
+        self._flow_data = None
+        self._flow_statistics = None
         if self.use_question_flow:
-            flow_data = remove_flow(self.call_uuid)
-            if flow_data:
-                logger.debug(f"[{self.call_uuid[:8]}] Flow: {len(flow_data.get('responses', {}))} responses")
+            # Get statistics BEFORE removing flow (needs the flow object)
+            flow_obj = get_or_create_flow(self.call_uuid, self.client_name)
+            self._flow_statistics = flow_obj.get_statistics()
+            self._flow_data = remove_flow(self.call_uuid)
+            if self._flow_data:
+                logger.debug(f"[{self.call_uuid[:8]}] Flow: {len(self._flow_data.get('responses', {}))} responses")
 
         if self.goog_live_ws:
             try:
                 await self.goog_live_ws.close()
-            except:
+            except Exception:
                 pass
         if self._session_task:
             self._session_task.cancel()
@@ -1626,78 +1633,105 @@ Rules:
         self._start_post_call_processing(duration)
 
     def _start_post_call_processing(self, duration: float):
-        """Run all post-call processing (save, transcribe, webhook) in background thread"""
+        """Run all post-call processing (save, transcribe, DB update, webhook) in background thread"""
         def process_in_background():
             try:
-                # Step 1: Save separate user/agent recordings
+                # Step 1: Save recording
                 recording_info = self._save_recording()
 
-                # Step 2: Transcribe with Whisper (only if enabled - RAM heavy)
+                # Step 2: Transcribe (Gemini 2.0 Flash or Whisper)
                 if recording_info and config.enable_whisper:
                     self._transcribe_recording_sync(recording_info, self.call_uuid)
-                elif recording_info:
-                    logger.info(f"Whisper disabled - recordings saved: user={recording_info.get('user_wav')}, agent={recording_info.get('agent_wav')}")
 
-                # Step 3: Call webhook AFTER transcription is done
+                # Step 3: Build transcript text
+                transcript = ""
+                try:
+                    transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
+                    final_transcript = transcript_dir / f"{self.call_uuid}_final.txt"
+                    realtime_transcript = transcript_dir / f"{self.call_uuid}.txt"
+                    if final_transcript.exists():
+                        transcript = final_transcript.read_text()
+                    elif realtime_transcript.exists():
+                        transcript = realtime_transcript.read_text()
+                except Exception:
+                    pass
+                # Fallback to in-memory transcript
+                if not transcript.strip() and self._full_transcript:
+                    transcript = "\n".join([
+                        f"[{t['timestamp']}] {t['role']}: {t['text']}"
+                        for t in self._full_transcript
+                    ])
+
+                # Step 4: Update session DB with final data
+                stats = self._flow_statistics or {}
+                flow_data = self._flow_data or {}
+                session_db.update_call(
+                    self.call_uuid,
+                    status="completed",
+                    ended_at=datetime.now().isoformat(),
+                    duration_seconds=round(duration, 1),
+                    transcript=transcript,
+                    questions_completed=stats.get("questions_completed", 0),
+                    interest_level=stats.get("interest_level", "unknown"),
+                    call_summary=stats.get("call_summary", ""),
+                    collected_responses=flow_data.get("responses", {}),
+                    objections_raised=stats.get("objections_raised", [])
+                )
+
+                # Step 5: Call webhook AFTER everything is saved
                 if self.webhook_url:
-                    import asyncio
-                    # Create new event loop for this thread
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                    import asyncio as _asyncio
+                    loop = _asyncio.new_event_loop()
+                    _asyncio.set_event_loop(loop)
                     try:
-                        loop.run_until_complete(self._call_webhook(duration))
+                        loop.run_until_complete(self._call_webhook(duration, transcript, stats, flow_data))
                     finally:
                         loop.close()
 
-                logger.info(f"Post-call processing complete for {self.call_uuid}")
+                logger.info(f"[{self.call_uuid[:8]}] Post-call processing complete")
             except Exception as e:
                 logger.error(f"Post-call processing error: {e}")
 
         # Start background thread - call ends immediately, this runs separately
         processing_thread = threading.Thread(target=process_in_background, daemon=True)
         processing_thread.start()
-        logger.info(f"Post-call processing started in background for {self.call_uuid}")
 
-    async def _call_webhook(self, duration: float):
-        """Call webhook URL to notify n8n that call ended"""
+    async def _call_webhook(self, duration: float, transcript: str = "",
+                            stats: dict = None, flow_data: dict = None):
+        """Call webhook URL with enriched call data (transcript + statistics)"""
         try:
             import httpx
 
-            # Read transcript file - prefer final (Whisper) transcript, fallback to real-time
-            transcript = ""
-            try:
-                transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
-                final_transcript = transcript_dir / f"{self.call_uuid}_final.txt"
-                realtime_transcript = transcript_dir / f"{self.call_uuid}.txt"
-                if final_transcript.exists():
-                    transcript = final_transcript.read_text()
-                elif realtime_transcript.exists():
-                    transcript = realtime_transcript.read_text()
-            except:
-                pass
-
-            # Fallback to in-memory transcript if file is empty
-            if not transcript.strip() and self._full_transcript:
-                transcript = "\n".join([
-                    f"[{t['timestamp']}] {t['role']}: {t['text']}"
-                    for t in self._full_transcript
-                ])
-                logger.info(f"Using in-memory transcript ({len(self._full_transcript)} entries)")
+            stats = stats or {}
+            flow_data = flow_data or {}
 
             payload = {
                 "event": "call_ended",
                 "call_uuid": self.call_uuid,
                 "caller_phone": self.caller_phone,
+                "contact_name": self.context.get("customer_name", ""),
+                "client_name": self.client_name,
                 "duration_seconds": round(duration, 1),
                 "timestamp": datetime.now().isoformat(),
+                # Call statistics
+                "questions_completed": stats.get("questions_completed", 0),
+                "total_questions": stats.get("total_questions", 0),
+                "completion_rate": stats.get("completion_rate", 0),
+                "interest_level": stats.get("interest_level", "unknown"),
+                "call_summary": stats.get("call_summary", ""),
+                "objections_raised": stats.get("objections_raised", []),
+                # Collected responses (individual answers)
+                "collected_responses": flow_data.get("responses", {}),
+                # Transcript
                 "transcript": transcript,
-                "transcript_entries": self._full_transcript  # Also send as structured data
+                "transcript_entries": self._full_transcript
             }
 
-            logger.info(f"Calling webhook: {self.webhook_url}")
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            logger.info(f"[{self.call_uuid[:8]}] Webhook: interest={stats.get('interest_level')}, "
+                         f"questions={stats.get('questions_completed')}/{stats.get('total_questions')}")
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(self.webhook_url, json=payload)
-                logger.info(f"Webhook response: {resp.status_code}")
+                logger.info(f"[{self.call_uuid[:8]}] Webhook response: {resp.status_code}")
         except Exception as e:
             logger.error(f"Error calling webhook: {e}")
 
