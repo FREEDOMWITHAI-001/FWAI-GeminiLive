@@ -255,6 +255,7 @@ class PlivoGeminiSession:
         # Audio gating: Only forward AI audio when gate is OPEN (after injecting a question)
         # Dropped audio = silent speaker = no echo = clean inputTranscription
         self._gate_open = False  # Gate CLOSED by default
+        self._turns_since_inject = 0  # Count turnCompletes after injection (need 2: ack + question)
 
         # Echo protection: ignore residual inputTranscription after AI finishes speaking
         self._ai_delivering_question = False  # True while AI speaks injected question
@@ -1075,8 +1076,9 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
-            self._gate_open = True  # OPEN gate for AI to speak this question
-            self._ai_delivering_question = True  # Echo protection: ignore transcripts until AI finishes
+            self._gate_open = True  # OPEN gate for AI to speak
+            self._turns_since_inject = 0  # Reset turn counter (need 2 turns: ack + question)
+            self._ai_delivering_question = True  # Echo protection
             self._waiting_for_user = True
             self._question_asked_time = time.time()
             logger.info(f"[{self.call_uuid[:8]}] Injected Q - gate OPEN, waiting for AI then user")
@@ -1403,15 +1405,19 @@ Rules:
                     self.greeting_audio_complete = True
                     self._turn_count += 1
 
-                    # Audio gating + echo protection: close gate after AI finishes speaking
-                    if self.use_question_flow:
-                        if self._gate_open:
-                            self._gate_open = False  # CLOSE gate - block off-script audio
-                            logger.debug(f"[{self.call_uuid[:8]}] turnComplete - gate CLOSED")
-                        if self._ai_delivering_question:
+                    # Audio gating: close gate after AI finishes delivering ack + question
+                    # Gemini often splits "acknowledgment" + "question" into 2 separate turns
+                    # so we wait for at least 2 turnCompletes (or 8s fallback) before closing
+                    if self.use_question_flow and self._gate_open:
+                        self._turns_since_inject += 1
+                        time_since_inject = time.time() - self._question_asked_time
+                        if (self._turns_since_inject >= 2 and time_since_inject >= 3.0) or time_since_inject >= 8.0:
+                            self._gate_open = False
                             self._ai_delivering_question = False
                             self._ai_finished_speaking_time = time.time()
-                            logger.debug(f"[{self.call_uuid[:8]}] Echo buffer active (1.5s)")
+                            logger.debug(f"[{self.call_uuid[:8]}] gate CLOSED (turns={self._turns_since_inject}, {time_since_inject:.1f}s) - echo buffer active")
+                        else:
+                            logger.debug(f"[{self.call_uuid[:8]}] gate staying OPEN (turns={self._turns_since_inject}, {time_since_inject:.1f}s - need 2 turns or 8s)")
 
                     # Log turn latency at DEBUG level
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
