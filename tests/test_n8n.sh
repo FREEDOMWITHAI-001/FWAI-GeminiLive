@@ -5,7 +5,7 @@
 # Tests for n8n workflow integration
 #
 # Usage:
-#   export SERVER_URL="http://140.245.206.162:3000"
+#   export SERVER_URL="http://34.93.142.172:3001"
 #   export N8N_WEBHOOK_URL="https://your-n8n-url/webhook/trigger-call"
 #   ./test_n8n.sh
 # =============================================================================
@@ -18,7 +18,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-SERVER_URL="${SERVER_URL:-http://140.245.206.162:3000}"
+SERVER_URL="${SERVER_URL:-http://34.93.142.172:3001}"
 N8N_WEBHOOK_URL="${N8N_WEBHOOK_URL:-}"
 
 echo "=============================================="
@@ -107,7 +107,7 @@ echo ""
 echo "1. Import workflow from: n8n_flows/FWAI_Internal/outbound_call.json"
 echo ""
 echo "2. Update these nodes with your OCI server URL:"
-echo "   - 'Make Outbound Call' node: http://140.245.206.162:3000/plivo/make-call"
+echo "   - 'Make Outbound Call' node: http://34.93.142.172:3001/plivo/make-call"
 echo ""
 echo "3. Configure 'Call Ended Webhook' to receive data"
 echo ""

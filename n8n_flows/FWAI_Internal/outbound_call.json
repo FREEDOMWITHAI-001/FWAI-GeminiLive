@@ -18,7 +18,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://140.245.206.162:3000/plivo/make-call",
+        "url": "http://34.93.142.172:3001/call/conversational",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
