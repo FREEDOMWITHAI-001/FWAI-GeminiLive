@@ -252,6 +252,11 @@ class PlivoGeminiSession:
         self._question_asked_time = 0  # When we asked the question
         self._wait_timeout = 5.0  # Wait 5 seconds for user response
 
+        # Echo protection: ignore inputTranscription while AI is speaking a question
+        # Phone speaker → mic → Plivo → Gemini → false "user" transcription
+        self._ai_delivering_question = False  # True while AI speaks injected question
+        self._ai_finished_speaking_time = 0  # When AI finished (for echo tail buffer)
+
         # Speech detection logging
         self._user_speaking = False  # Track if user is currently speaking
         self._agent_speaking = False  # Track if agent is currently speaking
@@ -1055,9 +1060,10 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
+            self._ai_delivering_question = True  # Echo protection: ignore transcripts until AI finishes
             self._waiting_for_user = True
             self._question_asked_time = time.time()
-            logger.info(f"[{self.call_uuid[:8]}] Injected question - waiting for user response")
+            logger.info(f"[{self.call_uuid[:8]}] Injected question - waiting for AI to speak, then user")
             if end_call and not self._closing_call:
                 # Give the model a moment to say the closing line before hangup
                 asyncio.create_task(self._fallback_hangup(5.0))
@@ -1151,6 +1157,7 @@ Rules:
 
             # Clear audio buffer and set up waiting state for first question
             self._user_audio_buffer = bytearray(b"")
+            self._ai_delivering_question = True  # Echo protection for greeting
             self._waiting_for_user = True
             self._question_asked_time = time.time()
             self._pending_user_transcript = ""
@@ -1377,6 +1384,12 @@ Rules:
                     self.greeting_audio_complete = True
                     self._turn_count += 1
 
+                    # Echo protection: AI finished speaking, start echo buffer timer
+                    if self.use_question_flow and self._ai_delivering_question:
+                        self._ai_delivering_question = False
+                        self._ai_finished_speaking_time = time.time()
+                        logger.debug(f"[{self.call_uuid[:8]}] AI finished speaking question - echo buffer active")
+
                     # Log turn latency at DEBUG level
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
@@ -1421,26 +1434,38 @@ Rules:
                     logger.debug(f"[{self.call_uuid[:8]}] Input transcript: {user_text}")
                     if user_text and user_text.strip():
                         user_text = user_text.strip()
-                        # Keep the longest transcript segment for the current question
-                        if self.use_question_flow and self._waiting_for_user:
-                            if len(user_text) >= len(self._pending_user_transcript):
-                                self._pending_user_transcript = user_text
-                            elif user_text not in self._pending_user_transcript:
-                                self._pending_user_transcript = f"{self._pending_user_transcript} {user_text}".strip()
-                            self._last_user_transcript_time = time.time()
-                        self._last_user_speech_time = time.time()  # Track for latency
-                        logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
-                        self._save_transcript("USER", user_text)
-                        # Log to file in background thread (no latency impact)
-                        self._log_conversation("user", user_text)
-                        # Send to n8n webhook for state machine (non-blocking)
-                        asyncio.create_task(send_transcript_to_webhook(self, "user", user_text))
-                        # Track if user said goodbye
-                        if self._is_goodbye_message(user_text):
-                            logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
-                            self.user_said_goodbye = True
-                            # Check if both parties said goodbye
-                            self._check_mutual_goodbye()
+
+                        # Filter out noise/silence markers - NOT real speech
+                        is_noise = user_text.startswith('<') and user_text.endswith('>')
+                        if is_noise:
+                            logger.debug(f"[{self.call_uuid[:8]}] Skipping noise marker: {user_text}")
+                            # Don't process noise at all - skip everything below
+                        else:
+                            # Echo protection in QuestionFlow mode
+                            is_echo = False
+                            if self.use_question_flow and self._waiting_for_user:
+                                if self._ai_delivering_question:
+                                    is_echo = True
+                                    logger.debug(f"[{self.call_uuid[:8]}] Echo: ignoring '{user_text}' (AI still speaking)")
+                                elif self._ai_finished_speaking_time > 0 and (time.time() - self._ai_finished_speaking_time) < 1.5:
+                                    is_echo = True
+                                    logger.debug(f"[{self.call_uuid[:8]}] Echo: ignoring '{user_text}' (tail {time.time() - self._ai_finished_speaking_time:.1f}s after AI)")
+
+                            if not is_echo:
+                                # Real user speech - accumulate for question flow
+                                if self.use_question_flow and self._waiting_for_user:
+                                    self._pending_user_transcript = f"{self._pending_user_transcript} {user_text}".strip()
+                                    self._last_user_transcript_time = time.time()
+                                self._last_user_speech_time = time.time()  # Track for latency
+                                logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
+                                self._save_transcript("USER", user_text)
+                                self._log_conversation("user", user_text)
+                                asyncio.create_task(send_transcript_to_webhook(self, "user", user_text))
+                                # Track if user said goodbye
+                                if self._is_goodbye_message(user_text):
+                                    logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
+                                    self.user_said_goodbye = True
+                                    self._check_mutual_goodbye()
 
                 if "modelTurn" in sc:
                     parts = sc.get("modelTurn", {}).get("parts", [])
