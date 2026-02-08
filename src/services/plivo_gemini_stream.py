@@ -282,6 +282,7 @@ class PlivoGeminiSession:
         self._user_audio_buffer = bytearray(b"")  # Buffer for user audio (16kHz PCM)
         self._max_audio_buffer_size = 16000 * 2 * 30  # Max 30 seconds of audio (16kHz, 16-bit)
         self._pending_user_transcript = ""  # Buffer to collect transcripts
+        self._last_user_transcript_time = 0  # Track when we last got a transcript
 
         # Full transcript collection (in-memory backup for webhook)
         self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
@@ -723,14 +724,15 @@ Rules:
 
                         # If 1.5+ seconds of silence AFTER user spoke, and we have audio, process their response
                         # Also require at least 2 seconds since question was asked
-                        if silence_since_user >= 1.5 and time_since_question >= 2.0 and len(self._user_audio_buffer) >= 8000:
+                        if silence_since_user >= 1.5 and time_since_question >= 2.0:
                             logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({silence_since_user:.1f}s silence, {len(self._user_audio_buffer)} bytes)")
                             await self._process_user_audio_for_transcription()
                             continue
 
                     # If waiting too long (5 sec timeout) with no response, prompt user
                     if (time.time() - self._question_asked_time) >= self._wait_timeout:
-                        if len(self._user_audio_buffer) < 8000:  # Less than 0.25 seconds of audio
+                        no_user_speech = (self._last_user_audio_time is None) or (self._last_user_audio_time < self._question_asked_time)
+                        if no_user_speech and not self._pending_user_transcript:
                             logger.info(f"[{self.call_uuid[:8]}] {self._wait_timeout}s timeout - prompting user")
                             await self._send_silence_nudge()
                             self._question_asked_time = time.time()  # Reset timeout
@@ -762,6 +764,9 @@ Rules:
         # In QuestionFlow mode, check if we've been waiting too long (5 sec timeout)
         if self.use_question_flow:
             if self._waiting_for_user and (time.time() - self._question_asked_time) >= self._wait_timeout:
+                no_user_speech = (self._last_user_audio_time is None) or (self._last_user_audio_time < self._question_asked_time)
+                if not no_user_speech or self._pending_user_transcript:
+                    return
                 logger.info(f"[{self.call_uuid[:8]}] 5 sec timeout - prompting user")
                 # Send a gentle prompt
                 prompt_msg = {
@@ -963,11 +968,43 @@ Rules:
         if not self._transcript_webhook_url and not self.use_question_flow:
             return
 
+        pending_transcript = (self._pending_user_transcript or "").strip()
+
         # Only process if we're waiting for user response
         if self.use_question_flow and not self._waiting_for_user:
             # Clear buffer to avoid processing stale audio later
             self._user_audio_buffer = bytearray(b"")
             logger.debug(f"[{self.call_uuid[:8]}] Not waiting for user, clearing buffer")
+            return
+
+        # Don't process if question was asked very recently (< 2 seconds ago)
+        if self.use_question_flow and self._waiting_for_user:
+            time_since_question = time.time() - self._question_asked_time
+            if time_since_question < 2.0:
+                logger.debug(f"[{self.call_uuid[:8]}] Question asked {time_since_question:.1f}s ago, waiting for response...")
+                return
+
+        # Question Flow Mode: Require a real transcript before advancing (prevents noise auto-advances)
+        if self.use_question_flow and self._question_flow:
+            if not pending_transcript:
+                if len(self._user_audio_buffer) > 0:
+                    logger.debug(f"[{self.call_uuid[:8]}] No transcript yet - clearing audio buffer ({len(self._user_audio_buffer)} bytes)")
+                    self._user_audio_buffer = bytearray(b"")
+                return
+
+            audio_bytes = len(self._user_audio_buffer)
+            self._user_audio_buffer = bytearray(b"")
+            self._pending_user_transcript = ""
+
+            # Mark that we got a response (detected via transcript + silence)
+            self._waiting_for_user = False
+            logger.info(f"[{self.call_uuid[:8]}] User responded ('{pending_transcript[:40]}...') - advancing")
+
+            # Advance to next question with actual user text (enables objections)
+            next_instruction = self._question_flow.advance(pending_transcript)
+            logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
+            self._last_question_time = time.time()
+            await self._inject_question(next_instruction)
             return
 
         # Require minimum audio duration (at least 0.5 seconds = 16000 bytes at 16kHz, 16-bit)
@@ -976,32 +1013,9 @@ Rules:
             logger.debug(f"[{self.call_uuid[:8]}] Not enough audio ({len(self._user_audio_buffer)} bytes), need {MIN_AUDIO_FOR_RESPONSE}")
             return  # Don't clear buffer - keep accumulating
 
-        # Don't process if question was asked very recently (< 2 seconds ago)
-        if self.use_question_flow and self._waiting_for_user:
-            time_since_question = time.time() - self._question_asked_time
-            if time_since_question < 2.0:
-                logger.debug(f"[{self.call_uuid[:8]}] Question asked {time_since_question:.1f}s ago, waiting for response...")
-                return  # Don't clear buffer - keep accumulating
-
         # Clear buffer (transcription disabled - will be done at end of call)
         audio_bytes = len(self._user_audio_buffer)
         self._user_audio_buffer = bytearray(b"")
-
-        # Question Flow Mode: Advance to next question based on silence detection (no real-time transcription)
-        if self.use_question_flow and self._question_flow:
-            if not self._waiting_for_user:
-                logger.debug(f"[{self.call_uuid[:8]}] Not waiting for user, skipping advance")
-                return
-
-            # Mark that we got a response (detected via silence after speech)
-            self._waiting_for_user = False
-            logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({audio_bytes} bytes) - advancing")
-
-            # Advance to next question (pass empty string since we're not transcribing)
-            next_instruction = self._question_flow.advance("")
-            logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
-            self._last_question_time = time.time()
-            await self._inject_question(next_instruction)
 
     async def _inject_question(self, instruction: str):
         """Inject the next question instruction into the AI"""
@@ -1013,6 +1027,8 @@ Rules:
             # This ensures we only process audio that comes AFTER the question is asked
             self._user_audio_buffer = bytearray(b"")
             self._last_user_audio_time = None  # Reset user speech tracking
+            self._pending_user_transcript = ""
+            self._last_user_transcript_time = 0
 
             # Send as a system-like message that tells AI what to say next
             msg = {
@@ -1117,6 +1133,8 @@ Rules:
             self._user_audio_buffer = bytearray(b"")
             self._waiting_for_user = True
             self._question_asked_time = time.time()
+            self._pending_user_transcript = ""
+            self._last_user_transcript_time = 0
         else:
             trigger_text = "Hi"
 
@@ -1383,13 +1401,21 @@ Wait for customer response after asking."""
                     user_text = sc["inputTranscript"]
                     logger.debug(f"[{self.call_uuid[:8]}] Input transcript: {user_text}")
                     if user_text and user_text.strip():
+                        user_text = user_text.strip()
+                        # Keep the longest transcript segment for the current question
+                        if self.use_question_flow and self._waiting_for_user:
+                            if len(user_text) >= len(self._pending_user_transcript):
+                                self._pending_user_transcript = user_text
+                            elif user_text not in self._pending_user_transcript:
+                                self._pending_user_transcript = f"{self._pending_user_transcript} {user_text}".strip()
+                            self._last_user_transcript_time = time.time()
                         self._last_user_speech_time = time.time()  # Track for latency
                         logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
-                        self._save_transcript("USER", user_text.strip())
+                        self._save_transcript("USER", user_text)
                         # Log to file in background thread (no latency impact)
-                        self._log_conversation("user", user_text.strip())
+                        self._log_conversation("user", user_text)
                         # Send to n8n webhook for state machine (non-blocking)
-                        asyncio.create_task(send_transcript_to_webhook(self, "user", user_text.strip()))
+                        asyncio.create_task(send_transcript_to_webhook(self, "user", user_text))
                         # Track if user said goodbye
                         if self._is_goodbye_message(user_text):
                             logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
