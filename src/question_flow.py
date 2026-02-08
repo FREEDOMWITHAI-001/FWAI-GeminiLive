@@ -3,6 +3,8 @@
 # Loads configuration from client-specific JSON files
 
 import json
+import time
+from enum import Enum
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -237,6 +239,343 @@ class QuestionFlow:
             logger.debug(f"Saved flow data")
         except Exception as e:
             logger.error(f"Error saving flow data: {e}")
+
+
+# ==================== QUESTION PIPELINE ====================
+# Owns lifecycle state, gate/echo decisions, stores agent+user text per question
+
+
+class QuestionPhase(Enum):
+    """Lifecycle phases for each question"""
+    PENDING = "PENDING"          # Queued, not yet sent to Gemini
+    DELIVERING = "DELIVERING"    # Gate OPEN, AI speaking the question
+    ECHOING = "ECHOING"          # Gate closed, 1.5s echo buffer ignoring transcripts
+    LISTENING = "LISTENING"      # Accepting user speech
+    CAPTURED = "CAPTURED"        # User finished speaking, response stored
+    DONE = "DONE"                # Finalized, moved to completed list
+
+
+@dataclass
+class QuestionRecord:
+    """Per-question data tracking"""
+    index: int
+    question_id: str
+    question_text: str
+    phase: QuestionPhase = QuestionPhase.PENDING
+    # Timestamps
+    deliver_time: float = 0.0       # When DELIVERING started
+    echo_time: float = 0.0         # When ECHOING started
+    listen_time: float = 0.0       # When LISTENING started
+    capture_time: float = 0.0      # When CAPTURED
+    # Turn tracking during DELIVERING
+    turns_since_inject: int = 0
+    # Content
+    agent_said: str = ""           # What the AI actually said for this question
+    user_said: str = ""            # What the user responded
+    duration_seconds: float = 0.0  # Time from deliver to capture
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "question_id": self.question_id,
+            "question_text": self.question_text,
+            "agent_said": self.agent_said,
+            "user_said": self.user_said,
+            "duration_seconds": round(self.duration_seconds, 1),
+        }
+
+
+class QuestionPipeline:
+    """
+    Manages question lifecycle state, gate/echo decisions, and per-question data.
+    Sibling to QuestionFlow which owns question content and advance logic.
+    """
+
+    def __init__(self, call_uuid: str, total_questions: int):
+        self._call_uuid = call_uuid
+        self._log_prefix = f"[{call_uuid[:8]}]"
+        self._total_questions = total_questions
+
+        # Current question being processed (None = idle)
+        self._current: Optional[QuestionRecord] = None
+        # Completed question records
+        self._completed: List[QuestionRecord] = []
+
+        # Echo protection timing
+        self._echo_buffer_seconds = 1.5  # Ignore transcripts for 1.5s after gate closes
+
+        logger.info(f"{self._log_prefix} Pipeline INIT: {total_questions} questions queued")
+
+    # ---- Properties (replace old boolean flags) ----
+
+    @property
+    def gate_open(self) -> bool:
+        """Audio gate: True when AI audio should be forwarded to user"""
+        return self._current is not None and self._current.phase == QuestionPhase.DELIVERING
+
+    @property
+    def is_echo(self) -> bool:
+        """True during DELIVERING or ECHOING phase (transcripts should be ignored)"""
+        if self._current is None:
+            return False
+        if self._current.phase == QuestionPhase.DELIVERING:
+            elapsed = time.time() - self._current.deliver_time
+            logger.debug(f"{self._log_prefix} is_echo=True (DELIVERING, {elapsed:.1f}s since inject)")
+            return True
+        if self._current.phase == QuestionPhase.ECHOING:
+            elapsed = time.time() - self._current.echo_time
+            if elapsed < self._echo_buffer_seconds:
+                logger.debug(f"{self._log_prefix} is_echo=True (ECHOING, {elapsed:.1f}s/{self._echo_buffer_seconds}s buffer)")
+                return True
+            # Echo period expired, auto-transition to LISTENING
+            logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} ECHOING → LISTENING "
+                        f"(auto-transition in is_echo, {elapsed:.1f}s echo expired)")
+            self._transition(QuestionPhase.LISTENING)
+            self._current.listen_time = time.time()
+            return False
+        return False
+
+    @property
+    def is_listening(self) -> bool:
+        """True when we're accepting user speech"""
+        return self._current is not None and self._current.phase == QuestionPhase.LISTENING
+
+    @property
+    def waiting_for_user(self) -> bool:
+        """True when we've asked a question and are waiting for response (ECHOING, LISTENING, or DELIVERING)"""
+        if self._current is None:
+            return False
+        return self._current.phase in (QuestionPhase.DELIVERING, QuestionPhase.ECHOING, QuestionPhase.LISTENING)
+
+    @property
+    def question_asked_time(self) -> float:
+        """When the current question started being delivered"""
+        if self._current is None:
+            return 0
+        return self._current.deliver_time
+
+    @property
+    def pending_user_transcript(self) -> str:
+        """Accumulated user speech for current question"""
+        if self._current is None:
+            return ""
+        return self._current.user_said
+
+    @property
+    def current_phase(self) -> Optional[QuestionPhase]:
+        """Current question's phase"""
+        if self._current is None:
+            return None
+        return self._current.phase
+
+    # ---- Lifecycle methods ----
+
+    def dequeue_next(self, index: int, question_id: str, question_text: str):
+        """Start delivering a new question: PENDING → DELIVERING (opens gate)"""
+        # Log if replacing an in-progress question (e.g. reconnection)
+        if self._current is not None:
+            logger.warning(f"{self._log_prefix} Pipeline: replacing Q{self._current.index} "
+                           f"({self._current.phase.value}) with Q{index}")
+        record = QuestionRecord(
+            index=index,
+            question_id=question_id,
+            question_text=question_text,
+            phase=QuestionPhase.DELIVERING,
+            deliver_time=time.time(),
+            turns_since_inject=0,
+        )
+        self._current = record
+        logger.info(f"{self._log_prefix} Pipeline: Q{index} PENDING → DELIVERING (gate OPEN) "
+                    f"| id={question_id} | text='{question_text[:60]}' "
+                    f"| completed={len(self._completed)}/{self._total_questions}")
+
+    def on_turn_complete(self) -> bool:
+        """
+        Called on each Gemini turnComplete. Counts turns during DELIVERING.
+        Returns True if gate was just closed (DELIVERING → ECHOING).
+        """
+        if self._current is None:
+            logger.debug(f"{self._log_prefix} on_turn_complete: no current question, ignoring")
+            return False
+        if self._current.phase != QuestionPhase.DELIVERING:
+            logger.debug(f"{self._log_prefix} on_turn_complete: Q{self._current.index} "
+                         f"phase={self._current.phase.value} (not DELIVERING), ignoring")
+            return False
+
+        self._current.turns_since_inject += 1
+        time_since_inject = time.time() - self._current.deliver_time
+
+        # Close gate after 2 turns + 3s, or 8s fallback
+        if (self._current.turns_since_inject >= 2 and time_since_inject >= 3.0) or time_since_inject >= 8.0:
+            reason = "8s timeout" if time_since_inject >= 8.0 else f"{self._current.turns_since_inject} turns + {time_since_inject:.1f}s"
+            self._transition(QuestionPhase.ECHOING)
+            self._current.echo_time = time.time()
+            logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} DELIVERING → ECHOING "
+                        f"(gate CLOSED | {reason}) | echo buffer={self._echo_buffer_seconds}s")
+            return True
+        else:
+            logger.debug(f"{self._log_prefix} Pipeline: Q{self._current.index} gate staying OPEN "
+                         f"(turns={self._current.turns_since_inject}/2, {time_since_inject:.1f}s/3.0s)")
+            return False
+
+    def check_echo_expired(self) -> bool:
+        """
+        Check if echo buffer has expired. ECHOING → LISTENING after 1.5s.
+        Returns True if transitioned to LISTENING.
+        """
+        if self._current is None or self._current.phase != QuestionPhase.ECHOING:
+            return False
+
+        elapsed = time.time() - self._current.echo_time
+        if elapsed >= self._echo_buffer_seconds:
+            self._transition(QuestionPhase.LISTENING)
+            self._current.listen_time = time.time()
+            total_since_deliver = time.time() - self._current.deliver_time
+            logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} ECHOING → LISTENING "
+                        f"(echo expired {elapsed:.1f}s/{self._echo_buffer_seconds}s | "
+                        f"{total_since_deliver:.1f}s since delivery)")
+            return True
+        else:
+            logger.debug(f"{self._log_prefix} Pipeline: Q{self._current.index} echo buffer "
+                         f"{elapsed:.1f}s/{self._echo_buffer_seconds}s (still suppressing)")
+        return False
+
+    def accumulate_user_speech(self, text: str):
+        """Append to user_said during LISTENING phase"""
+        if self._current is None:
+            logger.warning(f"{self._log_prefix} accumulate_user_speech: no current question, dropping '{text[:40]}'")
+            return
+        if self._current.phase not in (QuestionPhase.LISTENING, QuestionPhase.ECHOING):
+            logger.warning(f"{self._log_prefix} accumulate_user_speech: Q{self._current.index} "
+                           f"phase={self._current.phase.value} (not LISTENING/ECHOING), dropping '{text[:40]}'")
+            return
+        old_len = len(self._current.user_said)
+        self._current.user_said = f"{self._current.user_said} {text}".strip()
+        logger.debug(f"{self._log_prefix} Pipeline: Q{self._current.index} accumulated '{text}' "
+                     f"({old_len}→{len(self._current.user_said)} chars) | total: '{self._current.user_said[:80]}'")
+
+    def capture_response(self) -> Optional[str]:
+        """
+        LISTENING → CAPTURED when silence detected. Returns the user's response text.
+        """
+        if self._current is None:
+            logger.warning(f"{self._log_prefix} capture_response: no current question")
+            return None
+        if self._current.phase != QuestionPhase.LISTENING:
+            logger.warning(f"{self._log_prefix} capture_response: Q{self._current.index} "
+                           f"phase={self._current.phase.value} (expected LISTENING)")
+            return None
+
+        self._current.capture_time = time.time()
+        self._current.duration_seconds = self._current.capture_time - self._current.deliver_time
+        listen_duration = self._current.capture_time - self._current.listen_time if self._current.listen_time else 0
+        self._transition(QuestionPhase.CAPTURED)
+        logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} LISTENING → CAPTURED "
+                    f"| user_said='{self._current.user_said[:60]}' "
+                    f"| listen={listen_duration:.1f}s | total={self._current.duration_seconds:.1f}s "
+                    f"| agent_said='{self._current.agent_said[:60]}'")
+        return self._current.user_said
+
+    def store_agent_said(self, text: str):
+        """Store what the AI actually said for the current question"""
+        if self._current is None:
+            logger.debug(f"{self._log_prefix} store_agent_said: no current question, dropping '{text[:40]}'")
+            return
+        old_len = len(self._current.agent_said)
+        if self._current.agent_said:
+            self._current.agent_said = f"{self._current.agent_said} {text}".strip()
+        else:
+            self._current.agent_said = text
+        logger.debug(f"{self._log_prefix} Pipeline: Q{self._current.index} agent_said "
+                     f"({old_len}→{len(self._current.agent_said)} chars) | "
+                     f"phase={self._current.phase.value} | snippet='{text[:50]}'")
+
+
+    def finalize_and_advance(self):
+        """CAPTURED → DONE, move to completed list"""
+        if self._current is None:
+            logger.warning(f"{self._log_prefix} finalize_and_advance: no current question")
+            return
+        self._transition(QuestionPhase.DONE)
+        rec = self._current
+        self._completed.append(self._current)
+        self._current = None
+        logger.info(f"{self._log_prefix} Pipeline: Q{rec.index} CAPTURED → DONE "
+                    f"| id={rec.question_id} | duration={rec.duration_seconds:.1f}s "
+                    f"| agent='{rec.agent_said[:50]}' | user='{rec.user_said[:50]}' "
+                    f"| progress={len(self._completed)}/{self._total_questions}")
+
+    def reset_for_nudge(self):
+        """Reset to DELIVERING for silence nudge (re-open gate)"""
+        if self._current is None:
+            logger.warning(f"{self._log_prefix} reset_for_nudge: no current question")
+            return
+        old_phase = self._current.phase
+        time_in_old_phase = time.time() - self._current.deliver_time
+        self._current.phase = QuestionPhase.DELIVERING
+        self._current.deliver_time = time.time()
+        self._current.turns_since_inject = 0
+        logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} {old_phase.value} → DELIVERING "
+                    f"(nudge, gate OPEN | was in {old_phase.value} for {time_in_old_phase:.1f}s "
+                    f"| user_said so far='{self._current.user_said[:40]}')")
+
+    def clear_user_transcript(self):
+        """Clear accumulated user transcript (used on new question injection)"""
+        if self._current is not None:
+            self._current.user_said = ""
+
+    # ---- Context for Gemini ----
+
+    def get_recent_context(self, n: int = 3) -> str:
+        """Returns last n completed Q&A pairs as formatted context text for Gemini"""
+        if not self._completed:
+            logger.debug(f"{self._log_prefix} get_recent_context: no completed pairs yet")
+            return ""
+
+        recent = self._completed[-n:]
+        lines = []
+        for rec in recent:
+            asked = rec.question_text[:100]
+            replied = rec.user_said[:100] if rec.user_said else "(no response)"
+            lines.append(f'- Asked: "{asked}" → They said: "{replied}"')
+
+        context = "[CONTEXT] Previous conversation:\n" + "\n".join(lines)
+        logger.debug(f"{self._log_prefix} get_recent_context: sending {len(recent)} pairs "
+                     f"({len(context)} chars) to Gemini")
+        return context
+
+    def get_collected_pairs(self) -> List[Dict[str, Any]]:
+        """Return all completed Q&A pairs for webhook/post-call data"""
+        pairs = [rec.to_dict() for rec in self._completed]
+        # Include current question if it has data
+        if self._current and self._current.user_said:
+            pairs.append(self._current.to_dict())
+            logger.debug(f"{self._log_prefix} get_collected_pairs: including in-progress "
+                         f"Q{self._current.index} ({self._current.phase.value})")
+        logger.info(f"{self._log_prefix} get_collected_pairs: {len(pairs)} total pairs "
+                    f"({len(self._completed)} completed"
+                    f"{', +1 in-progress' if self._current and self._current.user_said else ''})")
+        return pairs
+
+    # ---- Internal ----
+
+    def dump_state(self) -> str:
+        """Return full pipeline state as a string for debugging"""
+        if self._current:
+            cur = (f"Q{self._current.index}({self._current.question_id}) "
+                   f"phase={self._current.phase.value} "
+                   f"turns={self._current.turns_since_inject} "
+                   f"agent='{self._current.agent_said[:30]}' "
+                   f"user='{self._current.user_said[:30]}'")
+        else:
+            cur = "None"
+        return (f"Pipeline[current={cur} | "
+                f"completed={len(self._completed)}/{self._total_questions} | "
+                f"gate={self.gate_open}]")
+
+    def _transition(self, new_phase: QuestionPhase):
+        """Transition current question to a new phase"""
+        if self._current is not None:
+            self._current.phase = new_phase
 
 
 # Store flows per call
