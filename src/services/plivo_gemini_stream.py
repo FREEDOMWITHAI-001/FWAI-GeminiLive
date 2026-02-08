@@ -252,8 +252,11 @@ class PlivoGeminiSession:
         self._question_asked_time = 0  # When we asked the question
         self._wait_timeout = 5.0  # Wait 5 seconds for user response
 
-        # Echo protection: ignore inputTranscription while AI is speaking a question
-        # Phone speaker → mic → Plivo → Gemini → false "user" transcription
+        # Audio gating: Only forward AI audio when gate is OPEN (after injecting a question)
+        # Dropped audio = silent speaker = no echo = clean inputTranscription
+        self._gate_open = False  # Gate CLOSED by default
+
+        # Echo protection: ignore residual inputTranscription after AI finishes speaking
         self._ai_delivering_question = False  # True while AI speaks injected question
         self._ai_finished_speaking_time = 0  # When AI finished (for echo tail buffer)
 
@@ -776,6 +779,8 @@ Rules:
                 if not no_user_speech or self._pending_user_transcript:
                     return
                 logger.info(f"[{self.call_uuid[:8]}] 5 sec timeout - prompting user")
+                self._gate_open = True  # OPEN gate for nudge audio
+                self._ai_delivering_question = True  # Echo protection for nudge
                 # Send a gentle prompt
                 prompt_msg = {
                     "client_content": {
@@ -1060,10 +1065,11 @@ Rules:
                 }
             }
             await self.goog_live_ws.send(json.dumps(msg))
+            self._gate_open = True  # OPEN gate for AI to speak this question
             self._ai_delivering_question = True  # Echo protection: ignore transcripts until AI finishes
             self._waiting_for_user = True
             self._question_asked_time = time.time()
-            logger.info(f"[{self.call_uuid[:8]}] Injected question - waiting for AI to speak, then user")
+            logger.info(f"[{self.call_uuid[:8]}] Injected Q - gate OPEN, waiting for AI then user")
             if end_call and not self._closing_call:
                 # Give the model a moment to say the closing line before hangup
                 asyncio.create_task(self._fallback_hangup(5.0))
@@ -1157,6 +1163,7 @@ Rules:
 
             # Clear audio buffer and set up waiting state for first question
             self._user_audio_buffer = bytearray(b"")
+            self._gate_open = True  # OPEN gate for greeting audio
             self._ai_delivering_question = True  # Echo protection for greeting
             self._waiting_for_user = True
             self._question_asked_time = time.time()
@@ -1207,9 +1214,11 @@ Rules:
         }
         await self.goog_live_ws.send(json.dumps(msg))
         if self.use_question_flow:
+            self._gate_open = True  # OPEN gate for reconnection audio
+            self._ai_delivering_question = True
             self._waiting_for_user = True
             self._question_asked_time = time.time()
-        logger.debug(f"[{self.call_uuid[:8]}] Reconnect trigger sent")
+        logger.debug(f"[{self.call_uuid[:8]}] Reconnect trigger sent - gate OPEN")
 
     async def _handle_tool_call(self, tool_call):
         """Execute tool and send response back to Gemini - gracefully handles errors"""
@@ -1384,11 +1393,15 @@ Rules:
                     self.greeting_audio_complete = True
                     self._turn_count += 1
 
-                    # Echo protection: AI finished speaking, start echo buffer timer
-                    if self.use_question_flow and self._ai_delivering_question:
-                        self._ai_delivering_question = False
-                        self._ai_finished_speaking_time = time.time()
-                        logger.debug(f"[{self.call_uuid[:8]}] AI finished speaking question - echo buffer active")
+                    # Audio gating + echo protection: close gate after AI finishes speaking
+                    if self.use_question_flow:
+                        if self._gate_open:
+                            self._gate_open = False  # CLOSE gate - block off-script audio
+                            logger.debug(f"[{self.call_uuid[:8]}] turnComplete - gate CLOSED")
+                        if self._ai_delivering_question:
+                            self._ai_delivering_question = False
+                            self._ai_finished_speaking_time = time.time()
+                            logger.debug(f"[{self.call_uuid[:8]}] Echo buffer active (1.5s)")
 
                     # Log turn latency at DEBUG level
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
@@ -1497,7 +1510,13 @@ Rules:
                                 self.preloaded_audio.append(audio)
                                 # Removed per-chunk logging
                             elif self.plivo_ws:
-                                # Send AI audio directly to Plivo (always open - code tracks question flow)
+                                # Audio gating: drop off-script audio in QuestionFlow mode
+                                if self.use_question_flow and not self._gate_open:
+                                    if self._current_turn_audio_chunks == 1:
+                                        logger.debug(f"[{self.call_uuid[:8]}] Gate CLOSED - dropping off-script AI audio")
+                                    continue  # Don't send to user
+
+                                # Gate open (or non-QuestionFlow) - forward to Plivo
                                 try:
                                     await self.plivo_ws.send_text(json.dumps({
                                         "event": "playAudio",
