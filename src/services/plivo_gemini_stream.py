@@ -1017,12 +1017,22 @@ Rules:
         audio_bytes = len(self._user_audio_buffer)
         self._user_audio_buffer = bytearray(b"")
 
-    async def _inject_question(self, instruction: str):
-        """Inject the next question instruction into the AI"""
+    async def _inject_question(self, instruction):
+        """Inject the next question text into the AI"""
         if not self.goog_live_ws or not instruction:
             return
 
         try:
+            if isinstance(instruction, dict):
+                text = instruction.get("text", "")
+                end_call = bool(instruction.get("end_call"))
+            else:
+                text = str(instruction)
+                end_call = False
+
+            if not text:
+                return
+
             # FIX: Clear audio buffer BEFORE asking question
             # This ensures we only process audio that comes AFTER the question is asked
             self._user_audio_buffer = bytearray(b"")
@@ -1035,7 +1045,7 @@ Rules:
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": instruction}]
+                        "parts": [{"text": text}]
                     }],
                     "turn_complete": True
                 }
@@ -1044,6 +1054,9 @@ Rules:
             self._waiting_for_user = True
             self._question_asked_time = time.time()
             logger.info(f"[{self.call_uuid[:8]}] Injected question - waiting for user response")
+            if end_call and not self._closing_call:
+                # Give the model a moment to say the closing line before hangup
+                asyncio.create_task(self._fallback_hangup(5.0))
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Error injecting question: {e}")
 
@@ -1079,6 +1092,9 @@ Rules:
         if self._config_voice:
             voice_name = self._config_voice
             logger.info(f"[{self.call_uuid[:8]}] Using voice from config: {voice_name}")
+        elif self.use_question_flow:
+            voice_name = "Puck"
+            logger.info(f"[{self.call_uuid[:8]}] Using default QuestionFlow voice: {voice_name}")
         else:
             voice_name = detect_voice_from_prompt(self.prompt)
 
@@ -1126,7 +1142,7 @@ Rules:
         # Question Flow Mode: Include the first question in the greeting
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
-            trigger_text = f"[START THE CALL NOW]\n{first_instruction}"
+            trigger_text = first_instruction
             logger.debug(f"[{self.call_uuid[:8]}] Starting with question #1")
 
             # Clear audio buffer and set up waiting state for first question
@@ -1161,9 +1177,7 @@ Rules:
             current_question = self._question_flow.get_current_question()
 
             if current_question:
-                reconnect_text = f"""Continue with this question:
-"{current_question}"
-Wait for customer response after asking."""
+                reconnect_text = current_question
             else:
                 reconnect_text = "[System: Connection restored. Say 'Sorry about that...' and wrap up the call.]"
 

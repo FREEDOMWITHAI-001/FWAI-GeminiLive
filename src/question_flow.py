@@ -112,12 +112,12 @@ class QuestionFlow:
         return self._render(q["prompt"])
 
     def get_instruction_prompt(self) -> str:
-        """Get the full instruction for current step"""
+        """Get the question text for current step (no wrappers)"""
         question = self.get_current_question()
         if not question:
-            return f'SAY EXACTLY: "Great talking to you! Take care!" THEN STOP.'
+            return self._render("Great talking to you! Take care!")
 
-        return f'SAY EXACTLY: "{question}" THEN STOP AND WAIT IN SILENCE.'
+        return question
 
     def detect_objection(self, user_text: str) -> Optional[str]:
         """Detect if user raised an objection"""
@@ -138,20 +138,20 @@ class QuestionFlow:
         response = self.objections.get(objection_type, "I understand. Let me help with that.")
         return self._render(response)
 
-    def advance(self, user_response: str = "") -> str:
+    def advance(self, user_response: str = "") -> Dict[str, Any]:
         """
         Process user response and get next instruction.
-        Returns the prompt to inject into AI.
+        Returns a dict with text to speak and end_call flag.
         """
         # Check for objection first
         objection = self.detect_objection(user_response)
         if objection:
             logger.debug(f"Objection: {objection}")
             if objection == "not_interested":
-                return f"[SAY THIS]: {self.get_objection_response(objection)}\n[THEN USE end_call TOOL]"
+                return {"text": self.get_objection_response(objection), "end_call": True}
             else:
                 # Handle objection, don't advance
-                return f"[SAY THIS]: {self.get_objection_response(objection)}\n[WAIT FOR RESPONSE]"
+                return {"text": self.get_objection_response(objection), "end_call": False}
 
         # Store response data
         if self.current_step < len(self.questions):
@@ -168,9 +168,9 @@ class QuestionFlow:
         # Check if done
         if self.current_step >= len(self.questions):
             closing = self._render("Great talking to you, {customer_name}! I'll send details on WhatsApp. Take care!")
-            return f"[SAY THIS]: {closing}\n[THEN USE end_call TOOL]"
+            return {"text": closing, "end_call": True}
 
-        return self.get_instruction_prompt()
+        return {"text": self.get_instruction_prompt(), "end_call": False}
 
     def get_collected_data(self) -> Dict:
         """Get all collected data from the conversation"""

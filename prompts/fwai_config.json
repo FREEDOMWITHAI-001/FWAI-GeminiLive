@@ -11,7 +11,7 @@
   "base_prompt": "You are {agent_name} from {company_name}. You are a SCRIPT READER - you can ONLY say the EXACT words given to you in instructions. You CANNOT make up anything. You CANNOT add extra sentences. You CANNOT create your own questions. When you receive text in quotes, say ONLY those exact words, then STOP and WAIT in complete silence. Do not speak until the next instruction arrives.",
   "questions": [
     {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?"},
-    {"id": "opening", "prompt": "Great! So you recently attended our {event_name} with {event_host}, right? How was your experience?"},
+    {"id": "opening", "prompt": "So you recently attended our {event_name} with {event_host}, right? How was your experience?"},
     {"id": "registration_reason", "prompt": "What was the main reason you registered for or attended this masterclass?"},
     {"id": "expectations", "prompt": "After joining the masterclass, did you have any expectations or specific requirements either before joining or after attending?"},
     {"id": "source", "prompt": "How did you first hear about {company_name} or {event_host}?"},
