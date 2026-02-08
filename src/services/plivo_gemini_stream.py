@@ -1017,7 +1017,7 @@ Rules:
             next_instruction = self._question_flow.advance(pending_transcript)
             logger.info(f"[{self.call_uuid[:8]}] Q{self._question_flow.current_step}/{len(self._question_flow.questions)} | Advancing to next question")
             self._last_question_time = time.time()
-            await self._inject_question(next_instruction)
+            await self._inject_question(next_instruction, user_said=pending_transcript)
             return
 
         # Require minimum audio duration (at least 0.5 seconds = 16000 bytes at 16kHz, 16-bit)
@@ -1030,8 +1030,8 @@ Rules:
         audio_bytes = len(self._user_audio_buffer)
         self._user_audio_buffer = bytearray(b"")
 
-    async def _inject_question(self, instruction):
-        """Inject the next question text into the AI"""
+    async def _inject_question(self, instruction, user_said: str = ""):
+        """Inject the next question text into the AI, with natural acknowledgment of user's response"""
         if not self.goog_live_ws or not instruction:
             return
 
@@ -1046,15 +1046,25 @@ Rules:
             if not text:
                 return
 
-            # FIX: Clear audio buffer BEFORE asking question
-            # This ensures we only process audio that comes AFTER the question is asked
+            # Clear audio buffer BEFORE asking question
             self._user_audio_buffer = bytearray(b"")
-            self._last_user_audio_time = None  # Reset user speech tracking
+            self._last_user_audio_time = None
             self._pending_user_transcript = ""
             self._last_user_transcript_time = 0
 
-            # Wrap as [INSTRUCTION] so Gemini knows to SAY these words, not respond to them
-            instruction_text = f'[INSTRUCTION] Say the following naturally to the customer: "{text}" After saying this, STOP speaking completely and wait in silence for the customer to respond. Do NOT add any extra questions or comments.'
+            # Build instruction with natural acknowledgment
+            # Include what the user said so Gemini can acknowledge naturally before asking the next question
+            if user_said and self._question_flow and self._question_flow.current_step > 1:
+                # After Q1: acknowledge user's response, then ask next question
+                instruction_text = (
+                    f'[INSTRUCTION] The customer just said: "{user_said}". '
+                    f'First, give a very brief natural acknowledgment of what they said (like "Right, that makes sense" or "I see, interesting" - just 3-5 words). '
+                    f'Then smoothly transition and ask: "{text}" '
+                    f'After asking, STOP speaking and wait silently. Do NOT add extra questions.'
+                )
+            else:
+                # First question (greeting) or no user context
+                instruction_text = f'[INSTRUCTION] Say the following naturally to the customer: "{text}" After saying this, STOP speaking and wait silently for the customer to respond.'
             msg = {
                 "client_content": {
                     "turns": [{
