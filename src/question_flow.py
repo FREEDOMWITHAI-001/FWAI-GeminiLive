@@ -122,16 +122,22 @@ class QuestionFlow:
         return question
 
     def detect_objection(self, user_text: str) -> Optional[str]:
-        """Detect if user raised an objection"""
+        """Detect if user raised an objection. Uses word boundary matching for
+        short keywords (<=5 chars) to avoid substring false positives like
+        'test' matching in 'latest' or 'interested'."""
+        import re
         text = user_text.lower()
 
         for objection_type, keywords in self.objection_keywords.items():
-            # Special case: "exam" shouldn't match "interest"
-            if objection_type == "exams" and "interest" in text:
-                continue
-
-            if any(kw in text for kw in keywords):
-                return objection_type
+            for kw in keywords:
+                if len(kw) <= 5:
+                    # Word boundary match for short keywords
+                    if re.search(r'\b' + re.escape(kw) + r'\b', text):
+                        return objection_type
+                else:
+                    # Substring match is fine for longer phrases
+                    if kw in text:
+                        return objection_type
 
         return None
 
@@ -151,8 +157,15 @@ class QuestionFlow:
             logger.debug(f"Objection: {objection}")
             if objection == "not_interested":
                 return {"text": self.get_objection_response(objection), "end_call": True}
+            # Track objection: if same type already handled for this question, force-advance
+            handled_key = f"{self.current_step}_{objection}"
+            if not hasattr(self, '_handled_objections'):
+                self._handled_objections = set()
+            if handled_key in self._handled_objections:
+                logger.info(f"Objection '{objection}' already handled for Q{self.current_step}, force-advancing")
+                # Fall through to advance logic below
             else:
-                # Handle objection, don't advance
+                self._handled_objections.add(handled_key)
                 return {"text": self.get_objection_response(objection), "end_call": False}
 
         # Store response data
@@ -269,6 +282,7 @@ class QuestionRecord:
     capture_time: float = 0.0      # When CAPTURED
     # Turn tracking during DELIVERING
     turns_since_inject: int = 0
+    nudge_count: int = 0                # How many times this question was nudged
     # Content
     agent_said: str = ""           # What the AI actually said for this question
     user_said: str = ""            # What the user responded
@@ -301,7 +315,7 @@ class QuestionPipeline:
         self._completed: List[QuestionRecord] = []
 
         # Echo protection timing
-        self._echo_buffer_seconds = 1.5  # Ignore transcripts for 1.5s after gate closes
+        self._echo_buffer_seconds = 0.5  # Ignore transcripts for 0.5s after gate closes
 
         logger.info(f"{self._log_prefix} Pipeline INIT: {total_questions} questions queued")
 
@@ -404,9 +418,10 @@ class QuestionPipeline:
         self._current.turns_since_inject += 1
         time_since_inject = time.time() - self._current.deliver_time
 
-        # Close gate after 2 turns + 3s, or 8s fallback
-        if (self._current.turns_since_inject >= 2 and time_since_inject >= 3.0) or time_since_inject >= 8.0:
-            reason = "8s timeout" if time_since_inject >= 8.0 else f"{self._current.turns_since_inject} turns + {time_since_inject:.1f}s"
+        # Close gate after 1 turn + 2s minimum, or 5s fallback.
+        # Gemini combines ack + question in one turn. A second turn is almost always off-script.
+        if (self._current.turns_since_inject >= 1 and time_since_inject >= 2.0) or time_since_inject >= 5.0:
+            reason = "5s timeout" if time_since_inject >= 5.0 else f"turn {self._current.turns_since_inject} + {time_since_inject:.1f}s"
             self._transition(QuestionPhase.ECHOING)
             self._current.echo_time = time.time()
             logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} DELIVERING → ECHOING "
@@ -414,7 +429,7 @@ class QuestionPipeline:
             return True
         else:
             logger.debug(f"{self._log_prefix} Pipeline: Q{self._current.index} gate staying OPEN "
-                         f"(turns={self._current.turns_since_inject}/2, {time_since_inject:.1f}s/3.0s)")
+                         f"(turns={self._current.turns_since_inject}/1, {time_since_inject:.1f}s/2.0s)")
             return False
 
     def check_echo_expired(self) -> bool:
@@ -504,29 +519,53 @@ class QuestionPipeline:
                     f"| agent='{rec.agent_said[:50]}' | user='{rec.user_said[:50]}' "
                     f"| progress={len(self._completed)}/{self._total_questions}")
 
-    def reset_for_nudge(self):
-        """Reset to DELIVERING for silence nudge (re-open gate)"""
+    def reset_for_nudge(self) -> int:
+        """Reset to DELIVERING for silence nudge (re-open gate).
+        Returns the nudge count AFTER incrementing (1 = first nudge)."""
         if self._current is None:
             logger.warning(f"{self._log_prefix} reset_for_nudge: no current question")
-            return
+            return 0
         old_phase = self._current.phase
         time_in_old_phase = time.time() - self._current.deliver_time
+        self._current.nudge_count += 1
         self._current.phase = QuestionPhase.DELIVERING
         self._current.deliver_time = time.time()
         self._current.turns_since_inject = 0
         logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} {old_phase.value} → DELIVERING "
-                    f"(nudge, gate OPEN | was in {old_phase.value} for {time_in_old_phase:.1f}s "
+                    f"(nudge #{self._current.nudge_count}, gate OPEN | was in {old_phase.value} for {time_in_old_phase:.1f}s "
                     f"| user_said so far='{self._current.user_said[:40]}')")
+        return self._current.nudge_count
 
     def clear_user_transcript(self):
         """Clear accumulated user transcript (used on new question injection)"""
         if self._current is not None:
             self._current.user_said = ""
 
+    def close_gate_from_validator(self):
+        """Close gate from transcript validator (off-script detected).
+        Transitions DELIVERING → ECHOING immediately."""
+        if self._current is None:
+            return
+        if self._current.phase != QuestionPhase.DELIVERING:
+            logger.debug(f"{self._log_prefix} close_gate_from_validator: "
+                         f"Q{self._current.index} phase={self._current.phase.value} (not DELIVERING)")
+            return
+        self._transition(QuestionPhase.ECHOING)
+        self._current.echo_time = time.time()
+        logger.info(f"{self._log_prefix} Pipeline: Q{self._current.index} DELIVERING → ECHOING "
+                    f"(gate CLOSED by validator | off-script detected)")
+
+    def get_expected_question(self) -> Optional[str]:
+        """Get the expected question text for the current question (for off-script validation)"""
+        if self._current is None:
+            return None
+        return self._current.question_text
+
     # ---- Context for Gemini ----
 
-    def get_recent_context(self, n: int = 3) -> str:
-        """Returns last n completed Q&A pairs as formatted context text for Gemini"""
+    def get_recent_context(self, n: int = 2) -> str:
+        """Returns last n completed Q&A pairs as formatted context text for Gemini.
+        Kept concise to avoid confusing the model with too much prior context."""
         if not self._completed:
             logger.debug(f"{self._log_prefix} get_recent_context: no completed pairs yet")
             return ""
@@ -534,11 +573,10 @@ class QuestionPipeline:
         recent = self._completed[-n:]
         lines = []
         for rec in recent:
-            asked = rec.question_text[:100]
-            replied = rec.user_said[:100] if rec.user_said else "(no response)"
-            lines.append(f'- Asked: "{asked}" → They said: "{replied}"')
+            replied = rec.user_said[:80] if rec.user_said else "(no response)"
+            lines.append(f'- Q{rec.index}: "{replied}"')
 
-        context = "[CONTEXT] Previous conversation:\n" + "\n".join(lines)
+        context = "[CONTEXT] Recent answers (for reference only, do NOT repeat these questions):\n" + "\n".join(lines)
         logger.debug(f"{self._log_prefix} get_recent_context: sending {len(recent)} pairs "
                      f"({len(context)} chars) to Gemini")
         return context

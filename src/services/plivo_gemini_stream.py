@@ -8,6 +8,7 @@ import threading
 import queue
 import time
 from typing import Dict, Optional
+from dataclasses import dataclass
 from loguru import logger
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ import websockets
 from src.core.config import config
 from src.tools import execute_tool
 from src.conversational_prompts import BASE_PROMPT, DEFAULT_CONTEXT, render_prompt
-from src.question_flow import QuestionFlow, QuestionPipeline, get_or_create_flow, remove_flow
+from src.question_flow import QuestionFlow, QuestionPipeline, QuestionPhase, get_or_create_flow, remove_flow
 from src.db.session_db import session_db
 
 
@@ -164,6 +165,27 @@ TOOL_DECLARATIONS = [
     }
 ]
 
+@dataclass
+class AudioChunk:
+    """Audio chunk flowing through the queue pipeline"""
+    audio_b64: str        # Base64-encoded audio data
+    turn_id: int          # Gemini turn counter (for cancellation)
+    sample_rate: int = 24000
+
+
+# Off-script detection patterns (AI responding to noise instead of following instructions)
+OFF_SCRIPT_PHRASES = [
+    "that's good to hear", "glad to hear", "sounds like",
+    "i see", "absolutely", "sure thing", "tell me more",
+    "would you like", "how about", "that's great",
+    "that's wonderful", "that's nice", "good to know",
+    "interesting", "i understand", "of course",
+    "no problem", "certainly", "definitely",
+    "that makes sense", "got it", "right",
+    "so tell me", "so what", "anyway",
+]
+
+
 class PlivoGeminiSession:
     def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True):
         self.call_uuid = call_uuid  # Internal UUID
@@ -248,7 +270,7 @@ class PlivoGeminiSession:
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
         self._last_question_time = 0  # Cooldown between question injections
-        self._wait_timeout = 5.0  # Wait 5 seconds for user response
+        self._wait_timeout = 8.0  # Wait 8 seconds for user response before nudging
 
         # Question Pipeline: replaces scattered boolean flags with lifecycle state machine
         # Manages gate_open, echo protection, turn counting, user transcript accumulation
@@ -259,6 +281,18 @@ class PlivoGeminiSession:
             )
         else:
             self._pipeline = None
+
+        # Queue-based audio pipeline (3 workers connected by asyncio.Queue)
+        # Gemini → audio_out_queue → gate_worker → plivo_send_queue → sender → Plivo
+        self._audio_out_queue = asyncio.Queue(maxsize=200)      # Gemini audio → gate worker
+        self._plivo_send_queue = asyncio.Queue(maxsize=200)     # Gate worker → Plivo sender
+        self._transcript_val_queue = asyncio.Queue(maxsize=50)  # Output transcription → validator
+        self._blocked_turns: set = set()   # Turn IDs blocked by validator (off-script)
+        self._current_turn_id = 0          # Incremented on each Gemini turn
+        # Worker task handles (started in attach_plivo_ws, cancelled in stop)
+        self._gate_worker_task = None
+        self._sender_worker_task = None
+        self._validator_worker_task = None
 
         # Speech detection logging
         self._user_speaking = False  # Track if user is currently speaking
@@ -643,25 +677,37 @@ Rules:
         self.call_start_time = datetime.now()
         preload_count = len(self.preloaded_audio)
         logger.info(f"[{self.call_uuid[:8]}] Call answered, {preload_count} chunks ready")
+        # Reset pipeline deliver_time to NOW (not preload time) so timeouts start
+        # from when user actually hears the greeting, not when it was generated
+        if self._pipeline and self._pipeline._current:
+            old_time = self._pipeline._current.deliver_time
+            self._pipeline._current.deliver_time = time.time()
+            self._pipeline._current.turns_since_inject = 0
+            logger.info(f"[{self.call_uuid[:8]}] Pipeline: reset deliver_time "
+                        f"(was {time.time() - old_time:.1f}s ago, now=0s)")
         # Send any preloaded audio immediately
         if self.preloaded_audio:
             asyncio.create_task(self._send_preloaded_audio())
         else:
             logger.warning(f"[{self.call_uuid[:8]}] No preloaded audio - greeting will lag")
+        # Start queue pipeline workers
+        self._gate_worker_task = asyncio.create_task(self._audio_gate_worker())
+        self._sender_worker_task = asyncio.create_task(self._plivo_sender_worker())
+        self._validator_worker_task = asyncio.create_task(self._transcript_validator_worker())
         # Start call duration timer
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (3 second SLA)
         self._silence_monitor_task = asyncio.create_task(self._monitor_silence())
 
     async def _send_preloaded_audio(self):
-        """Send preloaded audio to Plivo"""
-        logger.debug(f"[{self.call_uuid[:8]}] Sending {len(self.preloaded_audio)} preloaded chunks")
+        """Send preloaded audio directly to plivo_send_queue (bypass gate — it IS the question)"""
+        logger.debug(f"[{self.call_uuid[:8]}] Sending {len(self.preloaded_audio)} preloaded chunks via queue")
         for audio in self.preloaded_audio:
-            if self.plivo_ws:
-                await self.plivo_ws.send_text(json.dumps({
-                    "event": "playAudio",
-                    "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
-                }))
+            chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
+            try:
+                self._plivo_send_queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                logger.warning(f"[{self.call_uuid[:8]}] plivo_send_queue full during preload send")
         self.preloaded_audio = []
 
     async def _monitor_call_duration(self):
@@ -721,7 +767,7 @@ Rules:
         """Monitor for silence - detect when user finishes speaking and process their response"""
         try:
             while self.is_active and not self._closing_call:
-                await asyncio.sleep(0.5)  # Check every 0.5 seconds for faster response
+                await asyncio.sleep(0.3)  # Check every 0.3 seconds for faster response
 
                 # QuestionFlow mode: Detect when user finishes speaking after a question
                 if self._pipeline and self._pipeline.waiting_for_user:
@@ -748,12 +794,16 @@ Rules:
                             continue
 
                     # If waiting too long with no real speech, prompt user
-                    if time_since_q >= self._wait_timeout:
+                    # Only nudge in LISTENING phase (not DELIVERING/ECHOING — AI is still speaking)
+                    # Use listen_time (not deliver_time) so user gets full wait_timeout after AI finishes
+                    listen_time = self._pipeline._current.listen_time if self._pipeline._current else 0
+                    time_in_listening = time.time() - listen_time if listen_time else 0
+                    if self._pipeline.is_listening and time_in_listening >= self._wait_timeout:
                         no_real_speech = (self._last_user_transcript_time == 0 or
                                          self._last_user_transcript_time < q_time)
                         if no_real_speech and not pending:
-                            logger.info(f"[{self.call_uuid[:8]}] Silence monitor: {self._wait_timeout}s timeout "
-                                        f"| phase={phase.value} | no_speech=True | nudging user")
+                            logger.info(f"[{self.call_uuid[:8]}] Silence monitor: {self._wait_timeout}s in LISTENING "
+                                        f"| total_since_q={time_since_q:.1f}s | no_speech=True | nudging user")
                             await self._send_silence_nudge()
                         else:
                             logger.debug(f"[{self.call_uuid[:8]}] Silence monitor: {time_since_q:.1f}s since Q "
@@ -782,31 +832,57 @@ Rules:
     async def _send_silence_nudge(self):
         """Send a nudge to AI when silence detected"""
         if not self.goog_live_ws or self._closing_call:
+            logger.debug(f"[{self.call_uuid[:8]}] Nudge: skipped (ws={bool(self.goog_live_ws)}, closing={self._closing_call})")
             return
 
-        # In QuestionFlow mode, check if we've been waiting too long (5 sec timeout)
+        # In QuestionFlow mode: send nudge and reset pipeline to DELIVERING
         if self._pipeline:
-            if self._pipeline.waiting_for_user and (time.time() - self._pipeline.question_asked_time) >= self._wait_timeout:
-                no_user_speech = (self._last_user_audio_time is None) or (self._last_user_audio_time < self._pipeline.question_asked_time)
-                pending = self._pipeline.pending_user_transcript
-                if not no_user_speech or pending:
-                    logger.debug(f"[{self.call_uuid[:8]}] Nudge skipped: no_user_speech={no_user_speech} "
-                                 f"| pending='{pending[:30]}' | {self._pipeline.dump_state()}")
-                    return
-                logger.info(f"[{self.call_uuid[:8]}] Nudge: {self._wait_timeout}s timeout, resetting to DELIVERING "
-                            f"| {self._pipeline.dump_state()}")
-                self._pipeline.reset_for_nudge()  # DELIVERING state re-opens gate
-                # Send a gentle prompt
-                prompt_msg = {
-                    "client_content": {
-                        "turns": [{
-                            "role": "user",
-                            "parts": [{"text": "The customer hasn't responded. Gently ask if they are still there or repeat your question briefly."}]
-                        }],
-                        "turn_complete": True
-                    }
+            if not self._pipeline.waiting_for_user:
+                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (not waiting_for_user)")
+                return
+            time_since_q = time.time() - self._pipeline.question_asked_time
+            if time_since_q < self._wait_timeout:
+                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (only {time_since_q:.1f}s < {self._wait_timeout}s)")
+                return
+            # Use transcript time (not audio frame time) to detect real speech
+            no_user_speech = (self._last_user_transcript_time == 0 or
+                              self._last_user_transcript_time < self._pipeline.question_asked_time)
+            pending = self._pipeline.pending_user_transcript
+            if not no_user_speech or pending:
+                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (user has speech or pending) "
+                            f"| no_user_speech={no_user_speech} | pending='{pending[:30]}'")
+                return
+            logger.info(f"[{self.call_uuid[:8]}] Nudge: sending prompt after {time_since_q:.1f}s "
+                        f"| {self._pipeline.dump_state()}")
+            nudge_count = self._pipeline.reset_for_nudge()  # DELIVERING state re-opens gate
+
+            # Max 1 nudge per question — after that, auto-advance with "(no response)"
+            if nudge_count > 1:
+                q_idx = self._pipeline._current.index if self._pipeline._current else '?'
+                logger.warning(f"[{self.call_uuid[:8]}] Nudge: max reached ({nudge_count}) for Q{q_idx} "
+                               f"— auto-advancing with no response")
+                # Force to LISTENING so capture_response works
+                if self._pipeline._current:
+                    self._pipeline._current.phase = QuestionPhase.LISTENING
+                    self._pipeline._current.listen_time = time.time()
+                self._pipeline.capture_response()
+                next_instruction = self._question_flow.advance("(no response)")
+                self._pipeline.finalize_and_advance()
+                self._last_question_time = time.time()
+                await self._inject_question(next_instruction, user_said="")
+                return
+
+            # Gentle nudge — just prod Gemini to continue the conversation
+            prompt_msg = {
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": "The customer is quiet. Continue with the next question."}]
+                    }],
+                    "turn_complete": True
                 }
-                await self.goog_live_ws.send(json.dumps(prompt_msg))
+            }
+            await self.goog_live_ws.send(json.dumps(prompt_msg))
             return
 
         try:
@@ -823,6 +899,210 @@ Rules:
             logger.debug(f"[{self.call_uuid[:8]}] Sent nudge to AI")
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
+
+    # ==================== QUEUE-BASED AUDIO PIPELINE ====================
+
+    def _get_remaining_question_texts(self) -> list[str]:
+        """Get all remaining question prompt texts from the question flow."""
+        if not self._question_flow:
+            return []
+        step = self._question_flow.current_step
+        questions = self._question_flow.questions
+        return [q["prompt"] for q in questions[step:]]
+
+    def _is_off_script(self, ai_text: str, remaining_questions: list[str]) -> bool:
+        """Detect off-script AI speech using pattern matching.
+        Conservative: false negatives OK, false positives NOT OK.
+
+        Checks against ALL remaining questions (not just the expected one),
+        because Gemini drives the flow and may ask questions out of order.
+        """
+        if not ai_text or not remaining_questions:
+            return False
+
+        text_lower = ai_text.lower().strip()
+
+        # Need substantial text (100+ chars) before judging — Gemini says
+        # acknowledgment THEN question. At <100 chars we only see the ack.
+        if len(text_lower) < 100:
+            return False
+
+        stop_words = {"the", "a", "an", "is", "are", "to", "and", "of", "in", "for",
+                      "you", "your", "i", "my", "we", "our", "it", "that", "this",
+                      "do", "does", "can", "could", "would", "will", "how", "what",
+                      "so", "well", "just", "about", "have", "has", "been", "was"}
+        ai_words = set(text_lower.split()) - stop_words
+
+        # Check against ALL remaining questions — if ANY match, it's on-script
+        for question in remaining_questions:
+            expected_words = set(question.lower().split()) - stop_words
+            if expected_words:
+                overlap = len(expected_words & ai_words) / len(expected_words)
+                if overlap >= 0.2:
+                    return False
+
+        # No question keywords matched any remaining question after 100+ chars
+        # Check for pure filler patterns
+        for phrase in OFF_SCRIPT_PHRASES:
+            if text_lower.startswith(phrase):
+                logger.info(f"[{self.call_uuid[:8]}] Off-script: starts with '{phrase}', "
+                            f"no match to any remaining question after {len(text_lower)} chars "
+                            f"| text='{ai_text[:80]}'")
+                return True
+
+        # 120+ chars with no match to any question — off-script
+        if len(text_lower) >= 120:
+            logger.info(f"[{self.call_uuid[:8]}] Off-script: no keyword match to any of "
+                        f"{len(remaining_questions)} remaining questions after {len(text_lower)} chars "
+                        f"| ai='{ai_text[:60]}'")
+            return True
+
+        return False
+
+    async def _cancel_current_audio(self, turn_id: int, reason: str):
+        """Cancel audio for a turn: block it, drain send queue, clear Plivo playback"""
+        self._blocked_turns.add(turn_id)
+        logger.info(f"[{self.call_uuid[:8]}] CANCEL turn {turn_id}: {reason}")
+
+        # Drain plivo_send_queue (drop all pending audio)
+        drained = 0
+        while not self._plivo_send_queue.empty():
+            try:
+                self._plivo_send_queue.get_nowait()
+                drained += 1
+            except asyncio.QueueEmpty:
+                break
+        if drained:
+            logger.info(f"[{self.call_uuid[:8]}] Drained {drained} chunks from plivo_send_queue")
+
+        # Send clearAudio to Plivo to stop current playback
+        if self.plivo_ws:
+            try:
+                await self.plivo_ws.send_text(json.dumps({
+                    "event": "clearAudio",
+                    "stream_id": self.stream_id
+                }))
+                logger.info(f"[{self.call_uuid[:8]}] Sent clearAudio to Plivo")
+            except Exception as e:
+                logger.error(f"[{self.call_uuid[:8]}] Error sending clearAudio: {e}")
+
+        # Close gate via pipeline
+        if self._pipeline:
+            self._pipeline.close_gate_from_validator()
+
+    async def _audio_gate_worker(self):
+        """Worker 1: Reads AudioChunks from audio_out_queue, forwards approved ones to plivo_send_queue"""
+        logger.info(f"[{self.call_uuid[:8]}] Gate worker started")
+        try:
+            while self.is_active:
+                try:
+                    chunk: AudioChunk = await asyncio.wait_for(
+                        self._audio_out_queue.get(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                # Drop if turn is blocked by off-script validator
+                if chunk.turn_id in self._blocked_turns:
+                    continue
+
+                # With Gemini-driven question flow (all questions in system prompt),
+                # let audio flow freely. Gate is only used for off-script blocking.
+                # The old gate_open check was cutting off natural conversation transitions.
+                try:
+                    self._plivo_send_queue.put_nowait(chunk)
+                except asyncio.QueueFull:
+                    logger.warning(f"[{self.call_uuid[:8]}] plivo_send_queue full, dropping chunk")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Gate worker error: {e}")
+        logger.info(f"[{self.call_uuid[:8]}] Gate worker stopped")
+
+    async def _plivo_sender_worker(self):
+        """Worker 2: Reads from plivo_send_queue, sends to Plivo WebSocket"""
+        logger.info(f"[{self.call_uuid[:8]}] Plivo sender worker started")
+        try:
+            while self.is_active:
+                try:
+                    chunk: AudioChunk = await asyncio.wait_for(
+                        self._plivo_send_queue.get(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                if not self.plivo_ws:
+                    continue
+
+                try:
+                    await self.plivo_ws.send_text(json.dumps({
+                        "event": "playAudio",
+                        "media": {
+                            "contentType": "audio/x-l16",
+                            "sampleRate": chunk.sample_rate,
+                            "payload": chunk.audio_b64
+                        }
+                    }))
+                except Exception as e:
+                    logger.error(f"[{self.call_uuid[:8]}] Plivo sender error: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Plivo sender worker error: {e}")
+        logger.info(f"[{self.call_uuid[:8]}] Plivo sender worker stopped")
+
+    async def _transcript_validator_worker(self):
+        """Worker 3: Validates AI output transcription, cancels off-script audio"""
+        logger.info(f"[{self.call_uuid[:8]}] Transcript validator worker started")
+        accumulated_text = ""
+        current_turn = -1
+        try:
+            while self.is_active:
+                try:
+                    event = await asyncio.wait_for(
+                        self._transcript_val_queue.get(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                turn_id = event.get("turn_id", 0)
+                text = event.get("text", "")
+
+                # Reset accumulator on new turn
+                if turn_id != current_turn:
+                    accumulated_text = ""
+                    current_turn = turn_id
+
+                accumulated_text = f"{accumulated_text} {text}".strip()
+
+                # Skip validation if no pipeline
+                if not self._pipeline:
+                    continue
+
+                # Only validate during DELIVERING phase (gate open)
+                if not self._pipeline.gate_open:
+                    continue
+
+                # Skip if turn already blocked
+                if turn_id in self._blocked_turns:
+                    continue
+
+                # Check against ALL remaining questions (not just current)
+                remaining = self._get_remaining_question_texts()
+                if not remaining:
+                    continue
+
+                # Check for off-script content
+                if self._is_off_script(accumulated_text, remaining):
+                    await self._cancel_current_audio(
+                        turn_id,
+                        f"Off-script: '{accumulated_text[:60]}'"
+                    )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Transcript validator error: {e}")
+        logger.info(f"[{self.call_uuid[:8]}] Transcript validator worker stopped")
 
     async def _send_reconnection_filler(self):
         """Handle silence during reconnection - clear audio and prepare for resume"""
@@ -1027,18 +1307,31 @@ Rules:
             self._pipeline.capture_response()
             self._user_audio_buffer = bytearray(b"")
 
-            # Advance to next question with actual user text (enables objections)
+            # Advance question counter and track objections (for stats/webhook)
             next_instruction = self._question_flow.advance(pending_transcript)
             end_call = isinstance(next_instruction, dict) and next_instruction.get("end_call", False)
 
             # Finalize: CAPTURED → DONE
             self._pipeline.finalize_and_advance()
 
-            logger.info(f"[{self.call_uuid[:8]}] _process_user_audio: advancing "
+            logger.info(f"[{self.call_uuid[:8]}] _process_user_audio: tracked response "
                         f"Q{self._question_flow.current_step}/{len(self._question_flow.questions)} "
                         f"| end_call={end_call} | {self._pipeline.dump_state()}")
             self._last_question_time = time.time()
-            await self._inject_question(next_instruction, user_said=pending_transcript)
+
+            # Gemini drives question transitions naturally (all questions in system prompt).
+            # No injection needed — Gemini asks the next question on its own.
+            # Only dequeue for pipeline tracking (passive).
+            if self._pipeline and self._question_flow:
+                step = self._question_flow.current_step
+                questions = self._question_flow.questions
+                if step < len(questions):
+                    q_id = questions[step]["id"]
+                    q_text = self._question_flow.get_instruction_prompt()
+                    self._pipeline.dequeue_next(index=step, question_id=q_id, question_text=q_text)
+
+            if end_call and not self._closing_call:
+                asyncio.create_task(self._fallback_hangup(5.0))
             return
 
         # Non-pipeline fallback: Require minimum audio duration (at least 0.5 seconds)
@@ -1077,25 +1370,12 @@ Rules:
             self._last_user_audio_time = None
             self._last_user_transcript_time = 0
 
-            # Build instruction with natural acknowledgment + context from previous Q&A pairs
-            context_block = ""
-            if self._pipeline:
-                context_block = self._pipeline.get_recent_context(n=3)
+            # Simple [NEXT] trigger — Gemini already knows all questions from system prompt
+            step_num = self._question_flow.current_step if self._question_flow else 0
+            total_q = len(self._question_flow.questions) if self._question_flow else 0
+            q_num = step_num + 1  # Human-readable (Q1, Q2, ...)
 
-            if user_said and self._question_flow and self._question_flow.current_step > 1:
-                # After Q1: acknowledge user's response, then ask next question
-                instruction_text = ""
-                if context_block:
-                    instruction_text += f"{context_block}\n\n"
-                instruction_text += (
-                    f'[INSTRUCTION] The customer just said: "{user_said}". '
-                    f'First, give a very brief natural acknowledgment of what they said (like "Right, that makes sense" or "I see, interesting" - just 3-5 words). '
-                    f'Then smoothly transition and ask: "{text}" '
-                    f'After asking, STOP speaking and wait silently. Do NOT add extra questions.'
-                )
-            else:
-                # First question (greeting) or no user context
-                instruction_text = f'[INSTRUCTION] Say the following naturally to the customer: "{text}" After saying this, STOP speaking and wait silently for the customer to respond.'
+            instruction_text = f"[NEXT] Ask Q{q_num} now."
 
             msg = {
                 "client_content": {
@@ -1135,7 +1415,7 @@ Rules:
             self._user_audio_buffer.extend(audio_chunk[:remaining_space])
 
     async def _send_session_setup(self):
-        # Simple prompt - no accent instructions that might confuse the AI
+        # Build prompt: base prompt already contains all questions (embedded in system_instruction)
         full_prompt = self.prompt
 
         # On reconnect, load conversation from FILE (not memory - avoids latency issues)
@@ -1181,13 +1461,14 @@ Rules:
                             }
                         }
                     },
-                    # Disable thinking - just follow instructions
+                    # Allow some thinking for more natural, human-like responses
                     "thinking_config": {
-                        "thinking_budget": 0
+                        "thinking_budget": 1024
                     }
                 },
-                # Enable input transcription to get real-time user speech transcripts
-                "input_audio_transcription": {},  # Empty dict enables default transcription
+                # Enable transcription to get real-time speech transcripts
+                "input_audio_transcription": {},  # User speech → inputTranscription events
+                "output_audio_transcription": {},  # AI speech → outputTranscription events
                 "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
@@ -1203,11 +1484,11 @@ Rules:
             return
         self.greeting_sent = True
 
-        # Question Flow Mode: Include the first question in the greeting
+        # Question Flow Mode: Trigger Q1 (Gemini already knows all questions from system prompt)
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
-            trigger_text = f'[INSTRUCTION] You are starting a phone call. Say the following as your opening greeting naturally: "{first_instruction}" After saying this, STOP speaking and wait silently for the customer to respond.'
-            logger.debug(f"[{self.call_uuid[:8]}] Starting with question #1")
+            trigger_text = "Start the call. Ask Q1 now."
+            logger.debug(f"[{self.call_uuid[:8]}] Starting with Q1")
 
             # Clear audio buffer and dequeue first question via pipeline
             self._user_audio_buffer = bytearray(b"")
@@ -1439,6 +1720,7 @@ Rules:
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
                     self._turn_count += 1
+                    self._current_turn_id += 1  # New turn ID for queue pipeline
 
                     # Audio gating: close gate after AI finishes delivering ack + question
                     # Pipeline handles turn counting and DELIVERING → ECHOING transition
@@ -1473,6 +1755,12 @@ Rules:
 
                 if sc.get("interrupted"):
                     logger.debug(f"[{self.call_uuid[:8]}] AI interrupted")
+                    # Drain queued audio that hasn't been sent yet
+                    while not self._plivo_send_queue.empty():
+                        try:
+                            self._plivo_send_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                     if self.plivo_ws:
                         await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
@@ -1520,6 +1808,36 @@ Rules:
                                     self.user_said_goodbye = True
                                     self._check_mutual_goodbye()
 
+                # Handle AI speech transcription (outputTranscription)
+                output_transcription = sc.get("outputTranscription")
+                if output_transcription:
+                    if isinstance(output_transcription, dict):
+                        ai_text = output_transcription.get("text", "")
+                    else:
+                        ai_text = str(output_transcription)
+                    if ai_text and ai_text.strip():
+                        ai_text = ai_text.strip()
+                        logger.info(f"[{self.call_uuid[:8]}] AGENT: {ai_text}")
+                        self._save_transcript("AGENT", ai_text)
+                        self._log_conversation("model", ai_text)
+                        # Store what the agent said for this question
+                        if self._pipeline:
+                            self._pipeline.store_agent_said(ai_text)
+                        asyncio.create_task(send_transcript_to_webhook(self, "agent", ai_text))
+                        # Feed to transcript validator worker for off-script detection
+                        try:
+                            self._transcript_val_queue.put_nowait({
+                                "turn_id": self._current_turn_id,
+                                "text": ai_text
+                            })
+                        except asyncio.QueueFull:
+                            pass
+                        # Track if agent said goodbye
+                        if not self._closing_call and self._is_goodbye_message(ai_text):
+                            logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected")
+                            self.agent_said_goodbye = True
+                            self._check_mutual_goodbye()
+
                 if "modelTurn" in sc:
                     parts = sc.get("modelTurn", {}).get("parts", [])
                     for p in parts:
@@ -1548,25 +1866,28 @@ Rules:
                             # This fixes race condition where turnComplete arrives before all audio
                             if not self.plivo_ws:
                                 self.preloaded_audio.append(audio)
-                                # Removed per-chunk logging
                             elif self.plivo_ws:
-                                # Audio gating: drop off-script audio in QuestionFlow mode
-                                if self._pipeline and not self._pipeline.gate_open:
-                                    if self._current_turn_audio_chunks == 1:
-                                        logger.debug(f"[{self.call_uuid[:8]}] Gate CLOSED - dropping off-script AI audio")
-                                    continue  # Don't send to user
-
-                                # Gate open (or non-QuestionFlow) - forward to Plivo
-                                try:
-                                    await self.plivo_ws.send_text(json.dumps({
-                                        "event": "playAudio",
-                                        "media": {"contentType": "audio/x-l16", "sampleRate": 24000, "payload": audio}
-                                    }))
-                                    # Log first chunk sent to Plivo for this turn
-                                    if self._current_turn_audio_chunks == 1:
-                                        logger.debug(f"[{self.call_uuid[:8]}] Sending audio to Plivo")
-                                except Exception as plivo_err:
-                                    logger.error(f"Error sending audio to Plivo: {plivo_err} - continuing")
+                                # Push to audio pipeline queue (gate worker handles gating)
+                                chunk = AudioChunk(
+                                    audio_b64=audio,
+                                    turn_id=self._current_turn_id,
+                                    sample_rate=24000
+                                )
+                                if self._pipeline:
+                                    # Queue-based path: gate worker + sender worker
+                                    try:
+                                        self._audio_out_queue.put_nowait(chunk)
+                                    except asyncio.QueueFull:
+                                        logger.warning(f"[{self.call_uuid[:8]}] audio_out_queue full, dropping chunk")
+                                else:
+                                    # No pipeline (non-QuestionFlow): send directly to plivo_send_queue
+                                    try:
+                                        self._plivo_send_queue.put_nowait(chunk)
+                                    except asyncio.QueueFull:
+                                        logger.warning(f"[{self.call_uuid[:8]}] plivo_send_queue full, dropping chunk")
+                                # Log first chunk for this turn
+                                if self._current_turn_audio_chunks == 1:
+                                    logger.debug(f"[{self.call_uuid[:8]}] Audio → queue pipeline")
                         if p.get("text"):
                             ai_text = p["text"].strip()
                             logger.debug(f"AI TEXT: {ai_text[:100]}...")
@@ -1674,6 +1995,11 @@ Rules:
         # Cancel silence monitor
         if self._silence_monitor_task:
             self._silence_monitor_task.cancel()
+
+        # Cancel queue pipeline workers
+        for task in (self._gate_worker_task, self._sender_worker_task, self._validator_worker_task):
+            if task:
+                task.cancel()
 
         # Calculate call duration
         duration = 0
