@@ -1366,11 +1366,6 @@ Rules:
             if "serverContent" in resp:
                 sc = resp["serverContent"]
 
-                # Debug: log all serverContent keys to find user transcription field
-                sc_keys = list(sc.keys())
-                if sc_keys != ['modelTurn'] and sc_keys != ['turnComplete']:
-                    logger.debug(f"serverContent keys: {sc_keys}")
-
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
                     self._preload_complete.set()
@@ -1409,12 +1404,15 @@ Rules:
                         await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
                 # Capture user speech transcription from Gemini
-                # Debug: log all serverContent keys to find transcript field
-                if sc_keys != ['modelTurn'] and sc_keys != ['turnComplete']:
-                    logger.info(f"[{self.call_uuid[:8]}] DEBUG:SC_KEYS | {sc_keys}")
 
-                if "inputTranscript" in sc:
-                    user_text = sc["inputTranscript"]
+                # Handle both field names: inputTranscription (current API) and inputTranscript (legacy)
+                transcription_data = sc.get("inputTranscription") or sc.get("inputTranscript")
+                if transcription_data:
+                    # Can be a dict {"text": "..."} or a plain string
+                    if isinstance(transcription_data, dict):
+                        user_text = transcription_data.get("text", "")
+                    else:
+                        user_text = str(transcription_data)
                     logger.debug(f"[{self.call_uuid[:8]}] Input transcript: {user_text}")
                     if user_text and user_text.strip():
                         user_text = user_text.strip()
