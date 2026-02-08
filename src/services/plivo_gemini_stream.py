@@ -877,7 +877,7 @@ Rules:
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "The customer is quiet. Continue with the next question."}]
+                        "parts": [{"text": "The customer seems quiet. Please continue the conversation."}]
                     }],
                     "turn_complete": True
                 }
@@ -914,17 +914,26 @@ Rules:
         """Detect off-script AI speech using pattern matching.
         Conservative: false negatives OK, false positives NOT OK.
 
-        Checks against ALL remaining questions (not just the expected one),
-        because Gemini drives the flow and may ask questions out of order.
+        Only flags content as off-script when Gemini is hallucinating from noise.
+        NEVER flag when Gemini is responding to actual user speech or handling objections.
         """
         if not ai_text or not remaining_questions:
             return False
 
         text_lower = ai_text.lower().strip()
 
-        # Need substantial text (100+ chars) before judging — Gemini says
-        # acknowledgment THEN question. At <100 chars we only see the ack.
+        # Need substantial text before judging
         if len(text_lower) < 100:
+            return False
+
+        # If there was recent user speech, Gemini is RESPONDING — never flag
+        if self._pipeline and self._pipeline.pending_user_transcript:
+            return False
+
+        # Allow objection responses (price, cost, discount, EMI, busy, etc.)
+        objection_words = {"price", "cost", "40k", "discount", "emi", "busy",
+                           "interested", "family", "exam", "youtube", "free"}
+        if objection_words & set(text_lower.split()):
             return False
 
         stop_words = {"the", "a", "an", "is", "are", "to", "and", "of", "in", "for",
@@ -941,21 +950,13 @@ Rules:
                 if overlap >= 0.2:
                     return False
 
-        # No question keywords matched any remaining question after 100+ chars
-        # Check for pure filler patterns
-        for phrase in OFF_SCRIPT_PHRASES:
-            if text_lower.startswith(phrase):
-                logger.info(f"[{self.call_uuid[:8]}] Off-script: starts with '{phrase}', "
-                            f"no match to any remaining question after {len(text_lower)} chars "
-                            f"| text='{ai_text[:80]}'")
-                return True
-
-        # 120+ chars with no match to any question — off-script
-        if len(text_lower) >= 120:
-            logger.info(f"[{self.call_uuid[:8]}] Off-script: no keyword match to any of "
-                        f"{len(remaining_questions)} remaining questions after {len(text_lower)} chars "
-                        f"| ai='{ai_text[:60]}'")
-            return True
+        # Only flag pure filler with NO question content after 150+ chars
+        if len(text_lower) >= 150:
+            for phrase in OFF_SCRIPT_PHRASES:
+                if text_lower.startswith(phrase):
+                    logger.info(f"[{self.call_uuid[:8]}] Off-script: starts with '{phrase}', "
+                                f"no match after {len(text_lower)} chars | text='{ai_text[:80]}'")
+                    return True
 
         return False
 
@@ -1375,7 +1376,7 @@ Rules:
             total_q = len(self._question_flow.questions) if self._question_flow else 0
             q_num = step_num + 1  # Human-readable (Q1, Q2, ...)
 
-            instruction_text = f"[NEXT] Ask Q{q_num} now."
+            instruction_text = "Please continue with the next question."
 
             msg = {
                 "client_content": {
@@ -1461,9 +1462,9 @@ Rules:
                             }
                         }
                     },
-                    # Allow some thinking for more natural, human-like responses
+                    # Light thinking - just enough for quality, minimal latency
                     "thinking_config": {
-                        "thinking_budget": 1024
+                        "thinking_budget": 25
                     }
                 },
                 # Enable transcription to get real-time speech transcripts
@@ -1487,7 +1488,7 @@ Rules:
         # Question Flow Mode: Trigger Q1 (Gemini already knows all questions from system prompt)
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
-            trigger_text = "Start the call. Ask Q1 now."
+            trigger_text = "Start the call now. Greet the customer."
             logger.debug(f"[{self.call_uuid[:8]}] Starting with Q1")
 
             # Clear audio buffer and dequeue first question via pipeline
@@ -1860,6 +1861,9 @@ Rules:
                                 latency_ms = (time.time() - self._last_user_speech_time) * 1000
                                 if latency_ms > LATENCY_THRESHOLD_MS:
                                     logger.warning(f"[{self.call_uuid[:8]}] Slow response: {latency_ms:.0f}ms")
+                                # Record latency on current question for post-call metrics
+                                if self._pipeline and self._pipeline._current and self._pipeline._current.response_latency_ms == 0:
+                                    self._pipeline._current.response_latency_ms = latency_ms
                                 self._last_user_speech_time = None  # Reset after first response
 
                             # During preload (no plivo_ws yet), always store audio
@@ -2051,6 +2055,26 @@ Rules:
         # Process recording and transcription in COMPLETELY SEPARATE background thread
         # This does NOT block call ending - call ends immediately
         # Webhook is called AFTER transcription is complete
+        # Generate call metrics before post-call (pipeline still in memory)
+        self._call_metrics = {}
+        if self._pipeline:
+            self._call_metrics = self._pipeline.get_call_metrics()
+            # Log metrics summary
+            m = self._call_metrics
+            logger.info(f"[{self.call_uuid[:8]}] === CALL METRICS ===")
+            logger.info(f"[{self.call_uuid[:8]}] Questions: {m.get('questions_completed', 0)} | "
+                        f"Avg latency: {m.get('avg_latency_ms', 0)}ms | "
+                        f"Max: {m.get('max_latency_ms', 0)}ms | "
+                        f"Min: {m.get('min_latency_ms', 0)}ms | "
+                        f"P90: {m.get('p90_latency_ms', 0)}ms | "
+                        f"Nudges: {m.get('total_nudges', 0)}")
+            for q in m.get("per_question", []):
+                logger.info(f"[{self.call_uuid[:8]}]   Q{q['q']}({q['id']}) "
+                            f"latency={q['latency_ms']}ms | "
+                            f"duration={q['duration_s']}s | "
+                            f"nudges={q['nudges']}")
+            logger.info(f"[{self.call_uuid[:8]}] === END METRICS ===")
+
         self._start_post_call_processing(duration)
 
     def _start_post_call_processing(self, duration: float):
@@ -2082,6 +2106,16 @@ Rules:
                         f"[{t['timestamp']}] {t['role']}: {t['text']}"
                         for t in self._full_transcript
                     ])
+
+                # Step 3.5: Save call metrics to file
+                if self._call_metrics:
+                    try:
+                        metrics_file = Path(__file__).parent.parent.parent / "flow_data" / f"{self.call_uuid}_metrics.json"
+                        metrics_file.parent.mkdir(parents=True, exist_ok=True)
+                        with open(metrics_file, 'w') as f:
+                            json.dump({"call_uuid": self.call_uuid, "metrics": self._call_metrics}, f, indent=2)
+                    except Exception as e:
+                        logger.error(f"Error saving metrics: {e}")
 
                 # Step 4: Update session DB with final data
                 stats = self._flow_statistics or {}
@@ -2145,6 +2179,8 @@ Rules:
                 "collected_responses": flow_data.get("responses", {}),
                 # Q&A pairs with agent_said + user_said per question
                 "question_pairs": getattr(self, '_question_pairs', []),
+                # Call metrics (latency per question, avg/max/p90)
+                "call_metrics": getattr(self, '_call_metrics', {}),
                 # Transcript
                 "transcript": transcript,
                 "transcript_entries": self._full_transcript
@@ -2159,12 +2195,19 @@ Rules:
             logger.error(f"Error calling webhook: {e}")
 
 
-# Session storage
+# Session storage with concurrency protection
+MAX_CONCURRENT_SESSIONS = 5
 _sessions: Dict[str, PlivoGeminiSession] = {}
 _preloading_sessions: Dict[str, PlivoGeminiSession] = {}
+_sessions_lock = asyncio.Lock()
+
+def get_active_session_count() -> int:
+    """Return total active + preloading sessions (no lock, approximate)"""
+    return len(_sessions) + len(_preloading_sessions)
 
 def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
     """Set the Plivo UUID on a preloaded session for proper hangup"""
+    # No lock needed: single-threaded asyncio, called from async context
     session = _preloading_sessions.get(internal_uuid) or _sessions.get(internal_uuid)
     if session:
         session.plivo_call_uuid = plivo_uuid
@@ -2176,44 +2219,60 @@ def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
 
 async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None) -> bool:
     """Preload a session while phone is ringing"""
-    session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
-    _preloading_sessions[call_uuid] = session
+    async with _sessions_lock:
+        total = len(_sessions) + len(_preloading_sessions)
+        if total >= MAX_CONCURRENT_SESSIONS:
+            logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
+            raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
+        session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
+        _preloading_sessions[call_uuid] = session
     success = await session.preload()
     return success
 
 async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: str = None, context: dict = None, webhook_url: str = None) -> Optional[PlivoGeminiSession]:
     """Create or retrieve preloaded session"""
-    # Check for preloaded session
-    if call_uuid in _preloading_sessions:
-        session = _preloading_sessions.pop(call_uuid)
-        session.caller_phone = caller_phone  # Update phone if needed
-        session.attach_plivo_ws(plivo_ws)
-        _sessions[call_uuid] = session
-        logger.info(f"Using PRELOADED session for {call_uuid}")
-        session._save_transcript("SYSTEM", "Call connected (preloaded)")
-        return session
+    async with _sessions_lock:
+        # Check for preloaded session
+        if call_uuid in _preloading_sessions:
+            session = _preloading_sessions.pop(call_uuid)
+            session.caller_phone = caller_phone
+            session.attach_plivo_ws(plivo_ws)
+            _sessions[call_uuid] = session
+            logger.info(f"Using PRELOADED session for {call_uuid}")
+            session._save_transcript("SYSTEM", "Call connected (preloaded)")
+            return session
 
-    # Fallback: create new session
+        # Fallback: create new session (check limit)
+        total = len(_sessions) + len(_preloading_sessions)
+        if total >= MAX_CONCURRENT_SESSIONS:
+            logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
+            return None
+
+    # Create outside lock (preload does network I/O)
     logger.info(f"No preloaded session, creating new for {call_uuid}")
     session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
     session.plivo_ws = plivo_ws
     session._save_transcript("SYSTEM", "Call started")
     if await session.preload():
-        _sessions[call_uuid] = session
+        async with _sessions_lock:
+            _sessions[call_uuid] = session
         return session
     return None
 
 async def get_session(call_uuid: str) -> Optional[PlivoGeminiSession]:
-    return _sessions.get(call_uuid)
+    async with _sessions_lock:
+        return _sessions.get(call_uuid)
 
 async def remove_session(call_uuid: str):
-    # Clean up both active and preloading sessions
-    if call_uuid in _sessions:
-        await _sessions[call_uuid].stop()
-        del _sessions[call_uuid]
-    if call_uuid in _preloading_sessions:
-        await _preloading_sessions[call_uuid].stop()
-        del _preloading_sessions[call_uuid]
+    """Remove and stop session atomically"""
+    async with _sessions_lock:
+        session = _sessions.pop(call_uuid, None)
+        preload_session_obj = _preloading_sessions.pop(call_uuid, None)
+    # Stop outside lock (stop() does async I/O)
+    if session:
+        await session.stop()
+    if preload_session_obj:
+        await preload_session_obj.stop()
 
 
 # ==================== CONVERSATIONAL FLOW SUPPORT ====================
@@ -2234,7 +2293,8 @@ async def inject_context_to_session(call_uuid: str, phase: str, additional_conte
     """
     from src.conversational_prompts import PHASE_PROMPTS
 
-    session = _sessions.get(call_uuid)
+    async with _sessions_lock:
+        session = _sessions.get(call_uuid)
     if not session or not session.goog_live_ws:
         logger.warning(f"Cannot inject context - session {call_uuid} not found or not connected")
         return False
@@ -2311,19 +2371,26 @@ async def preload_session_conversational(
     Returns:
         True if preload succeeded
     """
-    # Create session with QuestionFlow enabled (uses config file, not passed prompt)
-    session = PlivoGeminiSession(
-        call_uuid,
-        caller_phone,
-        prompt=None,  # QuestionFlow will use base_prompt from config
-        context=context,
-        webhook_url=call_end_webhook_url,
-        transcript_webhook_url=n8n_webhook_url,
-        client_name=client_name,
-        use_question_flow=True  # Explicitly enable QuestionFlow
-    )
+    # Check session limit
+    async with _sessions_lock:
+        total = len(_sessions) + len(_preloading_sessions)
+        if total >= MAX_CONCURRENT_SESSIONS:
+            logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
+            raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
 
-    _preloading_sessions[call_uuid] = session
+        # Create session with QuestionFlow enabled (uses config file, not passed prompt)
+        session = PlivoGeminiSession(
+            call_uuid,
+            caller_phone,
+            prompt=None,  # QuestionFlow will use base_prompt from config
+            context=context,
+            webhook_url=call_end_webhook_url,
+            transcript_webhook_url=n8n_webhook_url,
+            client_name=client_name,
+            use_question_flow=True  # Explicitly enable QuestionFlow
+        )
+        _preloading_sessions[call_uuid] = session
+
     success = await session.preload()
     return success
 

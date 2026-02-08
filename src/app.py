@@ -94,13 +94,23 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(300)  # Every 5 minutes
             try:
-                # Clean stale in-memory dicts
-                stale_keys = [k for k, v in _pending_call_data.items()
-                              if not any(k in (s or {}) for s in [
-                                  getattr(getattr(globals().get('plivo_gemini_stream'), '_sessions', None), 'keys', lambda: [])()
-                              ])]
-                for k in stale_keys[:10]:  # Clean max 10 at a time
-                    _pending_call_data.pop(k, None)
+                from src.services.plivo_gemini_stream import _sessions, _preloading_sessions, _sessions_lock
+                # Collect active session UUIDs
+                async with _sessions_lock:
+                    active_uuids = set(_sessions.keys()) | set(_preloading_sessions.keys())
+                # Clean stale pending data (calls that ended without proper cleanup)
+                async with _call_data_lock:
+                    stale_keys = [k for k in _pending_call_data if k not in active_uuids]
+                    for k in stale_keys:
+                        _pending_call_data.pop(k, None)
+                    # Clean stale UUID mappings
+                    stale_internal = [k for k in _internal_to_plivo_uuid if k not in active_uuids]
+                    for k in stale_internal:
+                        plivo_uuid = _internal_to_plivo_uuid.pop(k, None)
+                        if plivo_uuid:
+                            _plivo_to_internal_uuid.pop(plivo_uuid, None)
+                if stale_keys or stale_internal:
+                    logger.info(f"Cleanup: removed {len(stale_keys)} stale pending, {len(stale_internal)} stale UUID mappings")
                 # Clean stale DB records
                 session_db.cleanup_stale(max_age_minutes=10)
             except Exception as e:
@@ -388,11 +398,12 @@ from src.adapters.plivo_adapter import plivo_adapter
 
 # Store call data for pending calls (call_uuid -> {phone, prompt, context})
 _pending_call_data = {}
-
 # Mapping from Plivo's request_uuid to our internal call_uuid (for preloaded sessions)
 _plivo_to_internal_uuid = {}
 # Reverse mapping: internal UUID to Plivo UUID
 _internal_to_plivo_uuid = {}
+# Lock for all call data dicts above
+_call_data_lock = asyncio.Lock()
 
 
 class PlivoMakeCallRequest(BaseModel):
@@ -428,12 +439,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         context.setdefault("customer_name", request.contactName)
 
         # Store all call data
-        _pending_call_data[call_uuid] = {
-            "phone": request.phoneNumber,
-            "prompt": request.prompt,
-            "context": context,
-            "webhookUrl": request.webhookUrl
-        }
+        async with _call_data_lock:
+            _pending_call_data[call_uuid] = {
+                "phone": request.phoneNumber,
+                "prompt": request.prompt,
+                "context": context,
+                "webhookUrl": request.webhookUrl
+            }
 
         # Record call in DB (non-blocking)
         session_db.create_call(
@@ -463,13 +475,12 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             # Map Plivo's UUID to our internal UUID (for preloaded session lookup)
             plivo_uuid = result.get("call_uuid")
             if plivo_uuid:
-                _plivo_to_internal_uuid[plivo_uuid] = call_uuid
-                _internal_to_plivo_uuid[call_uuid] = plivo_uuid
+                async with _call_data_lock:
+                    _plivo_to_internal_uuid[plivo_uuid] = call_uuid
+                    _internal_to_plivo_uuid[call_uuid] = plivo_uuid
+                    if call_uuid in _pending_call_data:
+                        _pending_call_data[call_uuid]["plivo_uuid"] = plivo_uuid
                 logger.info(f"UUID mapping: Plivo {plivo_uuid} -> Internal {call_uuid}")
-
-                # Store Plivo UUID in pending data (fallback for WebSocket handler)
-                if call_uuid in _pending_call_data:
-                    _pending_call_data[call_uuid]["plivo_uuid"] = plivo_uuid
 
                 # Set Plivo UUID on the preloaded session for hangup
                 from src.services.plivo_gemini_stream import set_plivo_uuid
@@ -503,14 +514,12 @@ async def plivo_answer(request: Request):
     to_phone = body.get("To", "")
 
     # Look up our internal UUID from Plivo's UUID (for preloaded sessions)
-    # If not found, use Plivo's UUID (for non-preloaded calls)
-    internal_uuid = _plivo_to_internal_uuid.get(plivo_uuid, plivo_uuid)
-
-    # For outbound calls, customer is "To"; for inbound, customer is "From"
-    # Store the customer phone (not our Plivo number)
-    customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
-    if customer_phone and internal_uuid and internal_uuid not in _pending_call_data:
-        _pending_call_data[internal_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
+    async with _call_data_lock:
+        internal_uuid = _plivo_to_internal_uuid.get(plivo_uuid, plivo_uuid)
+        # For outbound calls, customer is "To"; for inbound, customer is "From"
+        customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
+        if customer_phone and internal_uuid and internal_uuid not in _pending_call_data:
+            _pending_call_data[internal_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
 
     logger.info(f"Plivo call answered: plivo={plivo_uuid}, internal={internal_uuid}, from {from_phone} to {to_phone}")
 
@@ -562,7 +571,8 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
                 caller_phone = custom_params.get("callerPhone", "") or start_data.get("to", "") or start_data.get("from", "")
                 # If still empty, use the call_uuid to look up from pending calls
                 if not caller_phone:
-                    call_data = _pending_call_data.get(call_uuid, {})
+                    async with _call_data_lock:
+                        call_data = _pending_call_data.get(call_uuid, {})
                     caller_phone = call_data.get("phone", "")
                 # Ensure it has country code format
                 if caller_phone and not caller_phone.startswith("+"):
@@ -580,8 +590,9 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
                     # Ensure Plivo UUID is set (fallback if set_plivo_uuid missed it)
                     if not session.plivo_call_uuid:
                         # Try to get from pending call data or mapping
-                        call_data = _pending_call_data.get(call_uuid, {})
-                        plivo_uuid = call_data.get("plivo_uuid") or _internal_to_plivo_uuid.get(call_uuid)
+                        async with _call_data_lock:
+                            call_data = _pending_call_data.get(call_uuid, {})
+                            plivo_uuid = call_data.get("plivo_uuid") or _internal_to_plivo_uuid.get(call_uuid)
                         if plivo_uuid:
                             session.plivo_call_uuid = plivo_uuid
                             logger.info(f"Set Plivo UUID {plivo_uuid} on session {call_uuid} (fallback)")
@@ -636,11 +647,13 @@ async def plivo_hangup(request: Request):
     duration = body.get("Duration", "0")
 
     # Look up internal UUID for cleanup
-    internal_uuid = _plivo_to_internal_uuid.pop(plivo_uuid, plivo_uuid)
+    async with _call_data_lock:
+        internal_uuid = _plivo_to_internal_uuid.pop(plivo_uuid, plivo_uuid)
+        _pending_call_data.pop(internal_uuid, None)
+        _internal_to_plivo_uuid.pop(internal_uuid, None)
 
     logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s")
     clear_conversation(internal_uuid)
-    _pending_call_data.pop(internal_uuid, None)
 
     return JSONResponse(content={"status": "ok"})
 
@@ -805,6 +818,18 @@ async def get_available_phases():
         "qualification_rules": QUALIFICATION_RULES,
         "data_fields": DATA_FIELDS
     })
+
+
+# ============= CALL METRICS ENDPOINT =============
+
+@app.get("/call/metrics/{call_id}")
+async def get_call_metrics(call_id: str):
+    """Get latency metrics for a completed call"""
+    from pathlib import Path
+    metrics_file = Path(__file__).parent.parent / "flow_data" / f"{call_id}_metrics.json"
+    if metrics_file.exists():
+        return JSONResponse(content=json.load(open(metrics_file)))
+    raise HTTPException(status_code=404, detail=f"Metrics not found for call {call_id}")
 
 
 if __name__ == "__main__":

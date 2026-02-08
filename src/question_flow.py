@@ -4,6 +4,7 @@
 
 import json
 import time
+import threading
 from enum import Enum
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, field
@@ -287,6 +288,9 @@ class QuestionRecord:
     agent_said: str = ""           # What the AI actually said for this question
     user_said: str = ""            # What the user responded
     duration_seconds: float = 0.0  # Time from deliver to capture
+    # Latency metrics
+    response_latency_ms: float = 0.0   # Gemini response time after user finishes (ms)
+    user_speech_end_time: float = 0.0  # When user stopped speaking (for latency calc)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -295,6 +299,7 @@ class QuestionRecord:
             "agent_said": self.agent_said,
             "user_said": self.user_said,
             "duration_seconds": round(self.duration_seconds, 1),
+            "response_latency_ms": round(self.response_latency_ms),
         }
 
 
@@ -594,6 +599,41 @@ class QuestionPipeline:
                     f"{', +1 in-progress' if self._current and self._current.user_said else ''})")
         return pairs
 
+    def get_call_metrics(self) -> Dict[str, Any]:
+        """Generate post-call latency/timing metrics for this call"""
+        all_records = list(self._completed)
+        if self._current and self._current.user_said:
+            all_records.append(self._current)
+
+        if not all_records:
+            return {"questions_completed": 0, "per_question": []}
+
+        latencies = [r.response_latency_ms for r in all_records if r.response_latency_ms > 0]
+        durations = [r.duration_seconds for r in all_records if r.duration_seconds > 0]
+        nudge_total = sum(r.nudge_count for r in all_records)
+
+        per_question = []
+        for rec in all_records:
+            per_question.append({
+                "q": rec.index,
+                "id": rec.question_id,
+                "latency_ms": round(rec.response_latency_ms),
+                "duration_s": round(rec.duration_seconds, 1),
+                "nudges": rec.nudge_count,
+            })
+
+        metrics = {
+            "questions_completed": len(all_records),
+            "total_duration_s": round(sum(durations), 1) if durations else 0,
+            "avg_latency_ms": round(sum(latencies) / len(latencies)) if latencies else 0,
+            "max_latency_ms": round(max(latencies)) if latencies else 0,
+            "min_latency_ms": round(min(latencies)) if latencies else 0,
+            "p90_latency_ms": round(sorted(latencies)[int(len(latencies) * 0.9)]) if latencies else 0,
+            "total_nudges": nudge_total,
+            "per_question": per_question,
+        }
+        return metrics
+
     # ---- Internal ----
 
     def dump_state(self) -> str:
@@ -616,8 +656,9 @@ class QuestionPipeline:
             self._current.phase = new_phase
 
 
-# Store flows per call
+# Store flows per call (protected by lock for concurrent access)
 _call_flows: Dict[str, QuestionFlow] = {}
+_call_flows_lock = threading.Lock()
 
 
 def get_or_create_flow(
@@ -626,19 +667,21 @@ def get_or_create_flow(
     context: Dict = None
 ) -> QuestionFlow:
     """Get existing flow or create new one for a call"""
-    if call_uuid not in _call_flows:
-        _call_flows[call_uuid] = QuestionFlow(
-            call_uuid=call_uuid,
-            client_name=client_name,
-            context=context or {}
-        )
-    return _call_flows[call_uuid]
+    with _call_flows_lock:
+        if call_uuid not in _call_flows:
+            _call_flows[call_uuid] = QuestionFlow(
+                call_uuid=call_uuid,
+                client_name=client_name,
+                context=context or {}
+            )
+        return _call_flows[call_uuid]
 
 
 def remove_flow(call_uuid: str) -> Optional[Dict]:
     """Remove flow from memory and return collected data"""
-    if call_uuid in _call_flows:
-        flow = _call_flows.pop(call_uuid)
+    with _call_flows_lock:
+        flow = _call_flows.pop(call_uuid, None)
+    if flow:
         data = flow.get_collected_data()
         flow.save_to_file(call_uuid)
         return data
