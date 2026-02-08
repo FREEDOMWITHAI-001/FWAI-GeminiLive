@@ -718,23 +718,25 @@ Rules:
 
                 # QuestionFlow mode: Detect when user finishes speaking after a question
                 if self.use_question_flow and self._waiting_for_user:
-                    # Check if user has spoken and then went silent
-                    if self._last_user_audio_time:
-                        silence_since_user = time.time() - self._last_user_audio_time
+                    # Use TRANSCRIPT time (not audio frame time) to detect real speech
+                    # Audio frames arrive continuously from Plivo (even silence), but
+                    # _last_user_transcript_time only updates when Gemini detects actual words
+                    if self._last_user_transcript_time > self._question_asked_time:
+                        silence_since_speech = time.time() - self._last_user_transcript_time
                         time_since_question = time.time() - self._question_asked_time
 
-                        # If 1.5+ seconds of silence AFTER user spoke, and we have audio, process their response
-                        # Also require at least 2 seconds since question was asked
-                        if silence_since_user >= 1.5 and time_since_question >= 2.0:
-                            logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({silence_since_user:.1f}s silence, {len(self._user_audio_buffer)} bytes)")
+                        # If 1.5+ seconds since last real speech, user has finished talking
+                        if silence_since_speech >= 1.5 and time_since_question >= 2.0:
+                            logger.info(f"[{self.call_uuid[:8]}] User finished speaking ({silence_since_speech:.1f}s silence)")
                             await self._process_user_audio_for_transcription()
                             continue
 
-                    # If waiting too long (5 sec timeout) with no response, prompt user
+                    # If waiting too long with no real speech, prompt user
                     if (time.time() - self._question_asked_time) >= self._wait_timeout:
-                        no_user_speech = (self._last_user_audio_time is None) or (self._last_user_audio_time < self._question_asked_time)
-                        if no_user_speech and not self._pending_user_transcript:
-                            logger.info(f"[{self.call_uuid[:8]}] {self._wait_timeout}s timeout - prompting user")
+                        no_real_speech = (self._last_user_transcript_time == 0 or
+                                         self._last_user_transcript_time < self._question_asked_time)
+                        if no_real_speech and not self._pending_user_transcript:
+                            logger.info(f"[{self.call_uuid[:8]}] {self._wait_timeout}s timeout - no speech detected, prompting user")
                             await self._send_silence_nudge()
                             self._question_asked_time = time.time()  # Reset timeout
                     continue
