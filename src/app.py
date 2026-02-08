@@ -6,7 +6,7 @@ Python-based implementation using aiortc for full audio access
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 from loguru import logger
 import sys
@@ -702,6 +702,7 @@ class ConversationalCallRequest(BaseModel):
     callEndWebhookUrl: Optional[str] = None  # URL when call ends
     context: Optional[dict] = None
     clientName: Optional[str] = None  # Client name for loading specific prompt (e.g., 'fwai', 'ridhi')
+    questions: Optional[List[dict]] = None  # Override questions from n8n: [{"id": "q1", "prompt": "..."}]
 
 
 @app.post("/call/conversational")
@@ -742,22 +743,29 @@ async def start_conversational_call(request: ConversationalCallRequest):
 
         # Record call in DB (non-blocking)
         from src.question_flow import load_client_config
-        client_config = load_client_config(client_name)
+        questions_override = request.questions  # From n8n (or None)
+        if questions_override:
+            total_q = len(questions_override)
+            logger.info(f"[{call_uuid[:8]}] Using {total_q} questions from API request")
+        else:
+            client_config = load_client_config(client_name)
+            total_q = len(client_config.get("questions", []))
         session_db.create_call(
             call_uuid=call_uuid, phone=request.phoneNumber,
             contact_name=request.contactName, client_name=client_name,
             webhook_url=request.callEndWebhookUrl,
-            total_questions=len(client_config.get("questions", []))
+            total_questions=total_q
         )
 
-        # Preload session with QuestionFlow (uses config file, not full prompt)
+        # Preload session with QuestionFlow (uses config file, or override questions from n8n)
         await preload_session_conversational(
             call_uuid,
             request.phoneNumber,
             context=context,
             n8n_webhook_url=request.n8nWebhookUrl,
             call_end_webhook_url=request.callEndWebhookUrl,
-            client_name=client_name
+            client_name=client_name,
+            questions_override=questions_override
         )
 
         # Make the Plivo call

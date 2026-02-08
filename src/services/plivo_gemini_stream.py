@@ -187,7 +187,7 @@ OFF_SCRIPT_PHRASES = [
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
@@ -198,10 +198,12 @@ class PlivoGeminiSession:
         # Question Flow Mode: Use minimal prompt + inject questions one by one
         if use_question_flow:
             # Create flow with client config - loads questions, voice, etc from config file
+            # If questions_override provided (from n8n API), those take priority
             self._question_flow = get_or_create_flow(
                 call_uuid=call_uuid,
                 client_name=self.client_name,
-                context=self.context
+                context=self.context,
+                questions_override=questions_override
             )
             self.prompt = self._question_flow.get_base_prompt()
             # Get voice from config (not hardcoded)
@@ -2352,7 +2354,8 @@ async def preload_session_conversational(
     context: dict = None,
     n8n_webhook_url: str = None,
     call_end_webhook_url: str = None,
-    client_name: str = "fwai"
+    client_name: str = "fwai",
+    questions_override: list = None
 ) -> bool:
     """
     Preload a session in conversational flow mode.
@@ -2367,6 +2370,7 @@ async def preload_session_conversational(
         n8n_webhook_url: URL to send real-time transcripts (optional)
         call_end_webhook_url: URL to call when call ends
         client_name: Client config to use (e.g., 'fwai')
+        questions_override: Optional list of questions from API (overrides config file)
 
     Returns:
         True if preload succeeded
@@ -2378,7 +2382,7 @@ async def preload_session_conversational(
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
 
-        # Create session with QuestionFlow enabled (uses config file, not passed prompt)
+        # Create session with QuestionFlow enabled (uses config file, or override questions from n8n)
         session = PlivoGeminiSession(
             call_uuid,
             caller_phone,
@@ -2387,7 +2391,8 @@ async def preload_session_conversational(
             webhook_url=call_end_webhook_url,
             transcript_webhook_url=n8n_webhook_url,
             client_name=client_name,
-            use_question_flow=True  # Explicitly enable QuestionFlow
+            use_question_flow=True,  # Explicitly enable QuestionFlow
+            questions_override=questions_override
         )
         _preloading_sessions[call_uuid] = session
 

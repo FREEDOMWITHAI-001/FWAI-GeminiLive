@@ -74,6 +74,7 @@ class QuestionFlow:
     objections: Dict[str, str] = field(default_factory=dict)
     objection_keywords: Dict[str, List[str]] = field(default_factory=dict)
     base_prompt: str = ""
+    questions_override: Optional[List[Dict]] = None  # Questions passed from n8n API
 
     def __post_init__(self):
         """Load config after initialization"""
@@ -83,8 +84,12 @@ class QuestionFlow:
         defaults = self.config.get("defaults", {})
         self.context = {**defaults, **self.context}
 
-        # Load questions and objections
-        self.questions = self.config.get("questions", [])
+        # Use override questions from API if provided, otherwise load from config
+        if self.questions_override:
+            self.questions = self.questions_override
+            logger.info(f"Using {len(self.questions)} override questions from API")
+        else:
+            self.questions = self.config.get("questions", [])
         self.objections = self.config.get("objections", {})
         self.objection_keywords = self.config.get("objection_keywords", {})
         self.base_prompt = self.config.get("base_prompt", "")
@@ -664,7 +669,8 @@ _call_flows_lock = threading.Lock()
 def get_or_create_flow(
     call_uuid: str,
     client_name: str = "fwai",
-    context: Dict = None
+    context: Dict = None,
+    questions_override: List[Dict] = None
 ) -> QuestionFlow:
     """Get existing flow or create new one for a call"""
     with _call_flows_lock:
@@ -672,7 +678,8 @@ def get_or_create_flow(
             _call_flows[call_uuid] = QuestionFlow(
                 call_uuid=call_uuid,
                 client_name=client_name,
-                context=context or {}
+                context=context or {},
+                questions_override=questions_override
             )
         return _call_flows[call_uuid]
 

@@ -41,12 +41,26 @@ echo ""
 echo "To trigger a call via n8n webhook:"
 echo ""
 cat << 'EOF'
+# Basic call (uses questions from config file):
 curl -X POST https://YOUR_N8N_URL/webhook/trigger-call \
   -H "Content-Type: application/json" \
   -d '{
     "phoneNumber": "919876543210",
     "contactName": "John Doe",
     "campaign": "follow-up"
+  }'
+
+# Call with custom questions from n8n (overrides config file):
+curl -X POST https://YOUR_N8N_URL/webhook/trigger-call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phoneNumber": "919876543210",
+    "contactName": "John Doe",
+    "questions": [
+      {"id": "greeting", "prompt": "Hi {customer_name}, this is {agent_name} from {company_name}. How are you?"},
+      {"id": "experience", "prompt": "How was your experience with our masterclass?"},
+      {"id": "goal", "prompt": "What is your main goal with AI?"}
+    ]
   }'
 EOF
 echo ""
