@@ -21,7 +21,7 @@
         "url": "http://34.93.142.172:3001/call/conversational",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-call-ended\",\n  \"context\": $json.body?.context || $json.context || {}\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-call-ended\",\n  \"context\": {\n    \"customer_name\": $json.body?.contactName || $json.contactName || \"Customer\",\n    \"agent_name\": $json.body?.agentName || $json.agentName || \"Rahul\",\n    \"company_name\": $json.body?.companyName || $json.companyName || \"Freedom with AI\",\n    \"event_name\": $json.body?.eventName || $json.eventName || \"AI Masterclass\",\n    \"event_host\": $json.body?.eventHost || $json.eventHost || \"Avinash Mada\",\n    \"voice\": $json.body?.voice || $json.voice || \"Puck\",\n    \"location\": $json.body?.location || $json.location || \"Hyderabad\"\n  },\n  \"prompt\": \"You are {agent_name}, a friendly sales counselor from {company_name}, speaking on a phone call with a customer named {customer_name}.\\n\\nCALL PURPOSE: You are conducting a feedback survey about the {event_name} masterclass hosted by {event_host}.\\n\\nVOICE & TONE:\\n- Speak with a natural Indian English accent, warm and professional\\n- Use contractions naturally: I'm, you're, that's, doesn't\\n- Speak ONLY in English\\n\\nCRITICAL CONVERSATION FLOW:\\nYou MUST follow this exact pattern for EVERY question:\\n1. Say a brief acknowledgment (2-5 words max, like 'Got it' or 'Great, thanks')\\n2. Ask the NEXT question from the list — just ONE question, nothing else\\n3. STOP TALKING COMPLETELY — say nothing more until the customer responds\\n4. Wait for the customer to finish answering\\n5. Repeat from step 1 for the next question\\n\\nRULES YOU MUST FOLLOW:\\n- NEVER ask two questions in the same turn. Only ONE question per turn.\\n- After asking a question, STOP. Do not add follow-ups, explanations, or the next question.\\n- Your acknowledgment must be SHORT (2-5 words). Do not elaborate on their answer.\\n- Follow the question order EXACTLY. Do not skip or rearrange.\\n- Do NOT say goodbye or end the call until you have asked ALL questions.\\n\\nHANDLING RESPONSES:\\n- If the customer asks about price: 'It's around 40K but masterclass attendees get a special discount. EMI options are also available.' Then WAIT.\\n- If the customer says they're busy: 'No worries! When would be a better time to call?' then call end_call.\\n- If the customer says not interested: 'Thanks for your time, {customer_name}. Take care!' then call end_call.\\n- When customer says goodbye: 'Great talking to you! Take care!' and call end_call.\\n- ONLY call end_call when you have finished ALL questions OR the customer wants to end the call.\",\n  \"objections\": {\n    \"price\": \"It's around 40K but masterclass attendees get a special discount. EMI options are also available. Does that help?\",\n    \"family\": \"Of course, please discuss with your family. I'll send the details on WhatsApp. Should I call back in the morning or evening?\",\n    \"exams\": \"No problem! The program is self-paced, you can pause during exams. When do your exams end?\",\n    \"busy\": \"No worries! When would be a better time to call?\",\n    \"youtube\": \"YouTube is great for basics. We provide structure, hands-on projects, and certification. Would you like to know more?\",\n    \"not_interested\": \"Thanks for your time, {customer_name}. Feel free to reach out when you're ready. Take care!\"\n  },\n  \"objectionKeywords\": {\n    \"price\": [\"price\", \"cost\", \"expensive\", \"afford\", \"how much\", \"fees\"],\n    \"family\": [\"family\", \"father\", \"mother\", \"parent\", \"husband\", \"wife\", \"discuss\", \"ask\"],\n    \"exams\": [\"exam\", \"test\", \"semester\", \"studies\"],\n    \"busy\": [\"busy\", \"call later\", \"not now\", \"bad time\", \"in a meeting\"],\n    \"youtube\": [\"youtube\", \"free\", \"learn myself\", \"self learn\"],\n    \"not_interested\": [\"not interested\", \"no thanks\", \"don't want\", \"not for me\"]\n  },\n  \"questions\": [\n    {\"id\": \"greeting\", \"prompt\": \"Hi {customer_name}, this is {agent_name} calling from {company_name}. How are you doing today?\"},\n    {\"id\": \"opening\", \"prompt\": \"So you recently attended our {event_name} with {event_host}, right? How was your experience?\"},\n    {\"id\": \"registration_reason\", \"prompt\": \"What was the main reason you registered for or attended this masterclass?\"},\n    {\"id\": \"expectations\", \"prompt\": \"After joining the masterclass, did you have any expectations or specific requirements either before joining or after attending?\"},\n    {\"id\": \"source\", \"prompt\": \"How did you first hear about {company_name} or {event_host}?\"},\n    {\"id\": \"knowledge\", \"prompt\": \"What do you know about {company_name} - what we do and how we work?\"},\n    {\"id\": \"ai_understanding\", \"prompt\": \"What is your understanding of AI in general?\"},\n    {\"id\": \"ai_rating\", \"prompt\": \"On a scale of 1 to 10, how would you rate your current knowledge of AI?\"},\n    {\"id\": \"ai_usage\", \"prompt\": \"Are you currently using AI in your work? If yes, how?\"},\n    {\"id\": \"ai_importance\", \"prompt\": \"Do you feel it is important for you to learn and use AI? If yes, how are you planning to do that?\"},\n    {\"id\": \"goal_6months\", \"prompt\": \"If AI could help you achieve one result in the next 3 to 6 months, what would that be?\"},\n    {\"id\": \"current_work\", \"prompt\": \"What do you currently do for work?\"},\n    {\"id\": \"long_term_goal\", \"prompt\": \"What is your long-term goal? For example, moving into a senior role or starting your own business.\"},\n    {\"id\": \"roadmap\", \"prompt\": \"Do you currently follow any roadmap or mentor? If not, are you looking for external guidance and a structured roadmap to follow?\"}\n  ]\n}) }}",
         "options": {
           "timeout": 30000
         }
@@ -46,31 +46,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "transcript",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "transcript-webhook",
-      "name": "Transcript Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 500],
-      "webhookId": "transcript"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Log transcript for analytics (no phase injection needed)\n// Python QuestionFlow handles conversation flow internally\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\nreturn {\n  call_uuid: data.call_uuid,\n  role: data.role,\n  text: data.text,\n  timestamp: data.timestamp,\n  turn_count: data.turn_count,\n  logged_at: new Date().toISOString()\n};"
-      },
-      "id": "log-transcript",
-      "name": "Log Transcript",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [460, 500]
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "call-ended",
+        "path": "fwai-call-ended",
         "responseMode": "lastNode",
         "options": {}
       },
@@ -79,11 +55,11 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 700],
-      "webhookId": "call-ended"
+      "webhookId": "fwai-call-ended"
     },
     {
       "parameters": {
-        "jsCode": "// Process call end data\n// Flow data is saved in server: flow_data/{call_uuid}.json\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\n// Parse transcript to determine lead quality\nconst transcript = (data.transcript || '').toLowerCase();\nconst entries = data.transcript_entries || [];\n\n// Simple lead scoring based on keywords\nlet score = 0;\nlet leadType = 'cold';\n\n// Positive signals\nif (transcript.includes('interested')) score += 2;\nif (transcript.includes('yes')) score += 1;\nif (transcript.includes('tell me more')) score += 2;\nif (transcript.includes('how much') || transcript.includes('price')) score += 1;\nif (transcript.includes('sign up') || transcript.includes('enroll')) score += 3;\n\n// Negative signals\nif (transcript.includes('not interested')) score -= 3;\nif (transcript.includes('no thanks')) score -= 2;\nif (transcript.includes('busy')) score -= 1;\nif (transcript.includes('call later')) score -= 1;\n\n// Callback signals\nlet needsCallback = false;\nlet callbackTime = null;\nif (transcript.includes('call back') || transcript.includes('call later')) {\n  needsCallback = true;\n  if (transcript.includes('morning')) callbackTime = 'morning';\n  else if (transcript.includes('evening')) callbackTime = 'evening';\n  else if (transcript.includes('tomorrow')) callbackTime = 'tomorrow';\n}\n\n// Determine lead type\nif (score >= 3) leadType = 'hot';\nelse if (score >= 1) leadType = 'warm';\nelse if (needsCallback) leadType = 'scheduled';\nelse leadType = 'cold';\n\nreturn {\n  call_uuid: data.call_uuid,\n  caller_phone: data.caller_phone,\n  duration_seconds: data.duration_seconds,\n  timestamp: data.timestamp,\n  lead_type: leadType,\n  lead_score: score,\n  needs_callback: needsCallback,\n  callback_time: callbackTime,\n  turn_count: entries.length,\n  transcript_preview: transcript.substring(0, 500)\n};"
+        "jsCode": "// Process call end data using server-computed analytics\n// Server sends: interest_level, completion_rate, collected_responses, objections_raised, question_pairs\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\n// Use server-computed interest level (high/medium/low/not_interested)\nconst interest = (data.interest_level || 'unknown').toLowerCase();\nconst completionRate = data.completion_rate || 0;\nconst objections = data.objections_raised || [];\nconst transcript = (data.transcript || '').toLowerCase();\n\n// Map server interest_level to lead_type\nlet leadType = 'cold';\nlet score = 0;\n\nif (interest === 'high') {\n  leadType = 'hot';\n  score = 5;\n} else if (interest === 'medium') {\n  leadType = 'warm';\n  score = 2;\n} else if (interest === 'not_interested') {\n  leadType = 'cold';\n  score = -3;\n} else {\n  leadType = 'cold';\n  score = 0;\n}\n\n// Boost score based on completion rate\nif (completionRate >= 80) score += 2;\nelse if (completionRate >= 50) score += 1;\n\n// Check for callback signals in transcript\nlet needsCallback = false;\nlet callbackTime = null;\nif (objections.includes('busy') || transcript.includes('call back') || transcript.includes('call later')) {\n  needsCallback = true;\n  if (transcript.includes('morning')) callbackTime = 'morning';\n  else if (transcript.includes('evening')) callbackTime = 'evening';\n  else if (transcript.includes('tomorrow')) callbackTime = 'tomorrow';\n  if (leadType === 'cold') leadType = 'scheduled';\n}\n\nreturn {\n  call_uuid: data.call_uuid,\n  caller_phone: data.caller_phone,\n  contact_name: data.contact_name,\n  duration_seconds: data.duration_seconds,\n  timestamp: data.timestamp,\n  // Lead classification\n  lead_type: leadType,\n  lead_score: score,\n  interest_level: interest,\n  completion_rate: completionRate,\n  questions_completed: data.questions_completed,\n  total_questions: data.total_questions,\n  // Callback info\n  needs_callback: needsCallback,\n  callback_time: callbackTime,\n  // Objections and summary\n  objections: objections,\n  call_summary: data.call_summary || '',\n  // Collected answers (individual question responses)\n  collected_responses: data.collected_responses || {},\n  // Q&A pairs for detailed review\n  question_pairs: data.question_pairs || [],\n  transcript_preview: (data.transcript || '').substring(0, 500)\n};"
       },
       "id": "process-call-end",
       "name": "Process Call End",
@@ -122,7 +98,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// HOT LEAD - Immediate action needed\nconst data = $input.first().json;\nreturn {\n  action: 'immediate_callback',\n  priority: 'HIGH',\n  emoji: '🔥',\n  lead_type: 'HOT',\n  phone: data.caller_phone,\n  call_uuid: data.call_uuid,\n  duration: data.duration_seconds,\n  message: `🔥 HOT LEAD: ${data.caller_phone} - Score: ${data.lead_score}`\n};"
+        "jsCode": "// HOT LEAD - Immediate action needed\nconst data = $input.first().json;\nreturn {\n  action: 'immediate_callback',\n  priority: 'HIGH',\n  lead_type: 'HOT',\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  call_uuid: data.call_uuid,\n  duration: data.duration_seconds,\n  completion_rate: data.completion_rate,\n  call_summary: data.call_summary,\n  collected_responses: data.collected_responses,\n  message: `HOT LEAD: ${data.contact_name} (${data.caller_phone}) - ${data.questions_completed}/${data.total_questions} questions, ${data.completion_rate}% complete`\n};"
       },
       "id": "handle-hot",
       "name": "Hot Lead",
@@ -161,7 +137,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// SCHEDULED CALLBACK\nconst data = $input.first().json;\nreturn {\n  action: 'schedule_callback',\n  priority: 'MEDIUM',\n  emoji: '📅',\n  lead_type: 'SCHEDULED',\n  phone: data.caller_phone,\n  callback_time: data.callback_time || 'not specified',\n  call_uuid: data.call_uuid,\n  message: `📅 CALLBACK: ${data.caller_phone} - Time: ${data.callback_time || 'TBD'}`\n};"
+        "jsCode": "// SCHEDULED CALLBACK\nconst data = $input.first().json;\nreturn {\n  action: 'schedule_callback',\n  priority: 'MEDIUM',\n  lead_type: 'SCHEDULED',\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  callback_time: data.callback_time || 'not specified',\n  call_uuid: data.call_uuid,\n  objections: data.objections,\n  call_summary: data.call_summary,\n  message: `CALLBACK: ${data.contact_name} (${data.caller_phone}) - Time: ${data.callback_time || 'TBD'}, Objections: ${(data.objections || []).join(', ') || 'none'}`\n};"
       },
       "id": "handle-callback",
       "name": "Schedule Callback",
@@ -171,7 +147,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// WARM/COLD LEAD - Nurture or archive\nconst data = $input.first().json;\nconst isWarm = data.lead_type === 'warm';\nreturn {\n  action: isWarm ? 'nurture' : 'archive',\n  priority: isWarm ? 'MEDIUM' : 'LOW',\n  emoji: isWarm ? '🟡' : '⚪',\n  lead_type: data.lead_type.toUpperCase(),\n  phone: data.caller_phone,\n  score: data.lead_score,\n  call_uuid: data.call_uuid,\n  message: `${isWarm ? '🟡' : '⚪'} ${data.lead_type.toUpperCase()}: ${data.caller_phone} - Score: ${data.lead_score}`\n};"
+        "jsCode": "// WARM/COLD LEAD - Nurture or archive\nconst data = $input.first().json;\nconst isWarm = data.lead_type === 'warm';\nreturn {\n  action: isWarm ? 'nurture' : 'archive',\n  priority: isWarm ? 'MEDIUM' : 'LOW',\n  lead_type: data.lead_type.toUpperCase(),\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  call_uuid: data.call_uuid,\n  completion_rate: data.completion_rate,\n  objections: data.objections,\n  call_summary: data.call_summary,\n  collected_responses: data.collected_responses,\n  message: `${data.lead_type.toUpperCase()}: ${data.contact_name} (${data.caller_phone}) - ${data.completion_rate}% complete, Objections: ${(data.objections || []).join(', ') || 'none'}`\n};"
       },
       "id": "handle-other",
       "name": "Warm/Cold Lead",
@@ -186,9 +162,6 @@
     },
     "Call Server API": {
       "main": [[{"node": "Respond Success", "type": "main", "index": 0}]]
-    },
-    "Transcript Webhook": {
-      "main": [[{"node": "Log Transcript", "type": "main", "index": 0}]]
     },
     "Call Ended Webhook": {
       "main": [[{"node": "Process Call End", "type": "main", "index": 0}]]

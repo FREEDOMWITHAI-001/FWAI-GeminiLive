@@ -154,7 +154,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End call. MUST call after BOTH you AND user have said goodbye. Wait for mutual farewell before calling this.",
+        "description": "End the phone call. ONLY call this AFTER you have asked ALL questions in your script AND said goodbye. NEVER call this while questions remain. NEVER call this just because the user paused or was quiet.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -187,7 +187,7 @@ OFF_SCRIPT_PHRASES = [
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None, prompt_override: str = None, objections_override: dict = None, objection_keywords_override: dict = None):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
@@ -198,12 +198,15 @@ class PlivoGeminiSession:
         # Question Flow Mode: Use minimal prompt + inject questions one by one
         if use_question_flow:
             # Create flow with client config - loads questions, voice, etc from config file
-            # If questions_override provided (from n8n API), those take priority
+            # If overrides provided (from n8n API), those take priority over config
             self._question_flow = get_or_create_flow(
                 call_uuid=call_uuid,
                 client_name=self.client_name,
                 context=self.context,
-                questions_override=questions_override
+                questions_override=questions_override,
+                prompt_override=prompt_override,
+                objections_override=objections_override,
+                objection_keywords_override=objection_keywords_override
             )
             self.prompt = self._question_flow.get_base_prompt()
             # Get voice from config (not hardcoded)
@@ -259,6 +262,7 @@ class PlivoGeminiSession:
         # Goodbye tracking - call ends only when both parties say goodbye
         self.user_said_goodbye = False
         self.agent_said_goodbye = False
+        self._goodbye_pending = False  # Defer goodbye detection to turnComplete (avoid cutting mid-sentence)
 
         # Latency tracking - only logs if > threshold
         self._last_user_speech_time = None
@@ -787,8 +791,8 @@ Rules:
                     if self._last_user_transcript_time > q_time:
                         silence_since_speech = time.time() - self._last_user_transcript_time
 
-                        # If 1.5+ seconds since last real speech, user has finished talking
-                        if silence_since_speech >= 1.5 and time_since_q >= 2.0:
+                        # If 2.5+ seconds since last real speech, user has finished talking
+                        if silence_since_speech >= 2.5 and time_since_q >= 2.0:
                             logger.info(f"[{self.call_uuid[:8]}] Silence monitor: user finished "
                                         f"| phase={phase.value} | silence={silence_since_speech:.1f}s "
                                         f"| since_q={time_since_q:.1f}s | pending='{pending[:40]}'")
@@ -800,7 +804,10 @@ Rules:
                     # Use listen_time (not deliver_time) so user gets full wait_timeout after AI finishes
                     listen_time = self._pipeline._current.listen_time if self._pipeline._current else 0
                     time_in_listening = time.time() - listen_time if listen_time else 0
-                    if self._pipeline.is_listening and time_in_listening >= self._wait_timeout:
+                    # Q0 (greeting) gets extra time — connection delay means user audio arrives late
+                    q_idx = self._pipeline._current.index if self._pipeline._current else 0
+                    effective_timeout = self._wait_timeout + 5 if q_idx == 0 else self._wait_timeout
+                    if self._pipeline.is_listening and time_in_listening >= effective_timeout:
                         no_real_speech = (self._last_user_transcript_time == 0 or
                                          self._last_user_transcript_time < q_time)
                         if no_real_speech and not pending:
@@ -874,12 +881,18 @@ Rules:
                 await self._inject_question(next_instruction, user_said="")
                 return
 
-            # Gentle nudge — just prod Gemini to continue the conversation
+            # Gentle nudge — re-engage user without advancing to next question
+            q_idx = self._pipeline._current.index if self._pipeline._current else 0
+            current_q = self._question_flow.get_current_question() if self._question_flow else ""
+            if q_idx == 0:
+                nudge_text = "The customer hasn't responded. Say ONLY 'Hello? Are you there?' and STOP. Do NOT ask any question. Do NOT move forward. Just wait."
+            else:
+                nudge_text = f"The customer is quiet. Say ONLY 'Are you still there?' and STOP. Do NOT move to the next question. Do NOT say goodbye. Just wait for their answer."
             prompt_msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "The customer seems quiet. Please continue the conversation."}]
+                        "parts": [{"text": nudge_text}]
                     }],
                     "turn_complete": True
                 }
@@ -1009,9 +1022,8 @@ Rules:
                 if chunk.turn_id in self._blocked_turns:
                     continue
 
-                # With Gemini-driven question flow (all questions in system prompt),
-                # let audio flow freely. Gate is only used for off-script blocking.
-                # The old gate_open check was cutting off natural conversation transitions.
+                # Gemini drives question flow naturally (all questions in system prompt).
+                # Let audio flow freely — gate is only used for off-script blocking.
                 try:
                     self._plivo_send_queue.put_nowait(chunk)
                 except asyncio.QueueFull:
@@ -1322,9 +1334,8 @@ Rules:
                         f"| end_call={end_call} | {self._pipeline.dump_state()}")
             self._last_question_time = time.time()
 
-            # Gemini drives question transitions naturally (all questions in system prompt).
-            # No injection needed — Gemini asks the next question on its own.
-            # Only dequeue for pipeline tracking (passive).
+            # Passive tracking: Gemini drives question transitions naturally (all questions in system prompt).
+            # No injection needed — just dequeue for pipeline tracking (stats/webhook).
             if self._pipeline and self._question_flow:
                 step = self._question_flow.current_step
                 questions = self._question_flow.questions
@@ -1373,12 +1384,15 @@ Rules:
             self._last_user_audio_time = None
             self._last_user_transcript_time = 0
 
-            # Simple [NEXT] trigger — Gemini already knows all questions from system prompt
+            # Send the actual question with [INSTRUCTION] prefix so Gemini knows what to ask
             step_num = self._question_flow.current_step if self._question_flow else 0
             total_q = len(self._question_flow.questions) if self._question_flow else 0
             q_num = step_num + 1  # Human-readable (Q1, Q2, ...)
 
-            instruction_text = "Please continue with the next question."
+            if end_call:
+                instruction_text = f"[INSTRUCTION] Say naturally: \"{text}\" Then call end_call."
+            else:
+                instruction_text = f"[INSTRUCTION] Ask this question naturally: \"{text}\""
 
             msg = {
                 "client_content": {
@@ -1562,9 +1576,47 @@ Rules:
             logger.info(f"[{self.call_uuid[:8]}] Tool: {tool_name}")
             self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
-            # Handle end_call tool - mark agent as said goodbye, wait for mutual farewell
+            # Handle end_call tool - guard against premature ending
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
+
+                # Guard: reject end_call if questions remain, unless user explicitly asked to end
+                user_requested_end = any(kw in reason.lower() for kw in [
+                    "busy", "call later", "call back", "called back", "call me",
+                    "not interested", "step out", "no time", "tomorrow",
+                    "goodbye", "bye", "hang up", "end", "stop", "don't want",
+                    "not now", "meeting", "driving", "callback"
+                ])
+                questions_done = self._question_flow.current_step if self._question_flow else 0
+                total_questions = len(self._question_flow.questions) if self._question_flow else 0
+                # Allow end_call if within 2 questions of the end — Gemini often asks
+                # 2 questions per turn so the pipeline tracker lags behind by 1-2
+                nearly_done = (total_questions - questions_done) <= 2
+                if not user_requested_end and not nearly_done and questions_done < total_questions:
+                    # Get the next question to tell Gemini exactly what to ask
+                    remaining = total_questions - questions_done
+                    next_q = ""
+                    if self._question_flow:
+                        next_q_text = self._question_flow.get_current_question()
+                        if next_q_text:
+                            next_q = f' Your next question is: "{next_q_text}"'
+                    logger.warning(f"[{self.call_uuid[:8]}] end_call REJECTED: only {questions_done}/{total_questions} questions done, "
+                                   f"reason='{reason}' — telling AI to continue")
+                    try:
+                        tool_response = {
+                            "tool_response": {
+                                "function_responses": [{
+                                    "id": call_id,
+                                    "name": tool_name,
+                                    "response": {"success": False, "message": f"STOP. Do NOT say goodbye. Do NOT end the call. You still have {remaining} questions left. Do NOT repeat any goodbye or farewell. Ask the next question immediately.{next_q}"}
+                                }]
+                            }
+                        }
+                        await self.goog_live_ws.send(json.dumps(tool_response))
+                    except Exception:
+                        pass
+                    return
+
                 logger.info(f"[{self.call_uuid[:8]}] End call: {reason}")
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
@@ -1756,6 +1808,13 @@ Rules:
                     # Reset turn audio counter
                     self._current_turn_audio_chunks = 0
 
+                    # Process deferred goodbye detection (agent finished speaking)
+                    if self._goodbye_pending and not self._closing_call:
+                        self._goodbye_pending = False
+                        logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected (deferred to turnComplete)")
+                        self.agent_said_goodbye = True
+                        self._check_mutual_goodbye()
+
                 if sc.get("interrupted"):
                     logger.debug(f"[{self.call_uuid[:8]}] AI interrupted")
                     # Drain queued audio that hasn't been sent yet
@@ -1835,11 +1894,9 @@ Rules:
                             })
                         except asyncio.QueueFull:
                             pass
-                        # Track if agent said goodbye
+                        # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
                         if not self._closing_call and self._is_goodbye_message(ai_text):
-                            logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected")
-                            self.agent_said_goodbye = True
-                            self._check_mutual_goodbye()
+                            self._goodbye_pending = True
 
                 if "modelTurn" in sc:
                     parts = sc.get("modelTurn", {}).get("parts", [])
@@ -1917,12 +1974,9 @@ Rules:
                                     self._pipeline.store_agent_said(ai_text)
                                 # Send to n8n webhook for state machine (non-blocking)
                                 asyncio.create_task(send_transcript_to_webhook(self, "agent", ai_text))
-                                # Track if agent said goodbye (don't end immediately - wait for user)
+                                # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
                                 if not self._closing_call and self._is_goodbye_message(ai_text):
-                                    logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected")
-                                    self.agent_said_goodbye = True
-                                    # Check if both parties said goodbye
-                                    self._check_mutual_goodbye()
+                                    self._goodbye_pending = True
         except Exception as e:
             logger.error(f"Error processing Google message: {e} - continuing session")
 
@@ -2355,7 +2409,10 @@ async def preload_session_conversational(
     n8n_webhook_url: str = None,
     call_end_webhook_url: str = None,
     client_name: str = "fwai",
-    questions_override: list = None
+    questions_override: list = None,
+    prompt_override: str = None,
+    objections_override: dict = None,
+    objection_keywords_override: dict = None
 ) -> bool:
     """
     Preload a session in conversational flow mode.
@@ -2382,17 +2439,20 @@ async def preload_session_conversational(
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
 
-        # Create session with QuestionFlow enabled (uses config file, or override questions from n8n)
+        # Create session with QuestionFlow enabled (uses config file, or overrides from n8n)
         session = PlivoGeminiSession(
             call_uuid,
             caller_phone,
-            prompt=None,  # QuestionFlow will use base_prompt from config
+            prompt=None,  # QuestionFlow will use base_prompt from config (or override)
             context=context,
             webhook_url=call_end_webhook_url,
             transcript_webhook_url=n8n_webhook_url,
             client_name=client_name,
             use_question_flow=True,  # Explicitly enable QuestionFlow
-            questions_override=questions_override
+            questions_override=questions_override,
+            prompt_override=prompt_override,
+            objections_override=objections_override,
+            objection_keywords_override=objection_keywords_override
         )
         _preloading_sessions[call_uuid] = session
 

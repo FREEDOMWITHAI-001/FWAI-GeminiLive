@@ -1,5 +1,5 @@
 """
-WhatsApp Voice Calling with Gemini Live - Main Server
+AI Voice Call with Plivo - Main Server
 
 Python-based implementation using aiortc for full audio access
 """
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler"""
     # Startup
     logger.info("=" * 60)
-    logger.info("WhatsApp Voice Calling with Gemini Live")
+    logger.info("AI Voice Call with Plivo")
     logger.info("=" * 60)
 
     # Validate configuration
@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="WhatsApp Voice Calling with Gemini Live",
+    title="AI Voice Call with Plivo",
     description="AI Voice Agent for WhatsApp Business Voice Calls",
     version="1.0.0",
     lifespan=lifespan
@@ -160,7 +160,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "ok",
-        "service": "WhatsApp Voice Calling with Gemini Live",
+        "service": "AI Voice Call with Plivo",
         "version": "1.0.0"
     }
 
@@ -703,6 +703,9 @@ class ConversationalCallRequest(BaseModel):
     context: Optional[dict] = None
     clientName: Optional[str] = None  # Client name for loading specific prompt (e.g., 'fwai', 'ridhi')
     questions: Optional[List[dict]] = None  # Override questions from n8n: [{"id": "q1", "prompt": "..."}]
+    prompt: Optional[str] = None  # Override base_prompt (system instruction) from n8n
+    objections: Optional[dict] = None  # Override objection responses from n8n
+    objectionKeywords: Optional[dict] = None  # Override objection keywords from n8n
 
 
 @app.post("/call/conversational")
@@ -757,7 +760,7 @@ async def start_conversational_call(request: ConversationalCallRequest):
             total_questions=total_q
         )
 
-        # Preload session with QuestionFlow (uses config file, or override questions from n8n)
+        # Preload session with QuestionFlow (uses config file, or overrides from n8n)
         await preload_session_conversational(
             call_uuid,
             request.phoneNumber,
@@ -765,7 +768,10 @@ async def start_conversational_call(request: ConversationalCallRequest):
             n8n_webhook_url=request.n8nWebhookUrl,
             call_end_webhook_url=request.callEndWebhookUrl,
             client_name=client_name,
-            questions_override=questions_override
+            questions_override=questions_override,
+            prompt_override=request.prompt,
+            objections_override=request.objections,
+            objection_keywords_override=request.objectionKeywords
         )
 
         # Make the Plivo call

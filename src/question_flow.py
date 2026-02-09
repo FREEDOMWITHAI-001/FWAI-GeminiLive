@@ -68,31 +68,48 @@ class QuestionFlow:
     current_step: int = 0
     collected_data: Dict = field(default_factory=dict)
 
-    # Loaded from config
+    # Loaded from config (or overridden from n8n API)
     config: Dict = field(default_factory=dict)
     questions: List[Dict] = field(default_factory=list)
     objections: Dict[str, str] = field(default_factory=dict)
     objection_keywords: Dict[str, List[str]] = field(default_factory=dict)
     base_prompt: str = ""
-    questions_override: Optional[List[Dict]] = None  # Questions passed from n8n API
+    questions_override: Optional[List[Dict]] = None  # Questions from n8n API
+    prompt_override: Optional[str] = None  # Base prompt from n8n API
+    objections_override: Optional[Dict] = None  # Objections from n8n API
+    objection_keywords_override: Optional[Dict] = None  # Objection keywords from n8n API
 
     def __post_init__(self):
-        """Load config after initialization"""
+        """Load config after initialization, with n8n overrides taking priority"""
         self.config = load_client_config(self.client_name)
 
         # Merge defaults with provided context
         defaults = self.config.get("defaults", {})
         self.context = {**defaults, **self.context}
 
-        # Use override questions from API if provided, otherwise load from config
+        # n8n overrides take priority over config file
         if self.questions_override:
             self.questions = self.questions_override
-            logger.info(f"Using {len(self.questions)} override questions from API")
+            logger.info(f"Using {len(self.questions)} questions from n8n API")
         else:
             self.questions = self.config.get("questions", [])
-        self.objections = self.config.get("objections", {})
-        self.objection_keywords = self.config.get("objection_keywords", {})
-        self.base_prompt = self.config.get("base_prompt", "")
+
+        if self.prompt_override:
+            self.base_prompt = self.prompt_override
+            logger.info(f"Using prompt from n8n API ({len(self.base_prompt)} chars)")
+        else:
+            self.base_prompt = self.config.get("base_prompt", "")
+
+        if self.objections_override:
+            self.objections = self.objections_override
+            logger.info(f"Using {len(self.objections)} objections from n8n API")
+        else:
+            self.objections = self.config.get("objections", {})
+
+        if self.objection_keywords_override:
+            self.objection_keywords = self.objection_keywords_override
+        else:
+            self.objection_keywords = self.config.get("objection_keywords", {})
 
         logger.debug(f"Loaded {len(self.questions)} questions for {self.client_name}")
 
@@ -104,8 +121,14 @@ class QuestionFlow:
         return result
 
     def get_base_prompt(self) -> str:
-        """Get the base prompt with placeholders replaced"""
-        return self._render(self.base_prompt)
+        """Get the base prompt with questions appended, placeholders replaced"""
+        prompt = self.base_prompt
+        # Append all questions to system prompt so Gemini knows the full flow
+        if self.questions:
+            prompt += "\n\nQUESTIONS TO ASK (in this exact order, one at a time):\n"
+            for i, q in enumerate(self.questions):
+                prompt += f"{i + 1}. {q['prompt']}\n"
+        return self._render(prompt)
 
     def get_voice(self) -> str:
         """Get the voice setting from config"""
@@ -670,7 +693,10 @@ def get_or_create_flow(
     call_uuid: str,
     client_name: str = "fwai",
     context: Dict = None,
-    questions_override: List[Dict] = None
+    questions_override: List[Dict] = None,
+    prompt_override: str = None,
+    objections_override: Dict = None,
+    objection_keywords_override: Dict = None
 ) -> QuestionFlow:
     """Get existing flow or create new one for a call"""
     with _call_flows_lock:
@@ -679,7 +705,10 @@ def get_or_create_flow(
                 call_uuid=call_uuid,
                 client_name=client_name,
                 context=context or {},
-                questions_override=questions_override
+                questions_override=questions_override,
+                prompt_override=prompt_override,
+                objections_override=objections_override,
+                objection_keywords_override=objection_keywords_override
             )
         return _call_flows[call_uuid]
 
