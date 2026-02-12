@@ -2084,11 +2084,16 @@ Rules:
                     logger.debug(f"[{self._call_uuid_short}] User speaking")
 
                     # INTERRUPT: If agent was speaking, immediately cancel current audio
-                    if was_agent_speaking and self._current_turn_id > 0:
-                        await self._cancel_current_audio(
-                            self._current_turn_id,
-                            "User interrupted (started speaking)"
-                        )
+                    # Only interrupt if agent has been speaking for at least 300ms (avoid premature cancellation)
+                    if was_agent_speaking and self._current_turn_id > 0 and self._turn_start_time:
+                        agent_speaking_duration = now - self._turn_start_time
+                        if agent_speaking_duration >= 0.3:  # 300ms minimum before allowing interrupt
+                            await self._cancel_current_audio(
+                                self._current_turn_id,
+                                f"User interrupted after {agent_speaking_duration:.1f}s"
+                            )
+                        else:
+                            logger.debug(f"[{self._call_uuid_short}] Ignoring interrupt - agent just started speaking ({agent_speaking_duration*1000:.0f}ms)")
             self._last_user_audio_time = now
 
             # Record user audio (16kHz)
