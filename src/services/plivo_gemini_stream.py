@@ -1039,20 +1039,31 @@ Rules:
         return False
 
     async def _cancel_current_audio(self, turn_id: int, reason: str):
-        """Cancel audio for a turn: block it, drain send queue, clear Plivo playback"""
+        """Cancel audio for a turn: block it, drain queues, clear Plivo playback"""
         self._blocked_turns.add(turn_id)
         logger.debug(f"[{self._call_uuid_short}] CANCEL turn {turn_id}: {reason}")
 
+        # Drain audio_out_queue (drop audio received from Gemini but not yet gated)
+        drained_out = 0
+        while not self._audio_out_queue.empty():
+            try:
+                self._audio_out_queue.get_nowait()
+                drained_out += 1
+            except asyncio.QueueEmpty:
+                break
+        if drained_out:
+            logger.debug(f"[{self._call_uuid_short}] Drained {drained_out} chunks from audio_out_queue")
+
         # Drain plivo_send_queue (drop all pending audio)
-        drained = 0
+        drained_send = 0
         while not self._plivo_send_queue.empty():
             try:
                 self._plivo_send_queue.get_nowait()
-                drained += 1
+                drained_send += 1
             except asyncio.QueueEmpty:
                 break
-        if drained:
-            logger.debug(f"[{self._call_uuid_short}] Drained {drained} chunks from plivo_send_queue")
+        if drained_send:
+            logger.debug(f"[{self._call_uuid_short}] Drained {drained_send} chunks from plivo_send_queue")
 
         # Send clearAudio to Plivo to stop current playback
         if self.plivo_ws:
@@ -2067,9 +2078,17 @@ Rules:
                 # Gap > 1 second means new user speech segment
                 if self._agent_speaking or not self._user_speaking:
                     self._user_speaking = True
+                    was_agent_speaking = self._agent_speaking
                     self._agent_speaking = False
                     self._user_speech_start_time = now
                     logger.debug(f"[{self._call_uuid_short}] User speaking")
+
+                    # INTERRUPT: If agent was speaking, immediately cancel current audio
+                    if was_agent_speaking and self._current_turn_id > 0:
+                        await self._cancel_current_audio(
+                            self._current_turn_id,
+                            "User interrupted (started speaking)"
+                        )
             self._last_user_audio_time = now
 
             # Record user audio (16kHz)
