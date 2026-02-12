@@ -39,20 +39,11 @@ def load_client_config(client_name: str = "fwai") -> Dict[str, Any]:
 
 
 def get_default_config() -> Dict[str, Any]:
-    """Default configuration if no file found"""
+    """Minimal defaults if no config file found — prompt and questions come from API"""
     return {
         "defaults": {
-            "agent_name": "Assistant",
-            "company_name": "Our Company",
-            "location": "Office",
             "voice": "Puck"
-        },
-        "base_prompt": "You are {agent_name} from {company_name}. Be helpful and professional.",
-        "questions": [
-            {"id": "greeting", "prompt": "Hello {customer_name}, how can I help you today?"}
-        ],
-        "objections": {},
-        "objection_keywords": {}
+        }
     }
 
 

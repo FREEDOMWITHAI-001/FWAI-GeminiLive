@@ -714,8 +714,7 @@ async def start_conversational_call(request: ConversationalCallRequest):
     Loads client-specific prompt from prompts/{clientName}_prompt.txt
     AI handles the flow naturally (no phase injection).
     """
-    from src.services.plivo_gemini_stream import preload_session_conversational, load_client_prompt
-    from src.conversational_prompts import BASE_PROMPT, render_prompt
+    from src.services.plivo_gemini_stream import preload_session_conversational
 
     logger.info(f"Starting conversational call to {request.phoneNumber}, client: {request.clientName}")
 

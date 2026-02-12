@@ -15,7 +15,7 @@ from pathlib import Path
 import websockets
 from src.core.config import config
 from src.tools import execute_tool
-from src.conversational_prompts import BASE_PROMPT, DEFAULT_CONTEXT, render_prompt
+from src.conversational_prompts import render_prompt
 from src.question_flow import QuestionFlow, QuestionPipeline, QuestionPhase, get_or_create_flow, remove_flow
 from src.db.session_db import session_db
 
@@ -50,73 +50,6 @@ RECORDINGS_DIR.mkdir(exist_ok=True)
 # Prompts directory for client-specific prompts
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 PROMPTS_DIR.mkdir(exist_ok=True)
-
-
-def load_client_prompt(client_name: str = None) -> str:
-    """
-    Load client-specific prompt from file.
-
-    Looks for prompts in this order:
-    1. prompts/{client_name}_prompt.txt (e.g., fwai_prompt.txt, ridhi_prompt.txt)
-    2. prompts/{client_name}.txt
-    3. prompts/default_prompt.txt
-    4. Falls back to BASE_PROMPT from conversational_prompts.py
-
-    Args:
-        client_name: Client identifier (e.g., 'fwai', 'ridhi', 'acme')
-
-    Returns:
-        Prompt template string with {{placeholders}}
-    """
-    if client_name:
-        client_name = client_name.lower().replace(" ", "_")
-
-        # Try client-specific files
-        possible_files = [
-            PROMPTS_DIR / f"{client_name}_prompt.txt",
-            PROMPTS_DIR / f"{client_name}_prompt_questions.txt",
-            PROMPTS_DIR / f"{client_name}.txt",
-        ]
-
-        for prompt_file in possible_files:
-            if prompt_file.exists():
-                try:
-                    with open(prompt_file, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
-                        if content:
-                            logger.info(f"Loaded prompt from: {prompt_file.name}")
-                            return content
-                except Exception as e:
-                    logger.warning(f"Error reading {prompt_file}: {e}")
-
-    # Try default file
-    default_file = PROMPTS_DIR / "default_prompt.txt"
-    if default_file.exists():
-        try:
-            with open(default_file, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                if content:
-                    logger.info("Loaded prompt from: default_prompt.txt")
-                    return content
-        except Exception as e:
-            logger.warning(f"Error reading default_prompt.txt: {e}")
-
-    # Final fallback to BASE_PROMPT
-    logger.info("Using BASE_PROMPT from conversational_prompts.py")
-    return BASE_PROMPT
-
-
-# Legacy: Load from prompts.json if it exists (backward compatibility)
-def load_default_prompt():
-    try:
-        prompts_file = Path(__file__).parent.parent.parent / "prompts.json"
-        with open(prompts_file) as f:
-            prompts = json.load(f)
-            return prompts.get("FWAI_Core", {}).get("prompt", BASE_PROMPT)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        return BASE_PROMPT
-
-DEFAULT_PROMPT = load_default_prompt()
 
 
 def detect_voice_from_prompt(prompt: str) -> str:
@@ -213,17 +146,11 @@ class PlivoGeminiSession:
             self._config_voice = self._question_flow.get_voice()
             logger.info(f"[{call_uuid[:8]}] QuestionFlow: client={self.client_name}, voice={self._config_voice}")
         else:
-            # Legacy mode: Load full prompt from file
+            # Non-QuestionFlow mode: prompt must be provided via API
             self._question_flow = None
             self._config_voice = None
-            if prompt:
-                raw_prompt = prompt
-            elif client_name:
-                raw_prompt = load_client_prompt(client_name)
-            else:
-                raw_prompt = DEFAULT_PROMPT
-            self.prompt = render_prompt(raw_prompt, self.context)
-            logger.info(f"[{call_uuid[:8]}] Full prompt mode for client: {client_name or 'default'}")
+            self.prompt = render_prompt(prompt or "", self.context)
+            logger.info(f"[{call_uuid[:8]}] Direct prompt mode for client: {client_name or 'default'}")
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
