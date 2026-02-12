@@ -272,6 +272,8 @@ class PlivoGeminiSession:
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
+        self._current_turn_agent_text = []  # Accumulate agent speech fragments per turn
+        self._current_turn_user_text = []  # Accumulate user speech fragments per turn
         self._last_question_time = 0  # Cooldown between question injections
         self._wait_timeout = 15.0  # Wait 15 seconds for user response before nudging
 
@@ -1748,6 +1750,16 @@ Rules:
 
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
+                        # Log accumulated agent speech as one line
+                        if self._current_turn_agent_text:
+                            full_agent = " ".join(self._current_turn_agent_text)
+                            logger.info(f"[{self.call_uuid[:8]}]   ├─ AGENT: {full_agent}")
+                            self._current_turn_agent_text = []
+                        # Log accumulated user speech as one line
+                        if self._current_turn_user_text:
+                            full_user = " ".join(self._current_turn_user_text)
+                            logger.info(f"[{self.call_uuid[:8]}]   ├─ USER: {full_user}")
+                            self._current_turn_user_text = []
                         logger.info(f"[{self.call_uuid[:8]}]   ├─ Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
@@ -1818,7 +1830,8 @@ Rules:
                                     self._pipeline.accumulate_user_speech(user_text)
                                     self._last_user_transcript_time = time.time()
                                 self._last_user_speech_time = time.time()  # Track for latency
-                                logger.info(f"[{self.call_uuid[:8]}]   ├─ USER: {user_text}")
+                                logger.debug(f"[{self.call_uuid[:8]}] USER fragment: {user_text}")
+                                self._current_turn_user_text.append(user_text)
                                 self._save_transcript("USER", user_text)
                                 self._log_conversation("user", user_text)
                                 # Track if user said goodbye
@@ -1836,7 +1849,8 @@ Rules:
                         ai_text = str(output_transcription)
                     if ai_text and ai_text.strip():
                         ai_text = ai_text.strip()
-                        logger.info(f"[{self.call_uuid[:8]}]   ├─ AGENT: {ai_text}")
+                        logger.debug(f"[{self.call_uuid[:8]}] AGENT fragment: {ai_text}")
+                        self._current_turn_agent_text.append(ai_text)
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
                         # Store what the agent said for this question
@@ -1922,10 +1936,9 @@ Rules:
                                 "waiting for their response" in ai_text
                             )
                             if ai_text and not is_thinking and len(ai_text) > 3:
+                                self._current_turn_agent_text.append(ai_text)
                                 self._save_transcript("AGENT", ai_text)
-                                # Log to file in background thread (no latency impact)
                                 self._log_conversation("model", ai_text)
-                                # Store what the agent said for this question
                                 if self._pipeline:
                                     self._pipeline.store_agent_said(ai_text)
                                 # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
