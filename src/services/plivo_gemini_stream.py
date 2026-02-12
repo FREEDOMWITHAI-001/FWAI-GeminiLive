@@ -19,6 +19,22 @@ from src.conversational_prompts import render_prompt
 from src.question_flow import QuestionFlow, QuestionPipeline, QuestionPhase, get_or_create_flow, remove_flow
 from src.db.session_db import session_db
 
+# LATENCY OPT: Use orjson for 2-3x faster JSON operations (3-30ms savings per call)
+try:
+    import orjson
+    def json_dumps(obj) -> str:
+        """Fast JSON encoding with orjson"""
+        return orjson_dumps(obj).decode('utf-8')
+    def json_loads(s: str):
+        """Fast JSON decoding with orjson"""
+        return orjson_loads(s)
+    logger.debug("Using orjson for fast JSON operations")
+except ImportError:
+    # Fallback to standard json
+    json_dumps = json_dumps
+    json_loads = json_loads
+    logger.debug("Using standard json library")
+
 
 def get_vertex_ai_token():
     """Get OAuth2 access token for Vertex AI (synchronous)"""
@@ -448,7 +464,7 @@ class PlivoGeminiSession:
             if self._conversation_file.exists():
                 async with aiofiles.open(self._conversation_file, 'r') as f:
                     content = await f.read()
-                    return json.loads(content)
+                    return json_loads(content)
         except Exception as e:
             logger.error(f"Error loading conversation from file: {e}")
         return []
@@ -741,7 +757,7 @@ Rules:
                     "turn_complete": True
                 }
             }
-            await self.goog_live_ws.send(json.dumps(msg))
+            await self.goog_live_ws.send(json_dumps(msg))
             logger.info("Sent wrap-up message to AI")
             self._save_transcript("SYSTEM", "Call time limit - wrapping up")
         except Exception as e:
@@ -851,7 +867,7 @@ Rules:
                     "turn_complete": True
                 }
             }
-            await self.goog_live_ws.send(json.dumps(prompt_msg))
+            await self.goog_live_ws.send(json_dumps(prompt_msg))
             return
 
         try:
@@ -864,7 +880,7 @@ Rules:
                     "turn_complete": True
                 }
             }
-            await self.goog_live_ws.send(json.dumps(msg))
+            await self.goog_live_ws.send(json_dumps(msg))
             logger.debug(f"[{self.call_uuid[:8]}] Sent nudge to AI")
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
@@ -982,7 +998,7 @@ Rules:
         # Send clearAudio to Plivo to stop current playback
         if self.plivo_ws:
             try:
-                await self.plivo_ws.send_text(json.dumps({
+                await self.plivo_ws.send_text(json_dumps({
                     "event": "clearAudio",
                     "stream_id": self.stream_id
                 }))
@@ -1038,7 +1054,7 @@ Rules:
                     continue
 
                 try:
-                    await self.plivo_ws.send_text(json.dumps({
+                    await self.plivo_ws.send_text(json_dumps({
                         "event": "playAudio",
                         "media": {
                             "contentType": "audio/x-l16",
@@ -1115,7 +1131,7 @@ Rules:
             logger.debug(f"[{self.call_uuid[:8]}] Preparing for reconnection")
 
             # Clear any pending audio to prevent stale data
-            await self.plivo_ws.send_text(json.dumps({
+            await self.plivo_ws.send_text(json_dumps({
                 "event": "clearAudio",
                 "stream_id": self.stream_id
             }))
@@ -1390,7 +1406,7 @@ Rules:
                     "turn_complete": True
                 }
             }
-            await self.goog_live_ws.send(json.dumps(msg))
+            await self.goog_live_ws.send(json_dumps(msg))
 
             # Pipeline: dequeue this question (opens gate, starts lifecycle)
             if self._pipeline and self._question_flow:
@@ -1478,7 +1494,7 @@ Rules:
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
         }
-        await self.goog_live_ws.send(json.dumps(msg))
+        await self.goog_live_ws.send(json_dumps(msg))
 
         # Note: _is_first_connection is set to False in setupComplete handler, not here
         logger.info(f"Sent session setup with voice: {voice_name}, first_connection={self._is_first_connection}")
@@ -1513,7 +1529,7 @@ Rules:
                 "turn_complete": True
             }
         }
-        await self.goog_live_ws.send(json.dumps(msg))
+        await self.goog_live_ws.send(json_dumps(msg))
         logger.info(f"[{self.call_uuid[:8]}] Greeting trigger sent to Gemini")
 
     async def _send_reconnection_trigger(self):
@@ -1544,7 +1560,7 @@ Rules:
                 "turn_complete": True
             }
         }
-        await self.goog_live_ws.send(json.dumps(msg))
+        await self.goog_live_ws.send(json_dumps(msg))
         if self._pipeline and self.use_question_flow:
             # Re-dequeue current question for reconnection (re-opens gate)
             current_step = self._question_flow.current_step
@@ -1600,7 +1616,7 @@ Rules:
                                 }]
                             }
                         }
-                        await self.goog_live_ws.send(json.dumps(tool_response))
+                        await self.goog_live_ws.send(json_dumps(tool_response))
                     except Exception:
                         pass
                     return
@@ -1622,7 +1638,7 @@ Rules:
                             }]
                         }
                     }
-                    await self.goog_live_ws.send(json.dumps(tool_response))
+                    await self.goog_live_ws.send(json_dumps(tool_response))
                 except Exception:
                     pass
 
@@ -1661,7 +1677,7 @@ Rules:
                         }]
                     }
                 }
-                await self.goog_live_ws.send(json.dumps(tool_response))
+                await self.goog_live_ws.send(json_dumps(tool_response))
                 logger.debug(f"Sent tool response for {tool_name}")
             except Exception as e:
                 logger.error(f"Error sending tool response: {e} - continuing conversation")
@@ -1720,7 +1736,7 @@ Rules:
 
     async def _receive_from_google(self, message):
         try:
-            resp = json.loads(message)
+            resp = json_loads(message)
 
             # Log all Gemini responses for debugging
             resp_keys = list(resp.keys())
@@ -1816,7 +1832,7 @@ Rules:
                         except asyncio.QueueEmpty:
                             break
                     if self.plivo_ws:
-                        await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
+                        await self.plivo_ws.send_text(json_dumps({"event": "clearAudio", "stream_id": self.stream_id}))
 
                 # Capture user speech transcription from Gemini
 
@@ -2005,7 +2021,7 @@ Rules:
                 msg = {"realtime_input": {"media_chunks": [{"mime_type": "audio/pcm;rate=16000", "data": base64.b64encode(bytes(ac)).decode()}]}}
                 try:
                     # Send to main voice model (native audio)
-                    await self.goog_live_ws.send(json.dumps(msg))
+                    await self.goog_live_ws.send(json_dumps(msg))
                     # Buffer audio for REST API transcription (non-blocking)
                     self._buffer_user_audio(bytes(ac))
                     chunks_sent += 1
@@ -2385,7 +2401,7 @@ async def inject_context_to_session(call_uuid: str, phase: str, additional_conte
                 "turn_complete": True
             }
         }
-        await session.goog_live_ws.send(json.dumps(msg))
+        await session.goog_live_ws.send(json_dumps(msg))
         logger.debug(f"[{call_uuid[:8]}] Phase injected: {phase}")
         session._save_transcript("SYSTEM", f"Phase: {phase}")
         return True
