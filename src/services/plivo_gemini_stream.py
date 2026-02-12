@@ -43,6 +43,20 @@ def get_vertex_ai_token():
 # Latency threshold - only log if slower than this (ms)
 LATENCY_THRESHOLD_MS = 500
 
+# Default instruction templates — all overridable via API
+DEFAULT_INSTRUCTION_TEMPLATES = {
+    "wrap_up": "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.]",
+    "nudge_greeting": "The customer hasn't responded. Say ONLY 'Hello? Are you there?' and STOP. Do NOT ask any question. Do NOT move forward. Just wait.",
+    "nudge_default": "The customer is quiet. Say ONLY 'Are you still there?' and STOP. Do NOT move to the next question. Do NOT say goodbye. Just wait for their answer.",
+    "instruction_ask": '[INSTRUCTION] Ask this question naturally: "{text}"',
+    "instruction_end_call": '[INSTRUCTION] Say naturally: "{text}" Then call end_call.',
+    "greeting_trigger": "Start the call now. Greet the customer.",
+    "greeting_simple": "Hi",
+    "reconnect_continue": '[INSTRUCTION] Connection was briefly interrupted. Say "Sorry about that, where were we?" then say naturally: "{text}" Then STOP and wait for the customer to respond.',
+    "reconnect_goodbye": "[INSTRUCTION] Connection restored. Say 'Sorry about that brief interruption. Great talking to you! Take care!' and use end_call tool.",
+    "reconnect_simple": "[Continue the conversation]"
+}
+
 # Recording directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
@@ -120,13 +134,15 @@ OFF_SCRIPT_PHRASES = [
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None, prompt_override: str = None, objections_override: dict = None, objection_keywords_override: dict = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None, prompt_override: str = None, objections_override: dict = None, objection_keywords_override: dict = None, instruction_templates: dict = None):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
         self.context = context or {}  # Context for templates (customer_name, course_name, etc.)
         self.client_name = client_name or "fwai"
         self.use_question_flow = use_question_flow  # Use built-in question flow state machine
+        # Merge API-provided instruction templates over defaults
+        self._templates = {**DEFAULT_INSTRUCTION_TEMPLATES, **(instruction_templates or {})}
 
         # Question Flow Mode: Use minimal prompt + inject questions one by one
         if use_question_flow:
@@ -681,7 +697,7 @@ Rules:
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.]"}]
+                        "parts": [{"text": self._templates["wrap_up"]}]
                     }],
                     "turn_complete": True
                 }
@@ -782,9 +798,9 @@ Rules:
             # Gentle nudge — re-engage user without advancing to next question
             q_idx = self._pipeline._current.index if self._pipeline._current else 0
             if q_idx == 0:
-                nudge_text = "The customer hasn't responded. Say ONLY 'Hello? Are you there?' and STOP. Do NOT ask any question. Do NOT move forward. Just wait."
+                nudge_text = self._templates["nudge_greeting"]
             else:
-                nudge_text = f"The customer is quiet. Say ONLY 'Are you still there?' and STOP. Do NOT move to the next question. Do NOT say goodbye. Just wait for their answer."
+                nudge_text = self._templates["nudge_default"]
             prompt_msg = {
                 "client_content": {
                     "turns": [{
@@ -1277,15 +1293,15 @@ Rules:
             self._last_user_audio_time = None
             self._last_user_transcript_time = 0
 
-            # Send the actual question with [INSTRUCTION] prefix so Gemini knows what to ask
+            # Send the question using instruction template
             step_num = self._question_flow.current_step if self._question_flow else 0
             total_q = len(self._question_flow.questions) if self._question_flow else 0
             q_num = step_num + 1  # Human-readable (Q1, Q2, ...)
 
             if end_call:
-                instruction_text = f"[INSTRUCTION] Say naturally: \"{text}\" Then call end_call."
+                instruction_text = self._templates["instruction_end_call"].replace("{text}", text)
             else:
-                instruction_text = f"[INSTRUCTION] Ask this question naturally: \"{text}\""
+                instruction_text = self._templates["instruction_ask"].replace("{text}", text)
 
             msg = {
                 "client_content": {
@@ -1397,7 +1413,7 @@ Rules:
         # Question Flow Mode: Trigger Q1 (Gemini already knows all questions from system prompt)
         if self.use_question_flow and self._question_flow:
             first_instruction = self._question_flow.get_instruction_prompt()
-            trigger_text = "Start the call now. Greet the customer."
+            trigger_text = self._templates["greeting_trigger"]
             logger.debug(f"[{self.call_uuid[:8]}] Starting with Q1")
 
             # Clear audio buffer and dequeue first question via pipeline
@@ -1407,7 +1423,7 @@ Rules:
                 q_id = self._question_flow.questions[0]["id"] if self._question_flow.questions else "greeting"
                 self._pipeline.dequeue_next(index=0, question_id=q_id, question_text=first_instruction)
         else:
-            trigger_text = "Hi"
+            trigger_text = self._templates["greeting_simple"]
 
         msg = {
             "client_content": {
@@ -1432,13 +1448,13 @@ Rules:
             current_question = self._question_flow.get_current_question()
 
             if current_question:
-                reconnect_text = f'[INSTRUCTION] Connection was briefly interrupted. Say "Sorry about that, where were we?" then say naturally: "{current_question}" Then STOP and wait for the customer to respond.'
+                reconnect_text = self._templates["reconnect_continue"].replace("{text}", current_question)
             else:
-                reconnect_text = "[INSTRUCTION] Connection restored. Say 'Sorry about that brief interruption. Great talking to you! Take care!' and use end_call tool."
+                reconnect_text = self._templates["reconnect_goodbye"]
 
             logger.debug(f"[{self.call_uuid[:8]}] Restoring to question {current_step + 1}")
         else:
-            reconnect_text = "[Continue the conversation]"
+            reconnect_text = self._templates["reconnect_simple"]
 
         msg = {
             "client_content": {
@@ -2305,7 +2321,8 @@ async def preload_session_conversational(
     questions_override: list = None,
     prompt_override: str = None,
     objections_override: dict = None,
-    objection_keywords_override: dict = None
+    objection_keywords_override: dict = None,
+    instruction_templates: dict = None
 ) -> bool:
     """
     Preload a session in conversational flow mode.
@@ -2314,12 +2331,12 @@ async def preload_session_conversational(
     Args:
         call_uuid: Unique call identifier
         caller_phone: Caller's phone number
-        base_prompt: IGNORED - QuestionFlow uses config file
-        initial_phase_prompt: IGNORED - QuestionFlow handles this
         context: Context dict with customer_name, etc.
         call_end_webhook_url: URL to call when call ends
         client_name: Client config to use (e.g., 'fwai')
         questions_override: List of questions from API
+        prompt_override: System instruction prompt from API
+        instruction_templates: Override instruction texts (nudge, wrap-up, etc.)
 
     Returns:
         True if preload succeeded
@@ -2343,7 +2360,8 @@ async def preload_session_conversational(
             questions_override=questions_override,
             prompt_override=prompt_override,
             objections_override=objections_override,
-            objection_keywords_override=objection_keywords_override
+            objection_keywords_override=objection_keywords_override,
+            instruction_templates=instruction_templates
         )
         _preloading_sessions[call_uuid] = session
 

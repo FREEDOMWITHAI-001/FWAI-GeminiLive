@@ -705,6 +705,7 @@ class ConversationalCallRequest(BaseModel):
     prompt: str  # Base system instruction prompt — required
     objections: Optional[dict] = None  # Objection responses
     objectionKeywords: Optional[dict] = None  # Objection keywords
+    instructionTemplates: Optional[dict] = None  # Override instruction texts (nudge, wrap-up, greeting, etc.)
 
 
 @app.post("/call/conversational")
@@ -760,7 +761,8 @@ async def start_conversational_call(request: ConversationalCallRequest):
             questions_override=request.questions,
             prompt_override=request.prompt,
             objections_override=request.objections,
-            objection_keywords_override=request.objectionKeywords
+            objection_keywords_override=request.objectionKeywords,
+            instruction_templates=request.instructionTemplates
         )
 
         # Make the Plivo call
