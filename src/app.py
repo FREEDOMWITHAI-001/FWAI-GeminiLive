@@ -157,9 +157,8 @@ class WebhookVerification(BaseModel):
 
 
 class PromptUpdateRequest(BaseModel):
-    clientName: str
-    promptContent: str
-    config: dict
+    client_name: str
+    prompt: str
 
 
 # ============================================================================
@@ -203,7 +202,8 @@ async def get_prompt(client_name: str):
             config_data = {}
 
         return {
-            "promptContent": prompt_content,
+            "success": True,
+            "prompt": prompt_content,
             "config": config_data,
             "clientName": client_name
         }
@@ -219,19 +219,14 @@ async def update_prompt(request: PromptUpdateRequest):
         prompts_dir = Path(__file__).parent.parent / "prompts"
         prompts_dir.mkdir(exist_ok=True)
 
-        prompt_file = prompts_dir / f"{request.clientName}_prompt.txt"
-        config_file = prompts_dir / f"{request.clientName}_config.json"
+        prompt_file = prompts_dir / f"{request.client_name}_prompt.txt"
 
         # Save prompt
         with open(prompt_file, "w") as f:
-            f.write(request.promptContent)
+            f.write(request.prompt)
 
-        # Save config
-        with open(config_file, "w") as f:
-            json.dump(request.config, f, indent=2)
-
-        logger.info(f"Updated prompt for client: {request.clientName}")
-        return {"status": "success", "message": "Prompt updated successfully"}
+        logger.info(f"Updated prompt for client: {request.client_name}")
+        return {"success": True, "message": "Prompt updated successfully"}
     except Exception as e:
         logger.error(f"Error updating prompt: {e}")
         raise HTTPException(status_code=500, detail=str(e))
