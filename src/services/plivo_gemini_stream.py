@@ -845,7 +845,7 @@ Rules:
                         self._standby_ws = None
                         self._standby_ready = asyncio.Event()
                         self._standby_task = None
-                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_session())
+                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
                         return
                 else:
                     await self._receive_from_google(message)
@@ -855,26 +855,41 @@ Rules:
             if not is_standby:
                 self.log.warn(f"Active WS closed: {e.code}")
 
-    async def _prewarm_standby_session(self):
-        """Pre-warm a standby Gemini session for upcoming hot-swap."""
+    async def _prewarm_standby_connection(self):
+        """Pre-warm ONLY the WS connection for standby (setup deferred to swap time).
+        This saves ~300ms at swap time while ensuring system_instruction is always current."""
         if self._standby_ws or self._swap_in_progress:
             return
         try:
             t0 = time.time()
-            ws = await self._connect_and_setup_ws(is_standby=True)
+
+            if config.use_vertex_ai:
+                token = get_vertex_ai_token()
+                if not token:
+                    url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                    extra_headers = None
+                else:
+                    url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+                    extra_headers = {"Authorization": f"Bearer {token}"}
+            else:
+                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                extra_headers = None
+
+            ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
+            if extra_headers:
+                ws_kwargs["additional_headers"] = extra_headers
+
+            ws = await websockets.connect(url, **ws_kwargs)
             self._standby_ws = ws
-            self._standby_ready.clear()
-            self._standby_task = asyncio.create_task(
-                self._ws_receive_loop(ws, is_standby=True)
-            )
-            prewarm_ms = (time.time() - t0) * 1000
-            self.log.detail(f"Standby pre-warming ({prewarm_ms:.0f}ms to connect)")
+            connect_ms = (time.time() - t0) * 1000
+            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms, setup deferred)")
         except Exception as e:
-            self.log.error(f"Standby pre-warm failed: {e}")
+            self.log.error(f"Standby connection failed: {e}")
             self._standby_ws = None
 
     async def _hot_swap_session(self):
-        """Hot-swap active session with pre-warmed standby. Zero audio gap."""
+        """Hot-swap: send setup with CURRENT context to pre-connected standby, then swap.
+        Setup is deferred to swap time so system_instruction always has fresh conversation state."""
         if self._swap_in_progress or not self._standby_ws:
             self.log.warn("No standby available, falling back")
             await self._fallback_session_split()
@@ -882,22 +897,46 @@ Rules:
 
         self._swap_in_progress = True
         swap_start = time.time()
+        ws = self._standby_ws
         try:
+            # Step 1: Send setup with CURRENT conversation summary to standby WS
+            self._setup_sent_time = time.time()
             try:
-                await asyncio.wait_for(self._standby_ready.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                self.log.warn("Standby not ready in 5s, falling back")
+                await self._send_session_setup_on_ws(ws, is_standby=False)
+            except Exception as e:
+                self.log.warn(f"Standby WS dead ({e}), falling back")
+                await self._close_ws_quietly(ws)
+                self._standby_ws = None
                 await self._fallback_session_split()
                 return
 
-            # Send fresh context to standby BEFORE swap
-            await self._send_context_to_ws(self._standby_ws)
+            # Step 2: Wait for setupComplete (~90ms)
+            setup_ok = False
+            try:
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                resp = json.loads(msg)
+                if "setupComplete" in resp:
+                    setup_ok = True
+                    ready_ms = (time.time() - self._setup_sent_time) * 1000
+                    self.log.detail(f"Standby ready ({ready_ms:.0f}ms)")
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
+                self.log.warn(f"Standby setup failed: {e}")
 
+            if not setup_ok:
+                self.log.warn("Standby setup not ready, falling back")
+                await self._close_ws_quietly(ws)
+                self._standby_ws = None
+                await self._fallback_session_split()
+                return
+
+            # Step 3: Send anti-repetition context (silent, turn_complete=False)
+            await self._send_context_to_ws(ws)
+
+            # Step 4: Atomic swap
             old_ws = self.goog_live_ws
             old_receive_task = self._active_receive_task
 
-            # === ATOMIC SWAP ===
-            self.goog_live_ws = self._standby_ws
+            self.goog_live_ws = ws
             self._standby_ws = None
 
             if old_receive_task:
@@ -918,7 +957,7 @@ Rules:
 
             swap_ms = (time.time() - swap_start) * 1000
             self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count})")
-            self.log.detail("Context injected to standby")
+            self.log.detail("Setup + context sent at swap time (fresh)")
             self.log.detail("Atomic swap complete")
             self.log.detail_last(f"Old session closed | Swap: {swap_ms:.0f}ms")
             self._save_transcript("SYSTEM", f"Hot-swap session split at turn #{self._turn_count} ({swap_ms:.0f}ms)")
@@ -926,28 +965,28 @@ Rules:
             self._swap_in_progress = False
 
     async def _send_context_to_ws(self, ws):
-        """Send conversation context to a WS before hot-swap.
-        Uses turn_complete=False so Gemini absorbs context silently
-        and only responds when the user's audio arrives."""
+        """Send anti-repetition reinforcement to WS before hot-swap.
+        The system_instruction already has the full summary; this adds a
+        strong reminder via client_content with turn_complete=False
+        so Gemini absorbs it silently and waits for user audio."""
         last_user = self._last_user_text[:200] if self._last_user_text else ""
         agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
 
         if agent_ref and last_user:
             trigger = (
-                f'[CONTEXT: You already asked: "{agent_ref}" '
-                f'and the customer replied: "{last_user}". '
+                f'[REMINDER: Your MOST RECENT question was: "{agent_ref}". '
+                f'The customer replied: "{last_user}". '
                 f'DO NOT repeat this question. DO NOT speak until the customer speaks. '
                 f'When they speak, respond naturally and move to the NEXT topic.]'
             )
         elif agent_ref:
-            trigger = f'[CONTEXT: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak, then respond.]'
+            trigger = f'[REMINDER: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.]'
         else:
-            trigger = "[CONTEXT: Continue the conversation. Wait for the customer to speak.]"
+            trigger = "[Continue the conversation. Wait for the customer to speak.]"
 
-        # turn_complete=False: context is buffered, Gemini waits for user audio before responding
         msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Context (silent): agent='{agent_ref[:40]}' user='{last_user[:40]}'")
+        self.log.detail(f"Anti-repetition sent: last_q='{agent_ref[:50]}'")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""
@@ -974,15 +1013,23 @@ Rules:
         await self._close_ws_quietly(ws)
 
     def _build_compact_summary(self) -> str:
-        """Build conversation summary for session split context."""
+        """Build conversation summary for session split context.
+        Includes turn numbers for clarity and marks the last exchange explicitly."""
         if not self._turn_exchanges:
             return ""
         lines = []
-        for exchange in self._turn_exchanges[-5:]:
+        exchanges = self._turn_exchanges[-5:]
+        total = len(exchanges)
+        for i, exchange in enumerate(exchanges):
+            turn_num = self._turn_count - total + i + 1
+            is_last = (i == total - 1)
+            prefix = f"Turn {turn_num}"
+            if is_last:
+                prefix += " (MOST RECENT — do NOT repeat)"
             if exchange.get("agent"):
-                lines.append(f"You said: {exchange['agent'][:300]}")
+                lines.append(f"{prefix} — You asked: {exchange['agent'][:300]}")
             if exchange.get("user"):
-                lines.append(f"Customer said: {exchange['user'][:300]}")
+                lines.append(f"{prefix} — Customer replied: {exchange['user'][:300]}")
         return "\n".join(lines)
 
     async def _run_google_live_session(self):
@@ -1052,14 +1099,21 @@ Rules:
         """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
         full_prompt = self.prompt
 
-        # Add natural speech variation guidance
-        full_prompt += "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. Speak faster when excited, slower when empathetic. Use pauses for emphasis. Match the customer's energy level.]"
+        # Add natural speech variation and voice consistency guidance
+        full_prompt += (
+            "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. "
+            "Speak faster when excited, slower when empathetic. Use pauses for emphasis. "
+            "Match the customer's energy level. "
+            "IMPORTANT: Maintain a consistent speaking voice — same warmth, same tone, same accent, same tempo baseline throughout the entire call. "
+            "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
+        )
 
-        # On reconnect or standby, append conversation context + anti-repetition
-        if not self._is_first_connection or is_standby:
+        # On reconnect or hot-swap, append conversation context + anti-repetition
+        # to system_instruction so AI knows where the conversation is.
+        if not self._is_first_connection:
             summary = self._build_compact_summary()
             if summary:
-                full_prompt += f"\n\n[Conversation so far:]\n{summary}"
+                full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
                 # Anti-repetition marker with last question
                 agent_ref = self._last_agent_question or self._last_agent_text
                 if agent_ref:
@@ -1067,8 +1121,8 @@ Rules:
                     full_prompt += f'\n\n[YOUR LAST QUESTION was: "{agent_ref[:300]}"'
                     full_prompt += f' Customer responded: "{last_user[:200]}".'
                     full_prompt += ' DO NOT repeat or rephrase this question. Ask the NEXT question in the flow.]'
-                self.log.detail(f"{'Standby' if is_standby else 'Reconnect'} setup: summary ({len(summary)} chars)")
-            elif not is_standby:
+                self.log.detail(f"Setup with summary ({len(summary)} chars)")
+            else:
                 file_history = self._load_conversation_from_file()
                 if file_history:
                     history_text = "\n\n[Recent conversation - continue from here:]\n"
@@ -1386,20 +1440,22 @@ Rules:
                     if not is_empty_turn:
                         self._turns_since_reconnect += 1
 
-                    # Pre-warm standby at turn N-1
+                    # Pre-warm standby at turn N-1 (skip if call is ending)
                     prewarm_turn = self._session_split_interval - 1
                     if (self._turns_since_reconnect == prewarm_turn
                             and not self._standby_ws
                             and not self._prewarm_task
                             and not self._closing_call
+                            and not self.agent_said_goodbye
                             and self.greeting_audio_complete):
-                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_session())
+                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
 
-                    # Hot-swap at turn N
+                    # Hot-swap at turn N (skip if call is ending)
                     if (self._turns_since_reconnect >= self._session_split_interval
                             and not is_empty_turn
                             and not self._closing_call
                             and not self._goodbye_pending
+                            and not self.agent_said_goodbye
                             and self.greeting_audio_complete):
                         asyncio.create_task(self._hot_swap_session())
 
