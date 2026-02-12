@@ -271,10 +271,16 @@ class PlivoGeminiSession:
         # Structured logger
         self.log = CallLogger(call_uuid)
 
+    # Minimum turns before goodbye detection activates (prevents premature call end)
+    MIN_TURNS_FOR_GOODBYE = 6
+
     def _is_goodbye_message(self, text: str) -> bool:
-        """Detect if agent is saying goodbye - triggers auto call end"""
+        """Detect if agent is saying goodbye - triggers auto call end.
+        Only activates after MIN_TURNS_FOR_GOODBYE to prevent early cutoff."""
+        if self._turn_count < self.MIN_TURNS_FOR_GOODBYE:
+            return False
+
         text_lower = text.lower()
-        # Comprehensive goodbye/farewell/ending detection
         goodbye_phrases = [
             # Direct goodbyes
             'bye', 'goodbye', 'good bye', 'bye bye', 'buh bye',
