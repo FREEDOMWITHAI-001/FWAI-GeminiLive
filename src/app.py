@@ -433,6 +433,7 @@ class PlivoMakeCallRequest(BaseModel):
 
 
 @app.post("/plivo/make-call")
+@app.post("/call/conversational")
 async def plivo_make_call(request: PlivoMakeCallRequest):
     """
     Make an outbound call using Plivo with Gemini Live AI
