@@ -724,7 +724,7 @@ Rules:
                 elapsed += 60
                 if self.is_active and not self._closing_call:
                     # Log buffer stats for debugging latency
-                    logger.info(f"Call {self.call_uuid[:8]} in progress: {elapsed}s | history:{len(self._conversation_history)} inbuf:{len(self.inbuffer)} reconnect_buf:{len(self._reconnect_audio_buffer)}")
+                    logger.info(f"[{self.call_uuid[:8]}] ⏱ Call in progress: {elapsed}s")
                 else:
                     return  # Call ended, stop monitoring
 
@@ -787,9 +787,7 @@ Rules:
 
                         # If 4+ seconds since last real speech, user has finished talking
                         if silence_since_speech >= 4.0 and time_since_q >= 2.0:
-                            logger.info(f"[{self.call_uuid[:8]}] Silence monitor: user finished "
-                                        f"| phase={phase.value} | silence={silence_since_speech:.1f}s "
-                                        f"| since_q={time_since_q:.1f}s | pending='{pending[:40]}'")
+                            logger.info(f"[{self.call_uuid[:8]}]   ├─ User finished speaking (silence={silence_since_speech:.1f}s)")
                             await self._process_user_audio_for_transcription()
                             continue
 
@@ -829,30 +827,27 @@ Rules:
         # In QuestionFlow mode: send nudge and reset pipeline to DELIVERING
         if self._pipeline:
             if not self._pipeline.waiting_for_user:
-                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (not waiting_for_user)")
+                logger.debug(f"[{self.call_uuid[:8]}] Nudge: skipped (not waiting_for_user)")
                 return
             time_since_q = time.time() - self._pipeline.question_asked_time
             if time_since_q < self._wait_timeout:
-                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (only {time_since_q:.1f}s < {self._wait_timeout}s)")
+                logger.debug(f"[{self.call_uuid[:8]}] Nudge: skipped (only {time_since_q:.1f}s < {self._wait_timeout}s)")
                 return
             # Use transcript time (not audio frame time) to detect real speech
             no_user_speech = (self._last_user_transcript_time == 0 or
                               self._last_user_transcript_time < self._pipeline.question_asked_time)
             pending = self._pipeline.pending_user_transcript
             if not no_user_speech or pending:
-                logger.info(f"[{self.call_uuid[:8]}] Nudge: skipped (user has speech or pending) "
-                            f"| no_user_speech={no_user_speech} | pending='{pending[:30]}'")
+                logger.debug(f"[{self.call_uuid[:8]}] Nudge: skipped (user has speech or pending)")
                 return
-            logger.info(f"[{self.call_uuid[:8]}] Nudge: sending prompt after {time_since_q:.1f}s "
-                        f"| {self._pipeline.dump_state()}")
+            logger.info(f"[{self.call_uuid[:8]}]   ├─ Nudge: no response for {time_since_q:.0f}s, prompting user")
             nudge_count = self._pipeline.reset_for_nudge()  # DELIVERING state re-opens gate
 
             # Max 3 nudges per question — after that, just keep waiting silently
             # Never auto-advance: wait until user actually speaks or call times out
             if nudge_count > 3:
                 q_idx = self._pipeline._current.index if self._pipeline._current else '?'
-                logger.info(f"[{self.call_uuid[:8]}] Nudge: max reached ({nudge_count}) for Q{q_idx} "
-                            f"— waiting silently (no auto-advance)")
+                logger.info(f"[{self.call_uuid[:8]}]   ├─ Nudge: max reached for Q{q_idx}, waiting silently")
                 return
 
             # Gentle nudge — re-engage user without advancing to next question
@@ -942,8 +937,7 @@ Rules:
         if len(text_lower) >= 150:
             for phrase in OFF_SCRIPT_PHRASES:
                 if text_lower.startswith(phrase):
-                    logger.info(f"[{self.call_uuid[:8]}] Off-script: starts with '{phrase}', "
-                                f"no match after {len(text_lower)} chars | text='{ai_text[:80]}'")
+                    logger.info(f"[{self.call_uuid[:8]}]   ├─ Off-script blocked: '{ai_text[:60]}'")
                     return True
 
         return False
@@ -951,7 +945,7 @@ Rules:
     async def _cancel_current_audio(self, turn_id: int, reason: str):
         """Cancel audio for a turn: block it, drain send queue, clear Plivo playback"""
         self._blocked_turns.add(turn_id)
-        logger.info(f"[{self.call_uuid[:8]}] CANCEL turn {turn_id}: {reason}")
+        logger.debug(f"[{self.call_uuid[:8]}] CANCEL turn {turn_id}: {reason}")
 
         # Drain plivo_send_queue (drop all pending audio)
         drained = 0
@@ -962,7 +956,7 @@ Rules:
             except asyncio.QueueEmpty:
                 break
         if drained:
-            logger.info(f"[{self.call_uuid[:8]}] Drained {drained} chunks from plivo_send_queue")
+            logger.debug(f"[{self.call_uuid[:8]}] Drained {drained} chunks from plivo_send_queue")
 
         # Send clearAudio to Plivo to stop current playback
         if self.plivo_ws:
@@ -971,7 +965,7 @@ Rules:
                     "event": "clearAudio",
                     "stream_id": self.stream_id
                 }))
-                logger.info(f"[{self.call_uuid[:8]}] Sent clearAudio to Plivo")
+                logger.debug(f"[{self.call_uuid[:8]}] Sent clearAudio to Plivo")
             except Exception as e:
                 logger.error(f"[{self.call_uuid[:8]}] Error sending clearAudio: {e}")
 
@@ -1289,8 +1283,7 @@ Rules:
                 return
 
             # Capture response: LISTENING → CAPTURED
-            logger.info(f"[{self.call_uuid[:8]}] _process_user_audio: capturing response "
-                        f"| transcript='{pending_transcript[:50]}' | {self._pipeline.dump_state()}")
+            logger.info(f"[{self.call_uuid[:8]}]   ├─ Captured: \"{pending_transcript[:60]}\"")
             self._pipeline.capture_response()
             self._user_audio_buffer = bytearray(b"")
 
@@ -1301,9 +1294,7 @@ Rules:
             # Finalize: CAPTURED → DONE
             self._pipeline.finalize_and_advance()
 
-            logger.info(f"[{self.call_uuid[:8]}] _process_user_audio: tracked response "
-                        f"Q{self._question_flow.current_step}/{len(self._question_flow.questions)} "
-                        f"| end_call={end_call} | {self._pipeline.dump_state()}")
+            logger.info(f"[{self.call_uuid[:8]}]   └─ Response tracked Q{self._question_flow.current_step}/{len(self._question_flow.questions)}")
             self._last_question_time = time.time()
 
             # Passive tracking: Gemini drives question transitions naturally (all questions in system prompt).
@@ -1348,8 +1339,9 @@ Rules:
                 logger.debug(f"[{self.call_uuid[:8]}] _inject_question: empty text, skipping")
                 return
 
-            logger.info(f"[{self.call_uuid[:8]}] _inject_question: text='{text[:60]}' | end_call={end_call} "
-                        f"| user_said='{user_said[:40]}' | step={self._question_flow.current_step if self._question_flow else '?'}")
+            step = self._question_flow.current_step if self._question_flow else 0
+            total = len(self._question_flow.questions) if self._question_flow else 0
+            logger.info(f"[{self.call_uuid[:8]}] ▶ Q{step + 1}/{total}: {text[:80]}")
 
             # Clear audio buffer BEFORE asking question
             self._user_audio_buffer = bytearray(b"")
@@ -1386,7 +1378,7 @@ Rules:
                 else:
                     q_id = f"closing_{step}"
                 self._pipeline.dequeue_next(index=step, question_id=q_id, question_text=text)
-            logger.info(f"[{self.call_uuid[:8]}] Injected Q - gate OPEN, waiting for AI then user")
+            logger.info(f"[{self.call_uuid[:8]}]   ├─ Sent to Gemini, waiting for AI response")
             if end_call and not self._closing_call:
                 # Give the model a moment to say the closing line before hangup
                 asyncio.create_task(self._fallback_hangup(5.0))
@@ -1545,7 +1537,7 @@ Rules:
             tool_args = fc.get("args", {})
             call_id = fc.get("id")
 
-            logger.info(f"[{self.call_uuid[:8]}] Tool: {tool_name}")
+            logger.info(f"[{self.call_uuid[:8]}]   ├─ Tool: {tool_name}")
             self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
             # Handle end_call tool - guard against premature ending
@@ -1589,7 +1581,7 @@ Rules:
                         pass
                     return
 
-                logger.info(f"[{self.call_uuid[:8]}] End call: {reason}")
+                logger.info(f"[{self.call_uuid[:8]}]   └─ End call: {reason}")
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
                 # Mark agent as having said goodbye
@@ -1628,7 +1620,7 @@ Rules:
                 success = False
                 message = f"Tool temporarily unavailable, but conversation can continue"
 
-            logger.info(f"TOOL RESULT: success={success}, message={message}")
+            logger.debug(f"TOOL RESULT: success={success}, message={message}")
             self._save_transcript("TOOL_RESULT", f"{tool_name}: {'success' if success else 'failed'}")
 
             # Always send tool response back to Gemini so conversation continues
@@ -1646,7 +1638,7 @@ Rules:
                     }
                 }
                 await self.goog_live_ws.send(json.dumps(tool_response))
-                logger.info(f"Sent tool response for {tool_name}")
+                logger.debug(f"Sent tool response for {tool_name}")
             except Exception as e:
                 logger.error(f"Error sending tool response: {e} - continuing conversation")
 
@@ -1756,7 +1748,7 @@ Rules:
 
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
-                        logger.info(f"[{self.call_uuid[:8]}] Turn #{self._turn_count} complete: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
+                        logger.info(f"[{self.call_uuid[:8]}]   ├─ Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
                     # FIX: In QuestionFlow mode, do NOT process transcription on turnComplete
@@ -1826,7 +1818,7 @@ Rules:
                                     self._pipeline.accumulate_user_speech(user_text)
                                     self._last_user_transcript_time = time.time()
                                 self._last_user_speech_time = time.time()  # Track for latency
-                                logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
+                                logger.info(f"[{self.call_uuid[:8]}]   ├─ USER: {user_text}")
                                 self._save_transcript("USER", user_text)
                                 self._log_conversation("user", user_text)
                                 # Track if user said goodbye
@@ -1844,7 +1836,7 @@ Rules:
                         ai_text = str(output_transcription)
                     if ai_text and ai_text.strip():
                         ai_text = ai_text.strip()
-                        logger.info(f"[{self.call_uuid[:8]}] AGENT → User: {ai_text}")
+                        logger.info(f"[{self.call_uuid[:8]}]   ├─ AGENT: {ai_text}")
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
                         # Store what the agent said for this question
