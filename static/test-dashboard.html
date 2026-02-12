@@ -629,10 +629,12 @@
         }
 
         // Load prompt from server
-        async function loadPrompt() {
+        async function loadPrompt(showAlert = true) {
             const clientName = document.getElementById('clientName').value;
             const editor = document.getElementById('promptEditor');
-            editor.value = 'Loading...';
+            if (editor) {
+                editor.value = 'Loading...';
+            }
 
             try {
                 const response = await fetch(`${API_BASE}/prompts/${clientName}`);
@@ -640,10 +642,16 @@
 
                 if (data.success) {
                     currentPrompt = data.prompt;
-                    editor.value = data.prompt;
-                    showPromptAlert(`✅ Loaded prompt for ${clientName}`, 'success');
+                    if (editor) {
+                        editor.value = data.prompt;
+                    }
+                    if (showAlert) {
+                        showPromptAlert(`✅ Loaded prompt for ${clientName}`, 'success');
+                    }
                 } else {
-                    showPromptAlert('❌ Failed to load prompt', 'error');
+                    if (showAlert) {
+                        showPromptAlert('❌ Failed to load prompt', 'error');
+                    }
                 }
             } catch (error) {
                 editor.value = 'Error loading prompt...';
@@ -989,6 +997,7 @@
 
         checkServerStatus();
         updateMetrics();
+        loadPrompt(false); // Load prompt silently on page load
 
         setInterval(updateMetrics, 2000);
         setInterval(checkServerStatus, 10000);
