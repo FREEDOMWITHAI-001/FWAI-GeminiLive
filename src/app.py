@@ -88,6 +88,22 @@ async def lifespan(app: FastAPI):
     logger.info(f"Server starting on http://{config.host}:{config.port}")
     logger.info(f"Gemini Voice: {config.tts_voice}")
     logger.info(f"Session DB: {session_db._db_path}")
+    logger.info(f"Plivo Callback URL: {config.plivo_callback_url}")
+    logger.info(f"Answer URL: {config.plivo_callback_url}/plivo/answer")
+
+    # Verify ngrok tunnel is accessible
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(config.plivo_callback_url, timeout=3.0)
+            if resp.status_code == 200:
+                logger.info("✅ Callback URL is accessible")
+            else:
+                logger.warning(f"⚠️  Callback URL returned {resp.status_code} - ngrok may be down")
+    except Exception as e:
+        logger.error(f"❌ Callback URL not accessible: {e}")
+        logger.error("   Plivo will NOT be able to call answer webhook!")
+        logger.error("   Start ngrok: ngrok http 3001")
 
     # Start background cleanup task for stale pending data
     async def _cleanup_stale_data():
@@ -575,36 +591,49 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 @app.post("/plivo/answer")
 async def plivo_answer(request: Request):
     """Handle Plivo call answer - uses Stream with Gemini Live"""
-    body = await request.form()
-    plivo_uuid = body.get("CallUUID", "")
-    from_phone = body.get("From", "")
-    to_phone = body.get("To", "")
+    try:
+        body = await request.form()
+        plivo_uuid = body.get("CallUUID", "")
+        from_phone = body.get("From", "")
+        to_phone = body.get("To", "")
 
-    # Look up our internal UUID from Plivo's UUID (for preloaded sessions)
-    async with _call_data_lock:
-        internal_uuid = _plivo_to_internal_uuid.get(plivo_uuid, plivo_uuid)
-        # For outbound calls, customer is "To"; for inbound, customer is "From"
-        customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
-        if customer_phone and internal_uuid and internal_uuid not in _pending_call_data:
-            _pending_call_data[internal_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
+        logger.info(f"[ANSWER] Plivo answer webhook received: CallUUID={plivo_uuid}, From={from_phone}, To={to_phone}")
 
-    logger.info(f"Plivo call answered: plivo={plivo_uuid}, internal={internal_uuid}, from {from_phone} to {to_phone}")
+        # Look up our internal UUID from Plivo's UUID (for preloaded sessions)
+        async with _call_data_lock:
+            internal_uuid = _plivo_to_internal_uuid.get(plivo_uuid, plivo_uuid)
+            # For outbound calls, customer is "To"; for inbound, customer is "From"
+            customer_phone = to_phone if to_phone and not to_phone.startswith("91226") else from_phone
+            if customer_phone and internal_uuid and internal_uuid not in _pending_call_data:
+                _pending_call_data[internal_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
 
-    # WebSocket URL for bidirectional audio stream (use internal UUID for preloaded session)
-    ws_base = config.plivo_callback_url.replace("https://", "wss://").replace("http://", "ws://")
-    stream_url = f"{ws_base}/plivo/stream/{internal_uuid}"
+        logger.info(f"[ANSWER] Call answered: plivo={plivo_uuid}, internal={internal_uuid}, from {from_phone} to {to_phone}")
 
-    logger.info(f"Stream URL: {stream_url}")
+        # WebSocket URL for bidirectional audio stream (use internal UUID for preloaded session)
+        ws_base = config.plivo_callback_url.replace("https://", "wss://").replace("http://", "ws://")
+        stream_url = f"{ws_base}/plivo/stream/{internal_uuid}"
 
-    # Use Speak first, then Stream for bidirectional audio
-    status_url = f"{config.plivo_callback_url}/plivo/stream-status"
-    xml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
+        logger.info(f"[ANSWER] Stream URL: {stream_url}")
+
+        # Use Speak first, then Stream for bidirectional audio
+        status_url = f"{config.plivo_callback_url}/plivo/stream-status"
+        xml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    
     <Stream streamTimeout="86400" keepCallAlive="true" bidirectional="true" contentType="audio/x-l16;rate=16000" statusCallbackUrl="{status_url}">{stream_url}</Stream>
 </Response>"""
 
-    return Response(content=xml_response, media_type="application/xml")
+        logger.info(f"[ANSWER] Returning Stream XML for {internal_uuid}")
+        return Response(content=xml_response, media_type="application/xml")
+
+    except Exception as e:
+        logger.error(f"[ANSWER] Error in plivo_answer: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return minimal valid XML to prevent call drop
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="application/xml"
+        )
 
 
 @app.websocket("/plivo/stream/{call_uuid}")
@@ -654,6 +683,8 @@ async def plivo_stream(websocket: WebSocket, call_uuid: str):
                     logger.info(f"Gemini Live session created for {call_uuid}")
                     session_db.update_call(call_uuid, status="active",
                                            started_at=datetime.now().isoformat())
+                    # Log success - webhook was called and stream started
+                    logger.info(f"[STREAM] ✅ WebSocket connected and session active for {call_uuid}")
                     # Ensure Plivo UUID is set (fallback if set_plivo_uuid missed it)
                     if not session.plivo_call_uuid:
                         # Try to get from pending call data or mapping

@@ -598,6 +598,15 @@ Rules:
             logger.error(f"Gemini transcription error: {e}")
             return None
 
+    async def _monitor_answer_webhook_timeout(self):
+        """Monitor for missing answer webhook - log warning if stream never connects"""
+        await asyncio.sleep(10)  # Wait 10 seconds after preload
+        if not self.plivo_ws:
+            logger.error(f"[{self.call_uuid[:8]}] ⚠️  CRITICAL: Answer webhook never called!")
+            logger.error(f"[{self.call_uuid[:8]}] Check Plivo dashboard answer URL: {config.plivo_callback_url}/plivo/answer")
+            logger.error(f"[{self.call_uuid[:8]}] Verify ngrok is running: curl http://127.0.0.1:4040/api/tunnels")
+            logger.error(f"[{self.call_uuid[:8]}] Test webhook manually: curl -X POST http://localhost:3001/plivo/answer")
+
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
         try:
@@ -609,8 +618,11 @@ Rules:
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
                 logger.info(f"[{self.call_uuid[:8]}] AI preloaded ({len(self.preloaded_audio)} chunks)")
+                logger.warning(f"[{self.call_uuid[:8]}] Waiting for Plivo to call answer webhook at {config.plivo_callback_url}/plivo/answer")
             except asyncio.TimeoutError:
                 logger.warning(f"[{self.call_uuid[:8]}] Preload timeout, continuing with {len(self.preloaded_audio)} chunks")
+            # Start answer webhook timeout monitor
+            asyncio.create_task(self._monitor_answer_webhook_timeout())
             return True
         except Exception as e:
             logger.error(f"Failed to preload session: {e}")
@@ -712,7 +724,7 @@ Rules:
         """Monitor for silence - detect when user finishes speaking and process their response"""
         try:
             while self.is_active and not self._closing_call:
-                await asyncio.sleep(0.3)  # Check every 0.3 seconds for faster response
+                await asyncio.sleep(0.1)  # Check every 0.1 seconds for faster response
 
                 # QuestionFlow mode: Detect when user finishes speaking after a question
                 if self._pipeline and self._pipeline.waiting_for_user:
@@ -730,8 +742,8 @@ Rules:
                     if self._last_user_transcript_time > q_time:
                         silence_since_speech = time.time() - self._last_user_transcript_time
 
-                        # If 4+ seconds since last real speech, user has finished talking
-                        if silence_since_speech >= 4.0 and time_since_q >= 2.0:
+                        # If 0+ seconds since last real speech, user has finished talking
+                        if silence_since_speech >= 0.0 and time_since_q >= 0.0:
                             logger.info(f"[{self.call_uuid[:8]}]   ├─ User finished speaking (silence={silence_since_speech:.1f}s)")
                             await self._process_user_audio_for_transcription()
                             continue
@@ -925,7 +937,7 @@ Rules:
             while self.is_active:
                 try:
                     chunk: AudioChunk = await asyncio.wait_for(
-                        self._audio_out_queue.get(), timeout=1.0
+                        self._audio_out_queue.get(), timeout=0.1
                     )
                 except asyncio.TimeoutError:
                     continue
@@ -953,7 +965,7 @@ Rules:
             while self.is_active:
                 try:
                     chunk: AudioChunk = await asyncio.wait_for(
-                        self._plivo_send_queue.get(), timeout=1.0
+                        self._plivo_send_queue.get(), timeout=0.1
                     )
                 except asyncio.TimeoutError:
                     continue
@@ -987,7 +999,7 @@ Rules:
             while self.is_active:
                 try:
                     event = await asyncio.wait_for(
-                        self._transcript_val_queue.get(), timeout=1.0
+                        self._transcript_val_queue.get(), timeout=0.1
                     )
                 except asyncio.TimeoutError:
                     continue
