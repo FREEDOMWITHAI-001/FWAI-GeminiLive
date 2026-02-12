@@ -11,6 +11,7 @@ import queue
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
+import aiosqlite  # LATENCY OPT: Async database operations
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "calls.db"
 
@@ -103,35 +104,37 @@ class SessionDB:
             tuple(params)
         ))
 
-    def get_call(self, call_uuid: str) -> dict:
-        """Read call record (blocking but fast ~1ms for SQLite)"""
-        conn = sqlite3.connect(str(self._db_path))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM calls WHERE call_uuid = ?", (call_uuid,)).fetchone()
-        conn.close()
-        if row:
-            result = dict(row)
-            # Parse JSON fields
-            for field in ('collected_responses', 'objections_raised'):
-                if result.get(field):
-                    try:
-                        result[field] = json.loads(result[field])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            return result
+    async def get_call(self, call_uuid: str) -> dict:
+        """Read call record asynchronously.
+        LATENCY OPTIMIZATION: Async DB prevents blocking event loop (1-5ms savings)."""
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute("SELECT * FROM calls WHERE call_uuid = ?", (call_uuid,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    result = dict(row)
+                    # Parse JSON fields
+                    for field in ('collected_responses', 'objections_raised'):
+                        if result.get(field):
+                            try:
+                                result[field] = json.loads(result[field])
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                    return result
         return None
 
-    def get_recent_calls(self, limit: int = 50) -> list:
-        """Get recent calls for dashboard/API"""
-        conn = sqlite3.connect(str(self._db_path))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT call_uuid, phone, contact_name, client_name, status, duration_seconds, "
-            "questions_completed, total_questions, interest_level, call_summary, created_at "
-            "FROM calls ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+    async def get_recent_calls(self, limit: int = 50) -> list:
+        """Get recent calls for dashboard/API asynchronously.
+        LATENCY OPTIMIZATION: Async DB prevents blocking event loop."""
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                "SELECT call_uuid, phone, contact_name, client_name, status, duration_seconds, "
+                "questions_completed, total_questions, interest_level, call_summary, created_at "
+                "FROM calls ORDER BY created_at DESC LIMIT ?", (limit,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
 
     def cleanup_stale(self, max_age_minutes: int = 10):
         """Clean up stale pending calls older than max_age_minutes"""

@@ -898,14 +898,14 @@ async def start_conversational_call(request: ConversationalCallRequest):
 @app.get("/call/history")
 async def get_call_history(limit: int = Query(default=50, le=200)):
     """Get call history with statistics from session DB"""
-    calls = session_db.get_recent_calls(limit=limit)
+    calls = await session_db.get_recent_calls(limit=limit)  # LATENCY OPT: Async DB
     return JSONResponse(content={"calls": calls, "total": len(calls)})
 
 
 @app.get("/call/{call_id}/details")
 async def get_call_details(call_id: str):
     """Get full call details including responses and statistics"""
-    call = session_db.get_call(call_id)
+    call = await session_db.get_call(call_id)  # LATENCY OPT: Async DB
     if call:
         return JSONResponse(content=call)
     raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
