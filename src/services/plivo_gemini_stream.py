@@ -25,15 +25,16 @@ def get_vertex_ai_token():
         import google.auth
         from google.auth.transport.requests import Request
 
-        # Multiple scopes for Vertex AI Gemini Live API
         scopes = [
             'https://www.googleapis.com/auth/cloud-platform',
             'https://www.googleapis.com/auth/generative-language',
             'https://www.googleapis.com/auth/generative-language.retriever',
         ]
+        t0 = time.time()
         credentials, project = google.auth.default(scopes=scopes)
         credentials.refresh(Request())
-        logger.info(f"Got Vertex AI token for project: {project}")
+        token_ms = (time.time() - t0) * 1000
+        logger.info(f"Vertex AI token for {project} ({token_ms:.0f}ms)")
         return credentials.token
     except Exception as e:
         logger.error(f"Failed to get Vertex AI token: {e}")
@@ -45,6 +46,44 @@ LATENCY_THRESHOLD_MS = 500
 # Recording directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
+
+
+class CallLogger:
+    """Structured call lifecycle logger with visual indentation."""
+
+    def __init__(self, call_id: str):
+        self.id = call_id[:8]
+
+    def section(self, title: str):
+        logger.info(f"[{self.id}] ══════ {title} ══════")
+
+    def phase(self, title: str):
+        logger.info(f"[{self.id}] ├─ {title}")
+
+    def detail(self, msg: str):
+        logger.info(f"[{self.id}] │  ├─ {msg}")
+
+    def detail_last(self, msg: str):
+        logger.info(f"[{self.id}] │  └─ {msg}")
+
+    def turn(self, num: int, extra: str = ""):
+        suffix = f" ({extra})" if extra else ""
+        logger.info(f"[{self.id}] ├─ TURN #{num}{suffix}")
+
+    def agent(self, text: str):
+        logger.info(f"[{self.id}] │  ├─ AGENT: {text}")
+
+    def user(self, text: str):
+        logger.info(f"[{self.id}] │  ├─ USER:  {text}")
+
+    def metric(self, text: str):
+        logger.info(f"[{self.id}] │  └─ {text}")
+
+    def warn(self, msg: str):
+        logger.warning(f"[{self.id}] ⚠ {msg}")
+
+    def error(self, msg: str):
+        logger.error(f"[{self.id}] ✗ {msg}")
 
 
 def detect_voice_from_prompt(prompt: str) -> str:
@@ -203,6 +242,34 @@ class PlivoGeminiSession:
 
         # Full transcript collection (in-memory backup for webhook)
         self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
+
+        # Session split - reset audio KV cache every N turns to keep latency low
+        self._turns_since_reconnect = 0
+        self._session_split_interval = 3  # Split every 3 turns
+        self._last_agent_text = ""  # Last thing AI said (for split context)
+        self._last_user_text = ""   # Last thing user said (for split context)
+        self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
+        self._turn_exchanges = []   # Complete turn texts for clean summaries
+
+        # Hot-swap session management
+        self._standby_ws = None
+        self._standby_ready = asyncio.Event()
+        self._standby_task = None
+        self._prewarm_task = None
+        self._swap_in_progress = False
+        self._active_receive_task = None
+
+        # Timing instrumentation
+        self._preload_start_time = None    # When preload() started
+        self._setup_sent_time = None       # When setup message was sent to Gemini
+        self._greeting_trigger_time = None # When greeting trigger was sent
+        self._first_audio_time = None      # When first AI audio chunk arrived
+        self._call_answered_time = None    # When Plivo WS attached
+        self._first_audio_to_caller = None # When first audio sent to caller
+        self._turn_first_byte_time = None  # When first audio byte of current turn arrived
+
+        # Structured logger
+        self.log = CallLogger(call_uuid)
 
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end"""
@@ -528,32 +595,40 @@ Rules:
     async def preload(self):
         """Preload the Gemini session while phone is ringing"""
         try:
-            logger.debug(f"[{self.call_uuid[:8]}] Preloading Gemini session")
+            self._preload_start_time = time.time()
+            self.log.section("CALL INITIATED")
+            self.log.phase("PRELOAD")
+            self.log.detail(f"Phone: {self.caller_phone} ({self.context.get('customer_name', 'Unknown')})")
+            self.log.detail(f"Prompt: {len(self.prompt):,} chars")
             self.is_active = True
-            # Start main voice session (native audio)
             self._session_task = asyncio.create_task(self._run_google_live_session())
-            # Wait for setup to complete (with timeout - 8s max for better greeting)
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
-                logger.info(f"[{self.call_uuid[:8]}] AI preloaded ({len(self.preloaded_audio)} chunks)")
+                preload_ms = (time.time() - self._preload_start_time) * 1000
+                self.log.detail_last(f"Preloaded: {len(self.preloaded_audio)} chunks in {preload_ms:.0f}ms")
             except asyncio.TimeoutError:
-                logger.warning(f"[{self.call_uuid[:8]}] Preload timeout, continuing with {len(self.preloaded_audio)} chunks")
+                preload_ms = (time.time() - self._preload_start_time) * 1000
+                self.log.warn(f"Preload timeout ({preload_ms:.0f}ms), {len(self.preloaded_audio)} chunks")
             return True
         except Exception as e:
-            logger.error(f"Failed to preload session: {e}")
+            self.log.error(f"Preload failed: {e}")
             return False
 
     def attach_plivo_ws(self, plivo_ws):
         """Attach Plivo WebSocket when user answers"""
         self.plivo_ws = plivo_ws
         self.call_start_time = datetime.now()
+        self._call_answered_time = time.time()
         preload_count = len(self.preloaded_audio)
-        logger.info(f"[{self.call_uuid[:8]}] Call answered, {preload_count} chunks ready")
-        # Send any preloaded audio immediately
+        self.log.phase("CALL ANSWERED")
+        if self._preload_start_time:
+            wait_ms = (time.time() - self._preload_start_time) * 1000
+            self.log.detail(f"Ring duration: {wait_ms:.0f}ms")
+        self.log.detail(f"Plivo WS attached, {preload_count} preloaded chunks")
         if self.preloaded_audio:
             asyncio.create_task(self._send_preloaded_audio())
         else:
-            logger.warning(f"[{self.call_uuid[:8]}] No preloaded audio - greeting will lag")
+            self.log.warn("No preloaded audio - greeting will lag")
         # Start sender worker
         self._sender_worker_task = asyncio.create_task(self._plivo_sender_worker())
         # Start call duration timer
@@ -563,13 +638,16 @@ Rules:
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio directly to plivo_send_queue"""
-        logger.debug(f"[{self.call_uuid[:8]}] Sending {len(self.preloaded_audio)} preloaded chunks via queue")
+        count = len(self.preloaded_audio)
         for audio in self.preloaded_audio:
             chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
             try:
                 self._plivo_send_queue.put_nowait(chunk)
             except asyncio.QueueFull:
-                logger.warning(f"[{self.call_uuid[:8]}] plivo_send_queue full during preload send")
+                self.log.warn("plivo_send_queue full during preload send")
+        if self._call_answered_time:
+            first_audio_ms = (time.time() - self._call_answered_time) * 1000
+            self.log.detail_last(f"First audio to caller: {first_audio_ms:.0f}ms ({count} chunks)")
         self.preloaded_audio = []
 
     async def _monitor_call_duration(self):
@@ -637,7 +715,7 @@ Rules:
 
                 # If silence exceeds SLA, nudge the AI to respond
                 if silence_duration >= self._silence_sla_seconds:
-                    logger.warning(f"[{self.call_uuid[:8]}] {silence_duration:.1f}s silence - nudging AI")
+                    self.log.warn(f"{silence_duration:.1f}s silence - nudging AI")
                     await self._send_silence_nudge()
                     # Reset timer to avoid repeated nudges
                     self._last_user_speech_time = None
@@ -715,10 +793,13 @@ Rules:
         except Exception as e:
             logger.error(f"Error in reconnection filler: {e}")
 
-    async def _run_google_live_session(self):
-        # Choose between Vertex AI (regional, lower latency) or Google AI Studio
+    async def _connect_and_setup_ws(self, is_standby=False):
+        """Create a new Gemini WS connection and send setup message.
+        Returns the connected WS (caller must handle receive loop)."""
+        label = "standby" if is_standby else "active"
+        t0 = time.time()
+
         if config.use_vertex_ai:
-            # Vertex AI Live API - regional endpoint (asia-south1 = Mumbai)
             token = get_vertex_ai_token()
             if not token:
                 logger.error("Failed to get Vertex AI token - falling back to Google AI Studio")
@@ -727,64 +808,230 @@ Rules:
             else:
                 url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
                 extra_headers = {"Authorization": f"Bearer {token}"}
-                logger.info(f"Using Vertex AI endpoint: {config.vertex_location}")
+                self.log.detail(f"Vertex AI: {config.vertex_location} ({label})")
         else:
-            # Google AI Studio - global endpoint
             url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
             extra_headers = None
+            self.log.detail(f"Google AI Studio ({label})")
 
+        ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
+        if extra_headers:
+            ws_kwargs["additional_headers"] = extra_headers
+
+        ws = await websockets.connect(url, **ws_kwargs)
+        connect_ms = (time.time() - t0) * 1000
+        self.log.detail(f"Gemini {label} WS connected ({connect_ms:.0f}ms)")
+
+        self._setup_sent_time = time.time()
+        await self._send_session_setup_on_ws(ws, is_standby=is_standby)
+        return ws
+
+    async def _ws_receive_loop(self, ws, is_standby=False):
+        """Receive loop for a Gemini WS. For standby, stops after setupComplete."""
+        try:
+            async for message in ws:
+                if not self.is_active:
+                    break
+                resp = json.loads(message)
+                if is_standby:
+                    if "setupComplete" in resp:
+                        self._standby_ready.set()
+                        ready_ms = (time.time() - self._setup_sent_time) * 1000 if self._setup_sent_time else 0
+                        self.log.detail(f"Standby session ready ({ready_ms:.0f}ms)")
+                        continue
+                    elif "goAway" in resp:
+                        self.log.warn("Standby GoAway — will re-prewarm")
+                        await self._close_ws_quietly(ws)
+                        self._standby_ws = None
+                        self._standby_ready = asyncio.Event()
+                        self._standby_task = None
+                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_session())
+                        return
+                else:
+                    await self._receive_from_google(message)
+        except asyncio.CancelledError:
+            pass
+        except websockets.exceptions.ConnectionClosed as e:
+            if not is_standby:
+                self.log.warn(f"Active WS closed: {e.code}")
+
+    async def _prewarm_standby_session(self):
+        """Pre-warm a standby Gemini session for upcoming hot-swap."""
+        if self._standby_ws or self._swap_in_progress:
+            return
+        try:
+            t0 = time.time()
+            ws = await self._connect_and_setup_ws(is_standby=True)
+            self._standby_ws = ws
+            self._standby_ready.clear()
+            self._standby_task = asyncio.create_task(
+                self._ws_receive_loop(ws, is_standby=True)
+            )
+            prewarm_ms = (time.time() - t0) * 1000
+            self.log.detail(f"Standby pre-warming ({prewarm_ms:.0f}ms to connect)")
+        except Exception as e:
+            self.log.error(f"Standby pre-warm failed: {e}")
+            self._standby_ws = None
+
+    async def _hot_swap_session(self):
+        """Hot-swap active session with pre-warmed standby. Zero audio gap."""
+        if self._swap_in_progress or not self._standby_ws:
+            self.log.warn("No standby available, falling back")
+            await self._fallback_session_split()
+            return
+
+        self._swap_in_progress = True
+        swap_start = time.time()
+        try:
+            try:
+                await asyncio.wait_for(self._standby_ready.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.log.warn("Standby not ready in 5s, falling back")
+                await self._fallback_session_split()
+                return
+
+            # Send fresh context to standby BEFORE swap
+            await self._send_context_to_ws(self._standby_ws)
+
+            old_ws = self.goog_live_ws
+            old_receive_task = self._active_receive_task
+
+            # === ATOMIC SWAP ===
+            self.goog_live_ws = self._standby_ws
+            self._standby_ws = None
+
+            if old_receive_task:
+                old_receive_task.cancel()
+            if self._standby_task:
+                self._standby_task.cancel()
+                self._standby_task = None
+
+            self._active_receive_task = asyncio.create_task(
+                self._ws_receive_loop(self.goog_live_ws, is_standby=False)
+            )
+            asyncio.create_task(self._close_ws_quietly(old_ws))
+
+            self._turns_since_reconnect = 0
+            self._standby_ready = asyncio.Event()
+            self._prewarm_task = None
+            self._is_reconnecting = False
+
+            swap_ms = (time.time() - swap_start) * 1000
+            self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count})")
+            self.log.detail("Context injected to standby")
+            self.log.detail("Atomic swap complete")
+            self.log.detail_last(f"Old session closed | Swap: {swap_ms:.0f}ms")
+            self._save_transcript("SYSTEM", f"Hot-swap session split at turn #{self._turn_count} ({swap_ms:.0f}ms)")
+        finally:
+            self._swap_in_progress = False
+
+    async def _send_context_to_ws(self, ws):
+        """Send conversation context to a WS before hot-swap."""
+        last_user = self._last_user_text[:200] if self._last_user_text else ""
+        agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
+
+        if agent_ref and last_user:
+            trigger = (
+                f'[CRITICAL CONTEXT UPDATE — This overrides any prior context in your instructions.\n'
+                f'Your most recent question to the customer was: "{agent_ref}"\n'
+                f'The customer responded: "{last_user}"\n'
+                f'You MUST NOT repeat or rephrase this question. Continue to the NEXT topic in your flow.\n'
+                f'Respond naturally to what the customer said.]'
+            )
+        elif agent_ref:
+            trigger = f'[You just said: "{agent_ref}". The customer is about to respond. Listen and reply. Do NOT repeat what you said.]'
+        else:
+            trigger = "[Continue the conversation naturally with the customer.]"
+
+        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": True}}
+        await ws.send(json.dumps(msg))
+        self.log.detail(f"Context: agent='{agent_ref[:40]}' user='{last_user[:40]}'")
+
+    async def _close_ws_quietly(self, ws):
+        """Close a WS without error logging."""
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+    async def _fallback_session_split(self):
+        """Fallback when standby not available: close active WS and let main loop reconnect."""
+        if not self.goog_live_ws or self._closing_call or self._is_reconnecting:
+            return
+        self._is_reconnecting = True
+        self._turns_since_reconnect = 0
+        self.log.phase(f"SESSION SPLIT (fallback at turn #{self._turn_count})")
+        self._save_transcript("SYSTEM", f"Fallback session split at turn #{self._turn_count}")
+
+        if self._active_receive_task:
+            self._active_receive_task.cancel()
+            self._active_receive_task = None
+
+        ws = self.goog_live_ws
+        self.goog_live_ws = None
+        await self._close_ws_quietly(ws)
+
+    def _build_compact_summary(self) -> str:
+        """Build conversation summary for session split context."""
+        if not self._turn_exchanges:
+            return ""
+        lines = []
+        for exchange in self._turn_exchanges[-5:]:
+            if exchange.get("agent"):
+                lines.append(f"You said: {exchange['agent'][:300]}")
+            if exchange.get("user"):
+                lines.append(f"Customer said: {exchange['user'][:300]}")
+        return "\n".join(lines)
+
+    async def _run_google_live_session(self):
+        """Main session loop. Hot-swap handles planned transitions; this handles error recovery."""
         reconnect_attempts = 0
-        max_reconnects = 5  # Increased for better stability
+        max_reconnects = 5
 
         while self.is_active and reconnect_attempts < max_reconnects:
+            ws = None
             try:
-                # Refresh token on reconnect for Vertex AI
-                if config.use_vertex_ai and reconnect_attempts > 0:
-                    token = get_vertex_ai_token()
-                    if token:
-                        extra_headers = {"Authorization": f"Bearer {token}"}
+                ws = await self._connect_and_setup_ws(is_standby=False)
+                self.goog_live_ws = ws
+                reconnect_attempts = 0
 
-                ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
-                if extra_headers:
-                    # Use additional_headers for newer websockets versions
-                    ws_kwargs["additional_headers"] = extra_headers
+                if self._reconnect_audio_buffer:
+                    self.log.detail(f"Flushing {len(self._reconnect_audio_buffer)} buffered chunks")
+                    for buffered_audio in self._reconnect_audio_buffer:
+                        await self.handle_plivo_audio(buffered_audio)
+                    self._reconnect_audio_buffer = []
 
-                async with websockets.connect(url, **ws_kwargs) as ws:
-                    self.goog_live_ws = ws
-                    reconnect_attempts = 0  # Reset on successful connect
-                    logger.info(f"[{self.call_uuid[:8]}] Gemini connected")
-                    await self._send_session_setup()
-                    # Flush any buffered audio from reconnection
-                    if self._reconnect_audio_buffer:
-                        logger.debug(f"[{self.call_uuid[:8]}] Flushing {len(self._reconnect_audio_buffer)} buffered chunks")
-                        for buffered_audio in self._reconnect_audio_buffer:
-                            await self.handle_plivo_audio(buffered_audio)
-                        self._reconnect_audio_buffer = []
-                    async for message in ws:
-                        if not self.is_active:
-                            break
-                        await self._receive_from_google(message)
-            except websockets.exceptions.ConnectionClosed as e:
-                logger.warning(f"[{self.call_uuid[:8]}] Gemini closed: {e.code}")
+                self._active_receive_task = asyncio.create_task(
+                    self._ws_receive_loop(ws, is_standby=False)
+                )
+                await self._active_receive_task
+                self._active_receive_task = None
+
+                # If WS was replaced by hot-swap, exit this loop
+                if self.goog_live_ws is not None and self.goog_live_ws is not ws:
+                    return
+                break
+
+            except asyncio.CancelledError:
+                if self.goog_live_ws is not None and self.goog_live_ws is not ws:
+                    return
+                break
+            except Exception as e:
+                self.log.error(f"Google Live error: {e}")
+                if ws:
+                    await self._close_ws_quietly(ws)
                 if self.is_active and not self._closing_call:
                     self._is_reconnecting = True
                     reconnect_attempts += 1
-                    logger.info(f"[{self.call_uuid[:8]}] Reconnecting ({reconnect_attempts}/{max_reconnects})")
-                    # Send filler message to user while reconnecting
+                    self.log.warn(f"Reconnecting ({reconnect_attempts}/{max_reconnects})")
                     asyncio.create_task(self._send_reconnection_filler())
-                    await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
+                    await asyncio.sleep(0.2)
                     continue
-            except Exception as e:
-                logger.error(f"Google Live error: {e}")
-                if self.is_active and not self._closing_call:
-                    reconnect_attempts += 1
-                    logger.info(f"[{self.call_uuid[:8]}] Reconnecting ({reconnect_attempts}/{max_reconnects})")
-                    await asyncio.sleep(0.2)  # Faster reconnect (was 0.5)
-                    continue
-            break  # Normal exit
+                break
 
-        self.goog_live_ws = None
-        logger.debug(f"[{self.call_uuid[:8]}] Session ended")
+        # Only null goog_live_ws if we still own it
+        if self.goog_live_ws is ws:
+            self.goog_live_ws = None
 
     def _pcm_to_wav(self, pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, bits_per_sample: int = 16) -> bytes:
         """Convert raw PCM bytes to WAV format"""
@@ -799,30 +1046,40 @@ Rules:
 
         return wav_buffer.getvalue()
 
-    async def _send_session_setup(self):
-        # Build prompt: API-provided prompt is the single source of truth
+    async def _send_session_setup_on_ws(self, ws, is_standby=False):
+        """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
         full_prompt = self.prompt
 
-        # On reconnect, load conversation context
-        if not self._is_first_connection:
-            # Regular reconnect (GoAway, connection drop): load from file
-            file_history = self._load_conversation_from_file()
-            if file_history:
-                history_text = "\n\n[Recent conversation - continue from here:]\n"
-                for msg_item in file_history[-self._max_history_size:]:
-                    role = "Customer" if msg_item["role"] == "user" else "You"
-                    history_text += f"{role}: {msg_item['text']}\n"
-                history_text += "\n[Continue naturally. Do NOT greet again.]"
-                full_prompt = full_prompt + history_text
-                logger.debug(f"[{self.call_uuid[:8]}] Loaded {len(file_history)} messages for reconnect")
-                self._is_reconnecting = False
+        # Add natural speech variation guidance
+        full_prompt += "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. Speak faster when excited, slower when empathetic. Use pauses for emphasis. Match the customer's energy level.]"
 
-        # Auto-detect voice from prompt content
+        # On reconnect or standby, append conversation context + anti-repetition
+        if not self._is_first_connection or is_standby:
+            summary = self._build_compact_summary()
+            if summary:
+                full_prompt += f"\n\n[Conversation so far:]\n{summary}"
+                # Anti-repetition marker with last question
+                agent_ref = self._last_agent_question or self._last_agent_text
+                if agent_ref:
+                    last_user = self._last_user_text or "(customer is about to respond)"
+                    full_prompt += f'\n\n[YOUR LAST QUESTION was: "{agent_ref[:300]}"'
+                    full_prompt += f' Customer responded: "{last_user[:200]}".'
+                    full_prompt += ' DO NOT repeat or rephrase this question. Ask the NEXT question in the flow.]'
+                self.log.detail(f"{'Standby' if is_standby else 'Reconnect'} setup: summary ({len(summary)} chars)")
+            elif not is_standby:
+                file_history = self._load_conversation_from_file()
+                if file_history:
+                    history_text = "\n\n[Recent conversation - continue from here:]\n"
+                    for msg_item in file_history[-self._max_history_size:]:
+                        role = "Customer" if msg_item["role"] == "user" else "You"
+                        history_text += f"{role}: {msg_item['text']}\n"
+                    history_text += "\n[Continue naturally. Do NOT greet again.]"
+                    full_prompt += history_text
+                    self._is_reconnecting = False
+
         voice_name = detect_voice_from_prompt(self.prompt)
 
-        # Model name differs between Google AI Studio and Vertex AI
         if config.use_vertex_ai:
-            # Production model for Vertex AI Live API
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
         else:
             model_name = "models/gemini-2.5-flash-native-audio-preview-09-2025"
@@ -831,7 +1088,7 @@ Rules:
             "setup": {
                 "model": model_name,
                 "generation_config": {
-                    "response_modalities": ["AUDIO"],  # Native audio model - audio only
+                    "response_modalities": ["AUDIO"],
                     "speech_config": {
                         "voice_config": {
                             "prebuilt_voice_config": {
@@ -839,22 +1096,19 @@ Rules:
                             }
                         }
                     },
-                    # Light thinking - just enough for quality, minimal latency
                     "thinking_config": {
-                        "thinking_budget": 25
+                        "thinking_budget": 0  # Disable reasoning for fastest responses
                     }
                 },
-                # Enable transcription to get real-time speech transcripts
-                "input_audio_transcription": {},  # User speech -> inputTranscription events
-                "output_audio_transcription": {},  # AI speech -> outputTranscription events
+                "input_audio_transcription": {},
+                "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [{"function_declarations": TOOL_DECLARATIONS}]
             }
         }
-        await self.goog_live_ws.send(json.dumps(msg))
-
-        # Note: _is_first_connection is set to False in setupComplete handler, not here
-        logger.info(f"Sent session setup with voice: {voice_name}, first_connection={self._is_first_connection}")
+        await ws.send(json.dumps(msg))
+        label = "standby" if is_standby else ("first" if self._is_first_connection else "reconnect")
+        self.log.detail(f"Setup sent ({label}), voice: {voice_name}")
 
     async def _send_initial_greeting(self):
         """Send initial trigger to make AI start the conversation"""
@@ -862,19 +1116,23 @@ Rules:
             return
         self.greeting_sent = True
 
-        trigger_text = "Hi"
+        # Auto-generate greeting trigger from context
+        trigger_text = self.context.get("greeting_trigger", "")
+        if not trigger_text:
+            customer_name = self.context.get("customer_name", "")
+            if customer_name:
+                trigger_text = f"[Start the conversation now. Greet {customer_name} naturally using your opening line from the instructions.]"
+            else:
+                trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
 
         msg = {
             "client_content": {
-                "turns": [{
-                    "role": "user",
-                    "parts": [{"text": trigger_text}]
-                }],
+                "turns": [{"role": "user", "parts": [{"text": trigger_text}]}],
                 "turn_complete": True
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.info(f"[{self.call_uuid[:8]}] Greeting trigger sent to Gemini")
+        self.log.detail("Greeting trigger sent")
 
     async def _send_reconnection_trigger(self):
         """Trigger AI to speak immediately after reconnection"""
@@ -903,13 +1161,13 @@ Rules:
             tool_args = fc.get("args", {})
             call_id = fc.get("id")
 
-            logger.info(f"[{self.call_uuid[:8]}]   Tool: {tool_name}")
+            self.log.detail(f"Tool: {tool_name}")
             self._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
             # Handle end_call tool
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
-                logger.info(f"[{self.call_uuid[:8]}]   End call: {reason}")
+                self.log.detail(f"End call: {reason}")
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
                 # Mark agent as having said goodbye
@@ -940,9 +1198,12 @@ Rules:
 
             # Execute the tool with context for templates - graceful error handling
             try:
+                tool_start = time.time()
                 result = await execute_tool(tool_name, self.caller_phone, context=self.context, **tool_args)
+                tool_ms = (time.time() - tool_start) * 1000
                 success = result.get("success", False)
                 message = result.get("message", "Tool executed")
+                self.log.detail(f"Tool result: {'OK' if success else 'FAIL'} ({tool_ms:.0f}ms)")
             except Exception as e:
                 logger.error(f"Tool execution error for {tool_name}: {e}")
                 success = False
@@ -988,11 +1249,9 @@ Rules:
         try:
             await asyncio.sleep(delay)
 
-            # Use Plivo's UUID if available, otherwise fall back to internal UUID
             hangup_uuid = self.plivo_call_uuid or self.call_uuid
-            logger.info(f"Hanging up call {self.call_uuid} using UUID: {hangup_uuid} (plivo_uuid={self.plivo_call_uuid})")
+            self.log.detail(f"Plivo hangup API: {hangup_uuid}")
 
-            # Use Plivo REST API directly with httpx (async)
             import httpx
             import base64
 
@@ -1001,17 +1260,18 @@ Rules:
 
             url = f"https://api.plivo.com/v1/Account/{config.plivo_auth_id}/Call/{hangup_uuid}/"
 
+            t0 = time.time()
             async with httpx.AsyncClient() as client:
                 response = await client.delete(
                     url,
                     headers={"Authorization": f"Basic {auth_b64}"}
                 )
-                logger.info(f"Plivo hangup response: {response.status_code}")
+                api_ms = (time.time() - t0) * 1000
 
                 if response.status_code in [204, 200]:
-                    logger.info(f"Call {self.call_uuid} hung up successfully via Plivo API")
+                    self.log.detail(f"Plivo hangup OK ({api_ms:.0f}ms)")
                 else:
-                    logger.error(f"Plivo hangup failed: {response.status_code} - {response.text}")
+                    self.log.error(f"Plivo hangup failed: {response.status_code} ({api_ms:.0f}ms)")
 
         except Exception as e:
             logger.error(f"Error hanging up call {self.call_uuid}: {type(e).__name__}: {e}")
@@ -1032,26 +1292,28 @@ Rules:
                 logger.debug(f"Gemini response keys: {resp_keys}")
 
             if "setupComplete" in resp:
-                logger.info(f"[{self.call_uuid[:8]}] AI ready")
+                setup_ms = (time.time() - self._setup_sent_time) * 1000 if self._setup_sent_time else 0
+                self.log.detail(f"AI ready ({setup_ms:.0f}ms)")
                 self.start_streaming = True
                 self.setup_complete = True
-                self._google_session_start = time.time()  # Track session start for 10-min limit
-                self._save_transcript("SYSTEM", "AI ready")
-                # On first connection: trigger greeting
-                # On reconnection: trigger resume with filler phrase
+                self._google_session_start = time.time()
+                self._save_transcript("SYSTEM", f"AI ready ({setup_ms:.0f}ms)")
                 if self._is_first_connection:
-                    self._is_first_connection = False  # Mark first connection done
+                    self._is_first_connection = False
+                    self._greeting_trigger_time = time.time()
                     await self._send_initial_greeting()
-                else:
+                elif self._is_reconnecting:
+                    self._is_reconnecting = False
                     await self._send_reconnection_trigger()
 
             # Handle GoAway message - 9-minute warning before 10-minute session limit
             if "goAway" in resp:
-                logger.warning(f"[{self.call_uuid[:8]}] 10-min limit, reconnecting...")
-                self._save_transcript("SYSTEM", "Session refresh triggered (10-min limit)")
-                # Don't wait for disconnect - proactively close and reconnect
-                if self.goog_live_ws:
-                    await self.goog_live_ws.close()
+                self.log.warn("GoAway — triggering session split")
+                self._save_transcript("SYSTEM", "Session GoAway (10-min limit)")
+                if self._standby_ws and self._standby_ready.is_set():
+                    asyncio.create_task(self._hot_swap_session())
+                else:
+                    await self._fallback_session_split()
                 return
 
             # Handle tool calls
@@ -1067,31 +1329,77 @@ Rules:
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
                     self._turn_count += 1
-                    self._current_turn_id += 1  # New turn ID
+                    self._current_turn_id += 1
 
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
-                        # Log accumulated agent speech as one line
+                        full_agent = ""
+                        full_user = ""
                         if self._current_turn_agent_text:
                             full_agent = " ".join(self._current_turn_agent_text)
-                            logger.info(f"[{self.call_uuid[:8]}]   AGENT: {full_agent}")
+                            self._last_agent_text = full_agent
+                            if "?" in full_agent:
+                                self._last_agent_question = full_agent
                             self._current_turn_agent_text = []
-                        # Log accumulated user speech as one line
                         if self._current_turn_user_text:
                             full_user = " ".join(self._current_turn_user_text)
-                            logger.info(f"[{self.call_uuid[:8]}]   USER: {full_user}")
+                            self._last_user_text = full_user
                             self._current_turn_user_text = []
-                        logger.info(f"[{self.call_uuid[:8]}]   Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
+                        # Track turn exchanges for compact summary
+                        if full_agent or full_user:
+                            self._turn_exchanges.append({"agent": full_agent, "user": full_user})
+                            if len(self._turn_exchanges) > 5:
+                                self._turn_exchanges = self._turn_exchanges[-5:]
+
+                        extra = ""
+                        if self._turns_since_reconnect == self._session_split_interval - 1:
+                            extra = "prewarm standby"
+                        elif self._turns_since_reconnect >= self._session_split_interval:
+                            extra = "split pending"
+                        self.log.turn(self._turn_count, extra)
+                        if full_agent:
+                            self.log.agent(full_agent)
+                        if full_user:
+                            self.log.user(full_user)
+                        # Compute TTFB for this turn (user speech end → first AI audio)
+                        ttfb_str = ""
+                        if self._turn_first_byte_time and self._last_user_speech_time is None:
+                            # _last_user_speech_time was reset when first audio arrived
+                            pass
+                        self.log.metric(f"{turn_duration_ms:.0f}ms | {self._current_turn_audio_chunks} chunks")
+                        self._turn_first_byte_time = None
                         self._turn_start_time = None
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
-                    if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call:
+                    is_empty_turn = self._current_turn_audio_chunks == 0
+                    if is_empty_turn and self.greeting_audio_complete and not self._closing_call:
                         self._empty_turn_nudge_count += 1
-                        if self._empty_turn_nudge_count <= 3:  # Max 3 nudges
-                            logger.warning(f"[{self.call_uuid[:8]}] Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
+                        if self._empty_turn_nudge_count <= 3:
+                            self.log.warn(f"Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
                             asyncio.create_task(self._send_silence_nudge())
                     else:
                         self._empty_turn_nudge_count = 0
+
+                    # Hot-swap session split - count non-empty turns
+                    if not is_empty_turn:
+                        self._turns_since_reconnect += 1
+
+                    # Pre-warm standby at turn N-1
+                    prewarm_turn = self._session_split_interval - 1
+                    if (self._turns_since_reconnect == prewarm_turn
+                            and not self._standby_ws
+                            and not self._prewarm_task
+                            and not self._closing_call
+                            and self.greeting_audio_complete):
+                        self._prewarm_task = asyncio.create_task(self._prewarm_standby_session())
+
+                    # Hot-swap at turn N
+                    if (self._turns_since_reconnect >= self._session_split_interval
+                            and not is_empty_turn
+                            and not self._closing_call
+                            and not self._goodbye_pending
+                            and self.greeting_audio_complete):
+                        asyncio.create_task(self._hot_swap_session())
 
                     # Reset turn audio counter
                     self._current_turn_audio_chunks = 0
@@ -1099,7 +1407,7 @@ Rules:
                     # Process deferred goodbye detection (agent finished speaking)
                     if self._goodbye_pending and not self._closing_call:
                         self._goodbye_pending = False
-                        logger.debug(f"[{self.call_uuid[:8]}] Agent goodbye detected (deferred to turnComplete)")
+                        self.log.detail("Agent goodbye detected")
                         self.agent_said_goodbye = True
                         self._check_mutual_goodbye()
 
@@ -1167,12 +1475,17 @@ Rules:
                             audio_bytes = base64.b64decode(audio)
                             # Track audio chunks for empty turn detection
                             self._current_turn_audio_chunks += 1
-                            # Track turn start time and log when agent starts speaking
+                            # Track turn start time and TTFB
                             if self._current_turn_audio_chunks == 1:
                                 self._turn_start_time = time.time()
+                                self._turn_first_byte_time = time.time()
                                 self._agent_speaking = True
                                 self._user_speaking = False
-                                logger.debug(f"[{self.call_uuid[:8]}] Agent speaking")
+                                # Log greeting TTFB (trigger → first audio)
+                                if self._greeting_trigger_time and not self._first_audio_time:
+                                    self._first_audio_time = time.time()
+                                    ttfb_ms = (self._first_audio_time - self._greeting_trigger_time) * 1000
+                                    self.log.detail(f"Greeting TTFB: {ttfb_ms:.0f}ms")
                             # Record AI audio (24kHz)
                             self._record_audio("AI", audio_bytes, 24000)
 
@@ -1180,7 +1493,7 @@ Rules:
                             if self._last_user_speech_time:
                                 latency_ms = (time.time() - self._last_user_speech_time) * 1000
                                 if latency_ms > LATENCY_THRESHOLD_MS:
-                                    logger.warning(f"[{self.call_uuid[:8]}] Slow response: {latency_ms:.0f}ms")
+                                    self.log.warn(f"Slow response: {latency_ms:.0f}ms")
                                 self._last_user_speech_time = None  # Reset after first response
 
                             # During preload (no plivo_ws yet), always store audio
@@ -1281,32 +1594,38 @@ Rules:
             await self.stop()
 
     async def stop(self):
-        # Guard against double-stop
         if not self.is_active:
-            logger.debug(f"Session {self.call_uuid} already stopped, skipping")
             return
 
-        logger.info(f"[{self.call_uuid[:8]}] Call stopping")
         self.is_active = False
+        self.log.section("CALL ENDED")
 
-        # Cancel timeout task
-        if self._timeout_task:
-            self._timeout_task.cancel()
+        # Cancel all tasks
+        for task in [self._timeout_task, self._silence_monitor_task,
+                     self._sender_worker_task, self._standby_task,
+                     self._prewarm_task, self._active_receive_task]:
+            if task:
+                task.cancel()
 
-        # Cancel silence monitor
-        if self._silence_monitor_task:
-            self._silence_monitor_task.cancel()
+        # Close standby WS
+        if self._standby_ws:
+            await self._close_ws_quietly(self._standby_ws)
+            self._standby_ws = None
 
-        # Cancel sender worker
-        if self._sender_worker_task:
-            self._sender_worker_task.cancel()
-
-        # Calculate call duration
+        # Calculate call duration and log summary
         duration = 0
         if self.call_start_time:
             duration = (datetime.now() - self.call_start_time).total_seconds()
-            logger.info(f"[{self.call_uuid[:8]}] Duration: {duration:.1f}s")
-            self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s")
+            mins = int(duration // 60)
+            secs = duration % 60
+            self.log.detail(f"Duration: {mins}m {secs:.0f}s | Turns: {self._turn_count}")
+            if self._first_audio_time and self._greeting_trigger_time:
+                ttfb = (self._first_audio_time - self._greeting_trigger_time) * 1000
+                self.log.detail(f"Greeting TTFB: {ttfb:.0f}ms")
+            if self._call_answered_time and self._preload_start_time:
+                preload_total = (self._call_answered_time - self._preload_start_time) * 1000
+                self.log.detail_last(f"Preload→Answer: {preload_total:.0f}ms")
+            self._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s, turns: {self._turn_count}")
 
         if self.goog_live_ws:
             try:
@@ -1407,10 +1726,12 @@ Rules:
                 "transcript_entries": self._full_transcript
             }
 
-            logger.info(f"[{self.call_uuid[:8]}] Calling webhook: {self.webhook_url}")
+            self.log.detail(f"Webhook: {self.webhook_url}")
+            t0 = time.time()
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(self.webhook_url, json=payload)
-                logger.info(f"[{self.call_uuid[:8]}] Webhook response: {resp.status_code}")
+                wh_ms = (time.time() - t0) * 1000
+                self.log.detail(f"Webhook response: {resp.status_code} ({wh_ms:.0f}ms)")
         except Exception as e:
             logger.error(f"Error calling webhook: {e}")
 
