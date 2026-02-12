@@ -138,6 +138,11 @@ app = FastAPI(
 AUDIO_DIR.mkdir(exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 
+# Mount static directory for UI files
+STATIC_DIR = Path(__file__).parent.parent / "static"
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 # Request models
 class MakeCallRequest(BaseModel):
@@ -149,6 +154,12 @@ class WebhookVerification(BaseModel):
     hub_mode: str
     hub_verify_token: str
     hub_challenge: str
+
+
+class PromptUpdateRequest(BaseModel):
+    clientName: str
+    promptContent: str
+    config: dict
 
 
 # ============================================================================
@@ -163,6 +174,67 @@ async def health_check():
         "service": "AI Voice Call with Plivo",
         "version": "1.0.0"
     }
+
+
+# ============================================================================
+# Prompts Management
+# ============================================================================
+
+@app.get("/prompts/{client_name}")
+async def get_prompt(client_name: str):
+    """Get prompt and config for a client"""
+    try:
+        prompts_dir = Path(__file__).parent.parent / "prompts"
+        prompt_file = prompts_dir / f"{client_name}_prompt.txt"
+        config_file = prompts_dir / f"{client_name}_config.json"
+
+        # Read prompt
+        if prompt_file.exists():
+            with open(prompt_file, "r") as f:
+                prompt_content = f.read()
+        else:
+            prompt_content = ""
+
+        # Read config
+        if config_file.exists():
+            with open(config_file, "r") as f:
+                config_data = json.load(f)
+        else:
+            config_data = {}
+
+        return {
+            "promptContent": prompt_content,
+            "config": config_data,
+            "clientName": client_name
+        }
+    except Exception as e:
+        logger.error(f"Error loading prompt: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/prompts/update")
+async def update_prompt(request: PromptUpdateRequest):
+    """Update prompt and config for a client"""
+    try:
+        prompts_dir = Path(__file__).parent.parent / "prompts"
+        prompts_dir.mkdir(exist_ok=True)
+
+        prompt_file = prompts_dir / f"{request.clientName}_prompt.txt"
+        config_file = prompts_dir / f"{request.clientName}_config.json"
+
+        # Save prompt
+        with open(prompt_file, "w") as f:
+            f.write(request.promptContent)
+
+        # Save config
+        with open(config_file, "w") as f:
+            json.dump(request.config, f, indent=2)
+
+        logger.info(f"Updated prompt for client: {request.clientName}")
+        return {"status": "success", "message": "Prompt updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating prompt: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

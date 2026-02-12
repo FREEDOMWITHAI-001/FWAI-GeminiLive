@@ -1,0 +1,21 @@
+{
+  "call_uuid": "4e11f93b-37c6-442f-a36e-662130abda8f",
+  "metrics": {
+    "questions_completed": 1,
+    "total_duration_s": 24.2,
+    "avg_latency_ms": 0,
+    "max_latency_ms": 0,
+    "min_latency_ms": 0,
+    "p90_latency_ms": 0,
+    "total_nudges": 0,
+    "per_question": [
+      {
+        "q": 0,
+        "id": "greeting",
+        "latency_ms": 0,
+        "duration_s": 24.2,
+        "nudges": 0
+      }
+    ]
+  }
+}
