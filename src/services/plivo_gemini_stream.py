@@ -153,7 +153,7 @@ class PlivoGeminiSession:
                 client_name=self.client_name,
                 context=self.context,
                 questions_override=questions_override,
-                prompt_override=prompt_override,
+                prompt_override=prompt_override or prompt,
                 objections_override=objections_override,
                 objection_keywords_override=objection_keywords_override
             )
