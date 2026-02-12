@@ -164,7 +164,6 @@ USER: It was very informative.
 ```
 FWAI_WebRTC_Gemini/
 ├── run.py                    # Entry point
-├── prompts.json              # AI agent prompts (NEPQ methodology)
 ├── .env                      # Configuration
 ├── src/
 │   ├── app.py                # FastAPI server
@@ -181,16 +180,7 @@ FWAI_WebRTC_Gemini/
 
 ## Customize AI Agent
 
-Edit `prompts.json`:
-
-```json
-{
-  "FWAI_Core": {
-    "name": "Your Agent Name",
-    "prompt": "You are [Agent Name]...\n\nSTYLE:\n- Keep responses brief\n..."
-  }
-}
-```
+Prompts are provided via the `/plivo/make-call` API in the `prompt` field. Use `{{placeholder}}` syntax for dynamic values (e.g., `{{agent_name}}`, `{{company_name}}`). See `src/conversational_prompts.py` for available defaults.
 
 ## Production Deployment (Oracle Cloud)
 

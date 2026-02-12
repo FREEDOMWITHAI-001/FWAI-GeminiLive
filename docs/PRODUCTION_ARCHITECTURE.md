@@ -417,14 +417,12 @@ curl http://localhost:3000
 FWAI-GeminiLive/
 ├── run.py                      # Application entry point
 ├── requirements.txt            # Python dependencies
-├── prompts.json               # AI system prompts
 ├── .env                       # Environment configuration (not in git)
 ├── .gitignore
 │
 ├── src/
 │   ├── __init__.py
 │   ├── app.py                 # FastAPI application
-│   ├── prompt_loader.py       # Prompt management
 │   ├── conversation_memory.py # Conversation state
 │   │
 │   ├── core/

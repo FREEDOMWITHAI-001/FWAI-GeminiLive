@@ -37,7 +37,6 @@ curl -X POST http://localhost:3001/plivo/make-call \
 ```
 FWAI_WebRTC_Gemini/
 ├── run.py                          # Entry point
-├── prompts.json                    # AI agent prompts
 ├── .env                            # Configuration
 ├── src/
 │   ├── app.py                      # FastAPI server (all endpoints)
@@ -60,7 +59,6 @@ FWAI_WebRTC_Gemini/
 |------|---------|
 | `src/app.py` | FastAPI server with all Plivo endpoints |
 | `src/services/plivo_gemini_stream.py` | Core bridge - preloading, audio streaming, tools |
-| `prompts.json` | System prompts for AI agent |
 | `src/tools/__init__.py` | Tool registry and executor |
 
 ## API Endpoints
@@ -146,14 +144,7 @@ Edit `plivo_gemini_stream.py`:
 ```
 
 ### Change AI Prompt
-Edit `prompts.json`:
-```json
-{
-  "FWAI_Core": {
-    "prompt": "Your system prompt here..."
-  }
-}
-```
+Prompts are provided via the `/plivo/make-call` API request in the `prompt` field. Use `{{placeholder}}` syntax for dynamic values — see `src/conversational_prompts.py` for available defaults.
 
 ### Add New Tool
 1. Create `src/tools/new_tool.py` (extend BaseTool)

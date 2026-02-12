@@ -6,7 +6,7 @@ Python-based implementation using aiortc for full audio access
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional, List
+from typing import Optional
 from pathlib import Path
 from loguru import logger
 import sys
@@ -16,8 +16,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 import json
 
+import hashlib
 from src.core.config import config
-from src.prompt_loader import FWAI_PROMPT
 from src.conversation_memory import add_message, get_history, clear_conversation
 from src.db.session_db import session_db
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +25,23 @@ from fastapi.staticfiles import StaticFiles
 # Audio directory for any generated audio files
 AUDIO_DIR = Path(__file__).parent.parent / "audio"
 from datetime import datetime
+
+# Prompt caching: deduplicate identical prompts across calls
+_prompt_cache: dict[str, str] = {}
+
+def _hash_prompt(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+
+def get_or_cache_prompt(prompt: str) -> str:
+    if not prompt:
+        return prompt
+    h = _hash_prompt(prompt)
+    if h in _prompt_cache:
+        logger.debug(f"Prompt cache HIT ({h[:12]})")
+        return _prompt_cache[h]
+    _prompt_cache[h] = prompt
+    logger.debug(f"Prompt cache MISS — stored ({h[:12]}, {len(prompt)} chars)")
+    return prompt
 from src.handlers.webrtc_handler import (
     make_outbound_call,
     handle_incoming_call,
@@ -434,6 +451,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Generate call_uuid first (before Plivo call)
         call_uuid = str(uuid.uuid4())
 
+        # Cache the incoming prompt (deduplicates identical prompts across calls)
+        if request.prompt:
+            request.prompt = get_or_cache_prompt(request.prompt)
+
         # Add customer_name to context if not present
         context = request.context or {}
         context.setdefault("customer_name", request.contactName)
@@ -658,143 +679,6 @@ async def plivo_hangup(request: Request):
     return JSONResponse(content={"status": "ok"})
 
 
-# ============= CONVERSATIONAL FLOW ENDPOINTS =============
-
-class InjectContextRequest(BaseModel):
-    """Request to inject dynamic context into an ongoing call"""
-    phase: str  # Current conversation phase
-    context: str  # Dynamic prompt/context to inject
-    data: Optional[dict] = None  # Any captured data (name, role, etc.)
-
-
-@app.post("/call/inject/{call_id}")
-async def inject_context(call_id: str, request: InjectContextRequest):
-    """
-    Inject dynamic context into an ongoing call.
-    Called by n8n to change conversation phase or add context.
-    """
-    from src.services.plivo_gemini_stream import inject_context_to_session
-
-    logger.info(f"[{call_id[:8]}] INJECT | Phase: {request.phase}")
-
-    success = await inject_context_to_session(
-        call_id,
-        request.phase,
-        additional_context=request.context,
-        data=request.data
-    )
-
-    if success:
-        return JSONResponse(content={
-            "success": True,
-            "call_id": call_id,
-            "phase": request.phase
-        })
-    else:
-        raise HTTPException(status_code=404, detail=f"Call {call_id} not found or not active")
-
-
-class ConversationalCallRequest(BaseModel):
-    """Request to start a conversational flow call"""
-    phoneNumber: str
-    contactName: str = "Customer"
-    callEndWebhookUrl: Optional[str] = None  # URL when call ends
-    context: Optional[dict] = None
-    clientName: Optional[str] = None  # Client name for loading specific prompt (e.g., 'fwai', 'ridhi')
-    questions: List[dict]  # Questions: [{"id": "q1", "prompt": "..."}] — required
-    prompt: str  # Base system instruction prompt — required
-    objections: Optional[dict] = None  # Objection responses
-    objectionKeywords: Optional[dict] = None  # Objection keywords
-    instructionTemplates: Optional[dict] = None  # Override instruction texts (nudge, wrap-up, greeting, etc.)
-
-
-@app.post("/call/conversational")
-async def start_conversational_call(request: ConversationalCallRequest):
-    """
-    Start a call with conversational flow mode.
-    Loads client-specific prompt from prompts/{clientName}_prompt.txt
-    AI handles the flow naturally (no phase injection).
-    """
-    from src.services.plivo_gemini_stream import preload_session_conversational
-
-    logger.info(f"Starting conversational call to {request.phoneNumber}, client: {request.clientName}")
-
-    try:
-        import uuid
-        call_uuid = str(uuid.uuid4())
-
-        # Build context with customer name
-        context = request.context or {}
-        context.setdefault("customer_name", request.contactName)
-        context["conversational_mode"] = True
-
-        # QuestionFlow mode: Don't load full prompt file, let QuestionFlow use config
-        client_name = request.clientName or "fwai"
-        logger.info(f"[{call_uuid[:8]}] QuestionFlow mode for client: {client_name}")
-
-        # Store call data
-        _pending_call_data[call_uuid] = {
-            "phone": request.phoneNumber,
-            "context": context,
-            "webhookUrl": request.callEndWebhookUrl,
-            "conversational_mode": True,
-            "clientName": client_name
-        }
-
-        # Record call in DB (non-blocking)
-        total_q = len(request.questions)
-        logger.info(f"[{call_uuid[:8]}] {total_q} questions, prompt={len(request.prompt)} chars")
-        session_db.create_call(
-            call_uuid=call_uuid, phone=request.phoneNumber,
-            contact_name=request.contactName, client_name=client_name,
-            webhook_url=request.callEndWebhookUrl,
-            total_questions=total_q
-        )
-
-        # Preload session with QuestionFlow
-        await preload_session_conversational(
-            call_uuid,
-            request.phoneNumber,
-            context=context,
-            call_end_webhook_url=request.callEndWebhookUrl,
-            client_name=client_name,
-            questions_override=request.questions,
-            prompt_override=request.prompt,
-            objections_override=request.objections,
-            objection_keywords_override=request.objectionKeywords,
-            instruction_templates=request.instructionTemplates
-        )
-
-        # Make the Plivo call
-        result = await plivo_adapter.make_call(
-            phone_number=request.phoneNumber,
-            caller_name=request.contactName
-        )
-
-        if result.get("success"):
-            plivo_uuid = result.get("call_uuid")
-            if plivo_uuid:
-                _plivo_to_internal_uuid[plivo_uuid] = call_uuid
-                _internal_to_plivo_uuid[call_uuid] = plivo_uuid
-
-                from src.services.plivo_gemini_stream import set_plivo_uuid
-                set_plivo_uuid(call_uuid, plivo_uuid)
-
-            return JSONResponse(content={
-                "success": True,
-                "call_uuid": call_uuid,
-                "plivo_uuid": plivo_uuid,
-                "mode": "conversational",
-                "message": f"Conversational call initiated to {request.phoneNumber}"
-            })
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error"))
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting conversational call: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/call/history")
@@ -812,17 +696,6 @@ async def get_call_details(call_id: str):
         return JSONResponse(content=call)
     raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
 
-
-@app.get("/call/phases")
-async def get_available_phases():
-    """Get list of available conversation phases for n8n"""
-    from src.conversational_prompts import PHASE_PROMPTS, QUALIFICATION_RULES, DATA_FIELDS
-
-    return JSONResponse(content={
-        "phases": list(PHASE_PROMPTS.keys()),
-        "qualification_rules": QUALIFICATION_RULES,
-        "data_fields": DATA_FIELDS
-    })
 
 
 # ============= CALL METRICS ENDPOINT =============

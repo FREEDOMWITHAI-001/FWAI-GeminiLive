@@ -417,7 +417,7 @@ When call ends, server POSTs to n8n webhook:
             }
         },
         "system_instruction": {
-            "parts": [{"text": FWAI_PROMPT}]
+            "parts": [{"text": prompt}]  # Provided via /plivo/make-call API
         },
         "tools": [{
             "function_declarations": TOOL_DECLARATIONS
@@ -445,7 +445,6 @@ BUFFER_SIZE = 320  # 20ms chunks for ultra-low latency
 | `src/tools/send_whatsapp.py` | WhatsApp tool implementation |
 | `src/adapters/plivo_adapter.py` | Plivo API client |
 | `src/core/config.py` | Environment configuration |
-| `prompts.json` | AI agent system prompts |
 | `n8n_flows/FWAI_Internal/outbound_call.json` | n8n workflow |
 
 ## API Reference
