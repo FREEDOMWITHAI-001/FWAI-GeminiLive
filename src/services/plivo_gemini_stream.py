@@ -24,15 +24,15 @@ try:
     import orjson
     def json_dumps(obj) -> str:
         """Fast JSON encoding with orjson"""
-        return orjson_dumps(obj).decode('utf-8')
+        return orjson.dumps(obj).decode('utf-8')
     def json_loads(s: str):
         """Fast JSON decoding with orjson"""
-        return orjson_loads(s)
+        return orjson.loads(s)
     logger.debug("Using orjson for fast JSON operations")
 except ImportError:
     # Fallback to standard json
-    json_dumps = json_dumps
-    json_loads = json_loads
+    json_dumps = json.dumps
+    json_loads = json.loads
     logger.debug("Using standard json library")
 
 
