@@ -1018,6 +1018,55 @@ Rules:
         self.goog_live_ws = None
         await self._close_ws_quietly(ws)
 
+    async def _emergency_session_split(self):
+        """Emergency split when GoAway fires with no standby: connect + setup + swap in one shot."""
+        if self._swap_in_progress or self._closing_call:
+            return
+        self._swap_in_progress = True
+        self.log.phase("SESSION SPLIT (emergency — GoAway)")
+        try:
+            # Null out goog_live_ws immediately to stop audio send errors
+            old_ws = self.goog_live_ws
+            self.goog_live_ws = None
+
+            if self._active_receive_task:
+                self._active_receive_task.cancel()
+                self._active_receive_task = None
+
+            # Connect new WS + send setup with current context
+            t0 = time.time()
+            ws = await self._connect_and_setup_ws(is_standby=False)
+
+            # Wait for setupComplete
+            msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+            resp = json.loads(msg)
+            if "setupComplete" not in resp:
+                self.log.error("Emergency split: setup failed")
+                await self._close_ws_quietly(ws)
+                return
+
+            # Send anti-repetition context
+            await self._send_context_to_ws(ws)
+
+            # Swap in
+            self.goog_live_ws = ws
+            self._active_receive_task = asyncio.create_task(
+                self._ws_receive_loop(ws, is_standby=False)
+            )
+            asyncio.create_task(self._close_ws_quietly(old_ws))
+
+            self._turns_since_reconnect = 0
+            self._is_reconnecting = False
+            swap_ms = (time.time() - t0) * 1000
+            self.log.detail(f"Emergency swap complete ({swap_ms:.0f}ms)")
+            self._save_transcript("SYSTEM", f"Emergency session split ({swap_ms:.0f}ms)")
+        except Exception as e:
+            self.log.error(f"Emergency split failed: {e}")
+            # Let main loop reconnect
+            self._is_reconnecting = True
+        finally:
+            self._swap_in_progress = False
+
     def _build_compact_summary(self) -> str:
         """Build conversation summary for session split context.
         Includes turn numbers for clarity and marks the last exchange explicitly."""
@@ -1372,10 +1421,11 @@ Rules:
             if "goAway" in resp:
                 self.log.warn("GoAway — triggering session split")
                 self._save_transcript("SYSTEM", "Session GoAway (10-min limit)")
-                if self._standby_ws and self._standby_ready.is_set():
+                if self._standby_ws:
                     asyncio.create_task(self._hot_swap_session())
                 else:
-                    await self._fallback_session_split()
+                    # No standby — prewarm + swap immediately
+                    asyncio.create_task(self._emergency_session_split())
                 return
 
             # Handle tool calls
