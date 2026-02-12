@@ -403,6 +403,29 @@ async def get_call_transcript(call_id: str):
         )
 
 
+@app.get("/calls/{call_id}/recording")
+async def get_call_recording(call_id: str):
+    """Download the recording for a call by call_uuid"""
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+
+    recordings_dir = Path(__file__).parent.parent / "recordings"
+
+    # Try MP3 first, then WAV
+    mp3_file = recordings_dir / f"{call_id}_mixed.mp3"
+    wav_file = recordings_dir / f"{call_id}_mixed.wav"
+
+    if mp3_file.exists():
+        return FileResponse(str(mp3_file), media_type="audio/mpeg", filename=f"{call_id}.mp3")
+    elif wav_file.exists():
+        return FileResponse(str(wav_file), media_type="audio/wav", filename=f"{call_id}.wav")
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Recording not found for call {call_id}. Ensure ENABLE_TRANSCRIPTS=true."
+        )
+
+
 # ============================================================================
 # Main Entry Point
 # ============================================================================
