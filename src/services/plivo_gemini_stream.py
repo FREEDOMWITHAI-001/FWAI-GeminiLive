@@ -276,7 +276,7 @@ class PlivoGeminiSession:
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
         self._last_question_time = 0  # Cooldown between question injections
-        self._wait_timeout = 8.0  # Wait 8 seconds for user response before nudging
+        self._wait_timeout = 15.0  # Wait 15 seconds for user response before nudging
 
         # Question Pipeline: replaces scattered boolean flags with lifecycle state machine
         # Manages gate_open, echo protection, turn counting, user transcript accumulation
@@ -791,33 +791,21 @@ Rules:
                     if self._last_user_transcript_time > q_time:
                         silence_since_speech = time.time() - self._last_user_transcript_time
 
-                        # If 2.5+ seconds since last real speech, user has finished talking
-                        if silence_since_speech >= 2.5 and time_since_q >= 2.0:
+                        # If 4+ seconds since last real speech, user has finished talking
+                        if silence_since_speech >= 4.0 and time_since_q >= 2.0:
                             logger.info(f"[{self.call_uuid[:8]}] Silence monitor: user finished "
                                         f"| phase={phase.value} | silence={silence_since_speech:.1f}s "
                                         f"| since_q={time_since_q:.1f}s | pending='{pending[:40]}'")
                             await self._process_user_audio_for_transcription()
                             continue
 
-                    # If waiting too long with no real speech, prompt user
-                    # Only nudge in LISTENING phase (not DELIVERING/ECHOING — AI is still speaking)
-                    # Use listen_time (not deliver_time) so user gets full wait_timeout after AI finishes
-                    listen_time = self._pipeline._current.listen_time if self._pipeline._current else 0
-                    time_in_listening = time.time() - listen_time if listen_time else 0
-                    # Q0 (greeting) gets extra time — connection delay means user audio arrives late
-                    q_idx = self._pipeline._current.index if self._pipeline._current else 0
-                    effective_timeout = self._wait_timeout + 5 if q_idx == 0 else self._wait_timeout
-                    if self._pipeline.is_listening and time_in_listening >= effective_timeout:
-                        no_real_speech = (self._last_user_transcript_time == 0 or
-                                         self._last_user_transcript_time < q_time)
-                        if no_real_speech and not pending:
-                            logger.info(f"[{self.call_uuid[:8]}] Silence monitor: {self._wait_timeout}s in LISTENING "
-                                        f"| total_since_q={time_since_q:.1f}s | no_speech=True | nudging user")
-                            await self._send_silence_nudge()
-                        else:
-                            logger.debug(f"[{self.call_uuid[:8]}] Silence monitor: {time_since_q:.1f}s since Q "
-                                         f"| phase={phase.value} | no_real_speech={no_real_speech} "
-                                         f"| pending='{pending[:30]}' | waiting for more speech")
+                    # No nudge — just wait silently for user to speak (or call timeout ends it)
+                    if self._pipeline.is_listening:
+                        listen_time = self._pipeline._current.listen_time if self._pipeline._current else 0
+                        time_in_listening = time.time() - listen_time if listen_time else 0
+                        if time_in_listening >= 30.0:
+                            logger.debug(f"[{self.call_uuid[:8]}] Silence monitor: {time_in_listening:.0f}s in LISTENING "
+                                         f"| waiting for user to speak | pending='{pending[:30]}'")
                     continue
 
                 # Original silence monitoring for non-QuestionFlow mode
@@ -865,25 +853,16 @@ Rules:
                         f"| {self._pipeline.dump_state()}")
             nudge_count = self._pipeline.reset_for_nudge()  # DELIVERING state re-opens gate
 
-            # Max 1 nudge per question — after that, auto-advance with "(no response)"
-            if nudge_count > 1:
+            # Max 3 nudges per question — after that, just keep waiting silently
+            # Never auto-advance: wait until user actually speaks or call times out
+            if nudge_count > 3:
                 q_idx = self._pipeline._current.index if self._pipeline._current else '?'
-                logger.warning(f"[{self.call_uuid[:8]}] Nudge: max reached ({nudge_count}) for Q{q_idx} "
-                               f"— auto-advancing with no response")
-                # Force to LISTENING so capture_response works
-                if self._pipeline._current:
-                    self._pipeline._current.phase = QuestionPhase.LISTENING
-                    self._pipeline._current.listen_time = time.time()
-                self._pipeline.capture_response()
-                next_instruction = self._question_flow.advance("(no response)")
-                self._pipeline.finalize_and_advance()
-                self._last_question_time = time.time()
-                await self._inject_question(next_instruction, user_said="")
+                logger.info(f"[{self.call_uuid[:8]}] Nudge: max reached ({nudge_count}) for Q{q_idx} "
+                            f"— waiting silently (no auto-advance)")
                 return
 
             # Gentle nudge — re-engage user without advancing to next question
             q_idx = self._pipeline._current.index if self._pipeline._current else 0
-            current_q = self._question_flow.get_current_question() if self._question_flow else ""
             if q_idx == 0:
                 nudge_text = "The customer hasn't responded. Say ONLY 'Hello? Are you there?' and STOP. Do NOT ask any question. Do NOT move forward. Just wait."
             else:
@@ -1526,7 +1505,7 @@ Rules:
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.info("Sent initial greeting trigger")
+        logger.debug("Sent initial greeting trigger")
 
     async def _send_reconnection_trigger(self):
         """Trigger AI to speak immediately after reconnection, restoring question flow state"""
@@ -1879,7 +1858,7 @@ Rules:
                         ai_text = str(output_transcription)
                     if ai_text and ai_text.strip():
                         ai_text = ai_text.strip()
-                        logger.info(f"[{self.call_uuid[:8]}] AGENT: {ai_text}")
+                        logger.debug(f"[{self.call_uuid[:8]}] AGENT: {ai_text}")
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
                         # Store what the agent said for this question
@@ -2492,7 +2471,7 @@ async def send_transcript_to_webhook(session, role: str, text: str, max_retries:
                         logger.debug(f"Transcript webhook sent: {role}: {text[:30]}...")
                         return
                     else:
-                        logger.warning(f"Webhook returned {resp.status_code}, attempt {attempt + 1}")
+                        logger.debug(f"Webhook returned {resp.status_code}, attempt {attempt + 1}")
             except httpx.TimeoutException:
                 if attempt < max_retries:
                     logger.warning(f"Webhook timeout, retrying ({attempt + 1}/{max_retries})...")
