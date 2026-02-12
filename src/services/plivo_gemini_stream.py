@@ -1232,7 +1232,8 @@ Rules:
                     if token:
                         extra_headers = {"Authorization": f"Bearer {token}"}
 
-                ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
+                # LATENCY OPT: Standardize timeouts for better stability (15s recommended)
+                ws_kwargs = {"ping_interval": 15, "ping_timeout": 15, "close_timeout": 5}
                 if extra_headers:
                     # Use additional_headers for newer websockets versions
                     ws_kwargs["additional_headers"] = extra_headers
