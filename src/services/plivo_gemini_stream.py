@@ -683,7 +683,7 @@ Rules:
             old_time = self._pipeline._current.deliver_time
             self._pipeline._current.deliver_time = time.time()
             self._pipeline._current.turns_since_inject = 0
-            logger.info(f"[{self.call_uuid[:8]}] Pipeline: reset deliver_time "
+            logger.debug(f"[{self.call_uuid[:8]}] Pipeline: reset deliver_time "
                         f"(was {time.time() - old_time:.1f}s ago, now=0s)")
         # Send any preloaded audio immediately
         if self.preloaded_audio:
@@ -981,7 +981,7 @@ Rules:
 
     async def _audio_gate_worker(self):
         """Worker 1: Reads AudioChunks from audio_out_queue, forwards approved ones to plivo_send_queue"""
-        logger.info(f"[{self.call_uuid[:8]}] Gate worker started")
+        logger.debug(f"[{self.call_uuid[:8]}] Gate worker started")
         try:
             while self.is_active:
                 try:
@@ -1005,11 +1005,11 @@ Rules:
             pass
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Gate worker error: {e}")
-        logger.info(f"[{self.call_uuid[:8]}] Gate worker stopped")
+        logger.debug(f"[{self.call_uuid[:8]}] Gate worker stopped")
 
     async def _plivo_sender_worker(self):
         """Worker 2: Reads from plivo_send_queue, sends to Plivo WebSocket"""
-        logger.info(f"[{self.call_uuid[:8]}] Plivo sender worker started")
+        logger.debug(f"[{self.call_uuid[:8]}] Plivo sender worker started")
         try:
             while self.is_active:
                 try:
@@ -1037,11 +1037,11 @@ Rules:
             pass
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Plivo sender worker error: {e}")
-        logger.info(f"[{self.call_uuid[:8]}] Plivo sender worker stopped")
+        logger.debug(f"[{self.call_uuid[:8]}] Plivo sender worker stopped")
 
     async def _transcript_validator_worker(self):
         """Worker 3: Validates AI output transcription, cancels off-script audio"""
-        logger.info(f"[{self.call_uuid[:8]}] Transcript validator worker started")
+        logger.debug(f"[{self.call_uuid[:8]}] Transcript validator worker started")
         accumulated_text = ""
         current_turn = -1
         try:
@@ -1090,7 +1090,7 @@ Rules:
             pass
         except Exception as e:
             logger.error(f"[{self.call_uuid[:8]}] Transcript validator error: {e}")
-        logger.info(f"[{self.call_uuid[:8]}] Transcript validator worker stopped")
+        logger.debug(f"[{self.call_uuid[:8]}] Transcript validator worker stopped")
 
     async def _send_reconnection_filler(self):
         """Handle silence during reconnection - clear audio and prepare for resume"""
@@ -1498,7 +1498,7 @@ Rules:
             }
         }
         await self.goog_live_ws.send(json.dumps(msg))
-        logger.debug("Sent initial greeting trigger")
+        logger.info(f"[{self.call_uuid[:8]}] Greeting trigger sent to Gemini")
 
     async def _send_reconnection_trigger(self):
         """Trigger AI to speak immediately after reconnection, restoring question flow state"""
@@ -1754,10 +1754,9 @@ Rules:
                     if self._pipeline and self._pipeline.gate_open:
                         self._pipeline.on_turn_complete()
 
-                    # Log turn latency at DEBUG level
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
-                        logger.debug(f"[{self.call_uuid[:8]}] Turn #{self._turn_count}: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
+                        logger.info(f"[{self.call_uuid[:8]}] Turn #{self._turn_count} complete: {self._current_turn_audio_chunks} chunks, {turn_duration_ms:.0f}ms")
                         self._turn_start_time = None
 
                     # FIX: In QuestionFlow mode, do NOT process transcription on turnComplete
@@ -1845,7 +1844,7 @@ Rules:
                         ai_text = str(output_transcription)
                     if ai_text and ai_text.strip():
                         ai_text = ai_text.strip()
-                        logger.debug(f"[{self.call_uuid[:8]}] AGENT: {ai_text}")
+                        logger.info(f"[{self.call_uuid[:8]}] AGENT → User: {ai_text}")
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
                         # Store what the agent said for this question
