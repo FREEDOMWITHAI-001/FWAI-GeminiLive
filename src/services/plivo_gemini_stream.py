@@ -931,8 +931,8 @@ Rules:
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
 
-    async def _trigger_silence_detection_after_delay(self, delay_seconds: float = 0.05):
-        """Trigger silence detection after a delay. Optimized for low latency (~50ms).
+    async def _trigger_silence_detection_after_delay(self, delay_seconds: float = 0.0):
+        """Trigger silence detection after a delay. Optimized for instantaneous response (0ms).
         Called when user speech is detected - waits for silence, then signals the monitor."""
         try:
             await asyncio.sleep(delay_seconds)
@@ -944,14 +944,14 @@ Rules:
 
     def _schedule_silence_detection(self):
         """Schedule silence detection task, cancelling any previous one.
-        Event-driven approach: reduces latency from 0-100ms (polling) to <5ms (event)."""
+        Event-driven approach: instantaneous response (0ms delay)."""
         # Cancel existing silence detection task if any
         if self._silence_detection_task and not self._silence_detection_task.done():
             self._silence_detection_task.cancel()
 
-        # Schedule new silence detection (triggers after 50ms of no speech)
+        # Schedule new silence detection (triggers immediately - 0ms delay)
         self._silence_detection_task = asyncio.create_task(
-            self._trigger_silence_detection_after_delay(0.05)
+            self._trigger_silence_detection_after_delay(0.0)
         )
 
     # ==================== QUEUE-BASED AUDIO PIPELINE ====================
