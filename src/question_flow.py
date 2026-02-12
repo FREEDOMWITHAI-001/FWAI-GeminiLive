@@ -68,50 +68,37 @@ class QuestionFlow:
     current_step: int = 0
     collected_data: Dict = field(default_factory=dict)
 
-    # Loaded from config (or overridden from n8n API)
+    # All configurable via API — config file only provides defaults (voice, agent_name, etc.)
     config: Dict = field(default_factory=dict)
     questions: List[Dict] = field(default_factory=list)
     objections: Dict[str, str] = field(default_factory=dict)
     objection_keywords: Dict[str, List[str]] = field(default_factory=dict)
     base_prompt: str = ""
-    questions_override: Optional[List[Dict]] = None  # Questions from n8n API
-    prompt_override: Optional[str] = None  # Base prompt from n8n API
-    objections_override: Optional[Dict] = None  # Objections from n8n API
-    objection_keywords_override: Optional[Dict] = None  # Objection keywords from n8n API
+    questions_override: Optional[List[Dict]] = None  # Questions from API
+    prompt_override: Optional[str] = None  # Base prompt from API
+    objections_override: Optional[Dict] = None  # Objections from API
+    objection_keywords_override: Optional[Dict] = None  # Objection keywords from API
 
     def __post_init__(self):
-        """Load config after initialization, with n8n overrides taking priority"""
+        """Load config for defaults (voice, agent_name), everything else from API"""
         self.config = load_client_config(self.client_name)
 
-        # Merge defaults with provided context
+        # Merge defaults with provided context (voice, agent_name, company_name, etc.)
         defaults = self.config.get("defaults", {})
         self.context = {**defaults, **self.context}
 
-        # n8n overrides take priority over config file
-        if self.questions_override:
-            self.questions = self.questions_override
-            logger.info(f"Using {len(self.questions)} questions from n8n API")
-        else:
-            self.questions = self.config.get("questions", [])
+        # Questions, prompt, objections — all from API
+        self.questions = self.questions_override or []
+        self.base_prompt = self.prompt_override or ""
+        self.objections = self.objections_override or {}
+        self.objection_keywords = self.objection_keywords_override or {}
 
-        if self.prompt_override:
-            self.base_prompt = self.prompt_override
-            logger.info(f"Using prompt from n8n API ({len(self.base_prompt)} chars)")
-        else:
-            self.base_prompt = self.config.get("base_prompt", "")
+        if not self.questions:
+            logger.warning(f"No questions provided for {self.client_name} — call will have no question flow")
+        if not self.base_prompt:
+            logger.warning(f"No prompt provided for {self.client_name} — using minimal default")
 
-        if self.objections_override:
-            self.objections = self.objections_override
-            logger.info(f"Using {len(self.objections)} objections from n8n API")
-        else:
-            self.objections = self.config.get("objections", {})
-
-        if self.objection_keywords_override:
-            self.objection_keywords = self.objection_keywords_override
-        else:
-            self.objection_keywords = self.config.get("objection_keywords", {})
-
-        logger.debug(f"Loaded {len(self.questions)} questions for {self.client_name}")
+        logger.info(f"[{self.client_name}] {len(self.questions)} questions, prompt={len(self.base_prompt)} chars")
 
     def _render(self, template: str) -> str:
         """Replace {placeholders} with context values"""

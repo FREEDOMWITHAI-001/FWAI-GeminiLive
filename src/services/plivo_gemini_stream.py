@@ -187,7 +187,7 @@ OFF_SCRIPT_PHRASES = [
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, transcript_webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None, prompt_override: str = None, objections_override: dict = None, objection_keywords_override: dict = None):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", use_question_flow: bool = True, questions_override: list = None, prompt_override: str = None, objections_override: dict = None, objection_keywords_override: dict = None):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
@@ -225,9 +225,6 @@ class PlivoGeminiSession:
             self.prompt = render_prompt(raw_prompt, self.context)
             logger.info(f"[{call_uuid[:8]}] Full prompt mode for client: {client_name or 'default'}")
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
-        self._transcript_webhook_url = transcript_webhook_url  # URL for real-time transcript (n8n state machine)
-        if transcript_webhook_url:
-            logger.info(f"[{call_uuid[:8]}] Transcript webhook configured: {transcript_webhook_url}")
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
         self.is_active = False
@@ -663,9 +660,6 @@ Rules:
             self.is_active = True
             # Start main voice session (native audio)
             self._session_task = asyncio.create_task(self._run_google_live_session())
-            # REST API transcription enabled if webhook configured
-            if self._transcript_webhook_url:
-                logger.debug(f"[{self.call_uuid[:8]}] REST API transcription active")
             # Wait for setup to complete (with timeout - 8s max for better greeting)
             try:
                 await asyncio.wait_for(self._preload_complete.wait(), timeout=8.0)
@@ -1265,8 +1259,7 @@ Rules:
 
     async def _process_user_audio_for_transcription(self):
         """Process user response and advance question flow (transcription disabled - done at end)"""
-        # Question flow mode doesn't require webhook URL
-        if not self._transcript_webhook_url and not self.use_question_flow:
+        if not self.use_question_flow:
             return
 
         # Pipeline mode: use pipeline state instead of scattered flags
@@ -1402,7 +1395,7 @@ Rules:
 
     def _buffer_user_audio(self, audio_chunk: bytes):
         """Buffer user audio for transcription"""
-        if not self._transcript_webhook_url and not self.use_question_flow:
+        if not self.use_question_flow:
             return
 
         # Add to buffer (with size limit)
@@ -1769,11 +1762,6 @@ Rules:
 
                     # FIX: In QuestionFlow mode, do NOT process transcription on turnComplete
                     # The silence monitor will detect when user finishes speaking and process then
-                    # This prevents the AI from rapid-firing questions without waiting for responses
-                    if self._turn_count > 1 and self._transcript_webhook_url and not self.use_question_flow:
-                        # Only for non-QuestionFlow mode with webhook
-                        asyncio.create_task(self._process_user_audio_for_transcription())
-
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
                     # Skip nudging entirely in QuestionFlow mode - just wait for user
                     if self._current_turn_audio_chunks == 0 and self.greeting_audio_complete and not self._closing_call and not self.use_question_flow:
@@ -1842,7 +1830,6 @@ Rules:
                                 logger.info(f"[{self.call_uuid[:8]}] USER: {user_text}")
                                 self._save_transcript("USER", user_text)
                                 self._log_conversation("user", user_text)
-                                asyncio.create_task(send_transcript_to_webhook(self, "user", user_text))
                                 # Track if user said goodbye
                                 if self._is_goodbye_message(user_text):
                                     logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
@@ -1864,7 +1851,6 @@ Rules:
                         # Store what the agent said for this question
                         if self._pipeline:
                             self._pipeline.store_agent_said(ai_text)
-                        asyncio.create_task(send_transcript_to_webhook(self, "agent", ai_text))
                         # Feed to transcript validator worker for off-script detection
                         try:
                             self._transcript_val_queue.put_nowait({
@@ -1951,8 +1937,6 @@ Rules:
                                 # Store what the agent said for this question
                                 if self._pipeline:
                                     self._pipeline.store_agent_said(ai_text)
-                                # Send to n8n webhook for state machine (non-blocking)
-                                asyncio.create_task(send_transcript_to_webhook(self, "agent", ai_text))
                                 # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
                                 if not self._closing_call and self._is_goodbye_message(ai_text):
                                     self._goodbye_pending = True
@@ -2385,7 +2369,6 @@ async def preload_session_conversational(
     base_prompt: str = None,
     initial_phase_prompt: str = None,
     context: dict = None,
-    n8n_webhook_url: str = None,
     call_end_webhook_url: str = None,
     client_name: str = "fwai",
     questions_override: list = None,
@@ -2403,10 +2386,9 @@ async def preload_session_conversational(
         base_prompt: IGNORED - QuestionFlow uses config file
         initial_phase_prompt: IGNORED - QuestionFlow handles this
         context: Context dict with customer_name, etc.
-        n8n_webhook_url: URL to send real-time transcripts (optional)
         call_end_webhook_url: URL to call when call ends
         client_name: Client config to use (e.g., 'fwai')
-        questions_override: Optional list of questions from API (overrides config file)
+        questions_override: List of questions from API
 
     Returns:
         True if preload succeeded
@@ -2418,14 +2400,13 @@ async def preload_session_conversational(
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
 
-        # Create session with QuestionFlow enabled (uses config file, or overrides from n8n)
+        # Create session with QuestionFlow enabled
         session = PlivoGeminiSession(
             call_uuid,
             caller_phone,
-            prompt=None,  # QuestionFlow will use base_prompt from config (or override)
+            prompt=None,
             context=context,
             webhook_url=call_end_webhook_url,
-            transcript_webhook_url=n8n_webhook_url,
             client_name=client_name,
             use_question_flow=True,  # Explicitly enable QuestionFlow
             questions_override=questions_override,
@@ -2437,50 +2418,3 @@ async def preload_session_conversational(
 
     success = await session.preload()
     return success
-
-
-async def send_transcript_to_webhook(session, role: str, text: str, max_retries: int = 2):
-    """
-    Send real-time transcript to n8n for state machine processing.
-    Called when user speaks (for intent detection) or agent speaks (for tracking).
-    Non-blocking with retry mechanism.
-    """
-    if not hasattr(session, '_transcript_webhook_url') or not session._transcript_webhook_url:
-        return
-
-    logger.debug(f"[{session.call_uuid[:8]}] Webhook: {role}: {text[:30]}...")
-
-    try:
-        import httpx
-
-        payload = {
-            "event": "transcript",
-            "call_uuid": session.call_uuid,
-            "role": role,  # "user" or "agent"
-            "text": text,
-            "timestamp": datetime.now().isoformat(),
-            "turn_count": getattr(session, '_turn_count', 0)
-        }
-
-        # Retry mechanism with short timeout
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
-                    resp = await client.post(session._transcript_webhook_url, json=payload)
-                    if resp.status_code == 200:
-                        logger.debug(f"Transcript webhook sent: {role}: {text[:30]}...")
-                        return
-                    else:
-                        logger.debug(f"Webhook returned {resp.status_code}, attempt {attempt + 1}")
-            except httpx.TimeoutException:
-                if attempt < max_retries:
-                    logger.warning(f"Webhook timeout, retrying ({attempt + 1}/{max_retries})...")
-                    await asyncio.sleep(0.5)  # Brief pause before retry
-                else:
-                    logger.error(f"Webhook failed after {max_retries + 1} attempts (timeout)")
-            except Exception as e:
-                logger.error(f"Webhook error: {e}")
-                break
-
-    except Exception as e:
-        logger.error(f"Error in transcript webhook: {e}")

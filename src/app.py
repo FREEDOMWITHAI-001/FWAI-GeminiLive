@@ -698,14 +698,13 @@ class ConversationalCallRequest(BaseModel):
     """Request to start a conversational flow call"""
     phoneNumber: str
     contactName: str = "Customer"
-    n8nWebhookUrl: str  # URL where n8n receives user speech
     callEndWebhookUrl: Optional[str] = None  # URL when call ends
     context: Optional[dict] = None
     clientName: Optional[str] = None  # Client name for loading specific prompt (e.g., 'fwai', 'ridhi')
-    questions: Optional[List[dict]] = None  # Override questions from n8n: [{"id": "q1", "prompt": "..."}]
-    prompt: Optional[str] = None  # Override base_prompt (system instruction) from n8n
-    objections: Optional[dict] = None  # Override objection responses from n8n
-    objectionKeywords: Optional[dict] = None  # Override objection keywords from n8n
+    questions: List[dict]  # Questions: [{"id": "q1", "prompt": "..."}] — required
+    prompt: str  # Base system instruction prompt — required
+    objections: Optional[dict] = None  # Objection responses
+    objectionKeywords: Optional[dict] = None  # Objection keywords
 
 
 @app.post("/call/conversational")
@@ -727,7 +726,6 @@ async def start_conversational_call(request: ConversationalCallRequest):
         # Build context with customer name
         context = request.context or {}
         context.setdefault("customer_name", request.contactName)
-        context["n8n_webhook_url"] = request.n8nWebhookUrl  # For sending transcripts
         context["conversational_mode"] = True
 
         # QuestionFlow mode: Don't load full prompt file, let QuestionFlow use config
@@ -739,20 +737,13 @@ async def start_conversational_call(request: ConversationalCallRequest):
             "phone": request.phoneNumber,
             "context": context,
             "webhookUrl": request.callEndWebhookUrl,
-            "n8nWebhookUrl": request.n8nWebhookUrl,
             "conversational_mode": True,
             "clientName": client_name
         }
 
         # Record call in DB (non-blocking)
-        from src.question_flow import load_client_config
-        questions_override = request.questions  # From n8n (or None)
-        if questions_override:
-            total_q = len(questions_override)
-            logger.info(f"[{call_uuid[:8]}] Using {total_q} questions from API request")
-        else:
-            client_config = load_client_config(client_name)
-            total_q = len(client_config.get("questions", []))
+        total_q = len(request.questions)
+        logger.info(f"[{call_uuid[:8]}] {total_q} questions, prompt={len(request.prompt)} chars")
         session_db.create_call(
             call_uuid=call_uuid, phone=request.phoneNumber,
             contact_name=request.contactName, client_name=client_name,
@@ -760,15 +751,14 @@ async def start_conversational_call(request: ConversationalCallRequest):
             total_questions=total_q
         )
 
-        # Preload session with QuestionFlow (uses config file, or overrides from n8n)
+        # Preload session with QuestionFlow
         await preload_session_conversational(
             call_uuid,
             request.phoneNumber,
             context=context,
-            n8n_webhook_url=request.n8nWebhookUrl,
             call_end_webhook_url=request.callEndWebhookUrl,
             client_name=client_name,
-            questions_override=questions_override,
+            questions_override=request.questions,
             prompt_override=request.prompt,
             objections_override=request.objections,
             objection_keywords_override=request.objectionKeywords
