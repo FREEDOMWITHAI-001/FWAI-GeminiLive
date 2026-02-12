@@ -926,26 +926,28 @@ Rules:
             self._swap_in_progress = False
 
     async def _send_context_to_ws(self, ws):
-        """Send conversation context to a WS before hot-swap."""
+        """Send conversation context to a WS before hot-swap.
+        Uses turn_complete=False so Gemini absorbs context silently
+        and only responds when the user's audio arrives."""
         last_user = self._last_user_text[:200] if self._last_user_text else ""
         agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
 
         if agent_ref and last_user:
             trigger = (
-                f'[CRITICAL CONTEXT UPDATE — This overrides any prior context in your instructions.\n'
-                f'Your most recent question to the customer was: "{agent_ref}"\n'
-                f'The customer responded: "{last_user}"\n'
-                f'You MUST NOT repeat or rephrase this question. Continue to the NEXT topic in your flow.\n'
-                f'Respond naturally to what the customer said.]'
+                f'[CONTEXT: You already asked: "{agent_ref}" '
+                f'and the customer replied: "{last_user}". '
+                f'DO NOT repeat this question. DO NOT speak until the customer speaks. '
+                f'When they speak, respond naturally and move to the NEXT topic.]'
             )
         elif agent_ref:
-            trigger = f'[You just said: "{agent_ref}". The customer is about to respond. Listen and reply. Do NOT repeat what you said.]'
+            trigger = f'[CONTEXT: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak, then respond.]'
         else:
-            trigger = "[Continue the conversation naturally with the customer.]"
+            trigger = "[CONTEXT: Continue the conversation. Wait for the customer to speak.]"
 
-        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": True}}
+        # turn_complete=False: context is buffered, Gemini waits for user audio before responding
+        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Context: agent='{agent_ref[:40]}' user='{last_user[:40]}'")
+        self.log.detail(f"Context (silent): agent='{agent_ref[:40]}' user='{last_user[:40]}'")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""

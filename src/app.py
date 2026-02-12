@@ -65,18 +65,19 @@ def save_transcript(call_uuid: str, role: str, message: str):
         logger.error(f"Error saving transcript: {e}")
 
 
-# Configure logging
+# Configure logging — clean format for structured call logs
 logger.remove()
 logger.add(
     sys.stdout,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    format="<green>{time:HH:mm:ss}</green> | <level>{level: <5}</level> | <level>{message}</level>",
     level="DEBUG" if config.debug else "INFO"
 )
 logger.add(
     Path(__file__).parent.parent / "logs" / "fwai_voice.log",
     rotation="10 MB",
     retention="7 days",
-    level=config.log_level  # Use config (default INFO, set LOG_LEVEL in .env)
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {message}",
+    level=config.log_level
 )
 
 
