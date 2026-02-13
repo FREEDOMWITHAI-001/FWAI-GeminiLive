@@ -1236,9 +1236,9 @@ Rules:
         if not trigger_text:
             customer_name = self.context.get("customer_name", "")
             if customer_name:
-                trigger_text = f"[Start the conversation now. Greet {customer_name} naturally using your opening line from the instructions.]"
+                trigger_text = f"[INSTRUCTION: Start the conversation now. Say your opening greeting to {customer_name} using your first line from the instructions. Say ONLY the greeting, then STOP and WAIT silently for the customer to respond. Do NOT say anything else after the greeting.]"
             else:
-                trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
+                trigger_text = "[INSTRUCTION: Start the conversation now. Say your opening greeting using your first line from the instructions. Say ONLY the greeting, then STOP and WAIT silently for the customer to respond. Do NOT say anything else after the greeting.]"
 
         msg = {
             "client_content": {
@@ -1303,7 +1303,7 @@ Rules:
 
                 # Send success response
                 try:
-                    func_resp = {"name": tool_name, "response": {"success": True, "message": "Waiting for mutual goodbye before ending"}}
+                    func_resp = {"name": tool_name, "response": {"success": True, "message": "OK. Do not say this message aloud. Say a warm goodbye to the customer naturally."}}
                     if call_id:
                         func_resp["id"] = call_id
                     tool_response = {"tool_response": {"function_responses": [func_resp]}}
