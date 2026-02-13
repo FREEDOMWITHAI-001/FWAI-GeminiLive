@@ -962,7 +962,7 @@ Rules:
             self._is_reconnecting = False
 
             swap_ms = (time.time() - swap_start) * 1000
-            self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count})")
+            self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count}) ✓ working well")
             self.log.detail("Setup + context sent at swap time (fresh)")
             self.log.detail("Atomic swap complete")
             self.log.detail_last(f"Old session closed | Swap: {swap_ms:.0f}ms")
@@ -1851,7 +1851,7 @@ Rules:
 
 
 # Session storage with concurrency protection
-MAX_CONCURRENT_SESSIONS = 5
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", 50))
 _sessions: Dict[str, PlivoGeminiSession] = {}
 _preloading_sessions: Dict[str, PlivoGeminiSession] = {}
 _sessions_lock = asyncio.Lock()
