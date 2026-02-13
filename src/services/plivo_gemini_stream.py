@@ -812,7 +812,7 @@ Rules:
                 url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
                 extra_headers = None
             else:
-                url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+                url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
                 extra_headers = {"Authorization": f"Bearer {token}"}
                 self.log.detail(f"Vertex AI: {config.vertex_location} ({label})")
         else:
@@ -885,7 +885,7 @@ Rules:
                     url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
                     extra_headers = None
                 else:
-                    url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+                    url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
                     extra_headers = {"Authorization": f"Bearer {token}"}
             else:
                 url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
@@ -1205,7 +1205,7 @@ Rules:
         voice_name = detect_voice_from_prompt(self.prompt)
 
         if config.use_vertex_ai:
-            model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-2.5-flash-preview-native-audio"
+            model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
         else:
             model_name = "models/gemini-2.5-flash-native-audio-preview-09-2025"
 
