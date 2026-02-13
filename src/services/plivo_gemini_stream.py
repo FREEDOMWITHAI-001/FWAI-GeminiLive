@@ -838,7 +838,11 @@ Rules:
             async for message in ws:
                 if not self.is_active:
                     break
-                resp = json.loads(message)
+                try:
+                    resp = json.loads(message)
+                except json.JSONDecodeError as e:
+                    logger.error(f"[{self.call_uuid[:8]}] Gemini sent invalid JSON: {e} — skipping message")
+                    continue
                 if is_standby:
                     if "setupComplete" in resp:
                         self._standby_ready.set()
@@ -854,12 +858,18 @@ Rules:
                         self._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
                         return
                 else:
-                    await self._receive_from_google(message)
+                    try:
+                        await self._receive_from_google(message)
+                    except Exception as e:
+                        logger.error(f"[{self.call_uuid[:8]}] Gemini receive exception: {e} — continuing session")
+                        continue
         except asyncio.CancelledError:
             pass
         except websockets.exceptions.ConnectionClosed as e:
             if not is_standby:
                 self.log.warn(f"Active WS closed: {e.code}")
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Unexpected Gemini WS error: {e} — session will attempt reconnect")
 
     async def _prewarm_standby_connection(self):
         """Pre-warm ONLY the WS connection for standby (setup deferred to swap time).
