@@ -1691,7 +1691,17 @@ Rules:
                     if chunks_sent == 1 and self._user_speaking:
                         logger.debug(f"[{self.call_uuid[:8]}] Sending user audio to Gemini")
                 except Exception as send_err:
-                    logger.error(f"Error sending audio to Google: {send_err} - continuing")
+                    logger.error(f"Error sending audio to Google: {send_err} - triggering reconnect")
+                    # Null out dead WS so subsequent audio gets buffered (line 1659)
+                    self.goog_live_ws = None
+                    self.inbuffer.clear()
+                    # Buffer current audio for replay after reconnect
+                    if len(self._reconnect_audio_buffer) < self._max_reconnect_buffer:
+                        self._reconnect_audio_buffer.append(audio_b64)
+                    # Trigger emergency session split (same as GoAway handling)
+                    if not self._swap_in_progress and not self._closing_call:
+                        asyncio.create_task(self._emergency_session_split())
+                    return
                 self.inbuffer = self.inbuffer[self.BUFFER_SIZE:]
         except Exception as e:
             logger.error(f"Audio processing error: {e} - continuing session")
