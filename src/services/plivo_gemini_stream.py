@@ -1154,8 +1154,12 @@ Rules:
         """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
         full_prompt = self.prompt
 
-        # Add natural speech variation and voice consistency guidance
+        # Add anti-premature-end and speech style guidance
         full_prompt += (
+            "\n\n[CRITICAL RULE: NEVER call end_call until the customer has explicitly said goodbye, "
+            "asked to end the call, or said they are not interested. You MUST greet the customer first "
+            "and wait for their response. The call is just starting — do NOT end it prematurely. "
+            "Only use end_call after a real back-and-forth conversation has happened.]"
             "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. "
             "Speak faster when excited, slower when empathetic. Use pauses for emphasis. "
             "Match the customer's energy level. "
@@ -1278,6 +1282,25 @@ Rules:
             # Handle end_call tool
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
+
+                # Block premature end_call during preload (before user is on the line)
+                if self._turn_count < 1 and not self.plivo_ws:
+                    self.log.detail(f"Blocked premature end_call during preload: {reason}")
+                    try:
+                        tool_response = {
+                            "tool_response": {
+                                "function_responses": [{
+                                    "id": call_id,
+                                    "name": tool_name,
+                                    "response": {"success": False, "message": "Cannot end call yet. The customer has not joined. Greet them and wait for their response."}
+                                }]
+                            }
+                        }
+                        await self.goog_live_ws.send(json.dumps(tool_response))
+                    except Exception:
+                        pass
+                    continue
+
                 self.log.detail(f"End call: {reason}")
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
