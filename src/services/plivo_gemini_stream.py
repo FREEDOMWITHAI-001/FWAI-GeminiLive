@@ -1287,16 +1287,10 @@ Rules:
                 if self._turn_count < 1 and not self.plivo_ws:
                     self.log.detail(f"Blocked premature end_call during preload: {reason}")
                     try:
-                        tool_response = {
-                            "tool_response": {
-                                "function_responses": [{
-                                    "id": call_id,
-                                    "name": tool_name,
-                                    "response": {"success": False, "message": "Cannot end call yet. The customer has not joined. Greet them and wait for their response."}
-                                }]
-                            }
-                        }
-                        await self.goog_live_ws.send(json.dumps(tool_response))
+                        func_resp = {"name": tool_name, "response": {"success": False, "message": "Cannot end call yet. The customer has not joined. Greet them and wait for their response."}}
+                        if call_id:
+                            func_resp["id"] = call_id
+                        await self.goog_live_ws.send(json.dumps({"tool_response": {"function_responses": [func_resp]}}))
                     except Exception:
                         pass
                     continue
@@ -1309,15 +1303,10 @@ Rules:
 
                 # Send success response
                 try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": {"success": True, "message": "Waiting for mutual goodbye before ending"}
-                            }]
-                        }
-                    }
+                    func_resp = {"name": tool_name, "response": {"success": True, "message": "Waiting for mutual goodbye before ending"}}
+                    if call_id:
+                        func_resp["id"] = call_id
+                    tool_response = {"tool_response": {"function_responses": [func_resp]}}
                     await self.goog_live_ws.send(json.dumps(tool_response))
                 except Exception:
                     pass
@@ -1348,18 +1337,16 @@ Rules:
 
             # Always send tool response back to Gemini so conversation continues
             try:
-                tool_response = {
-                    "tool_response": {
-                        "function_responses": [{
-                            "id": call_id,
-                            "name": tool_name,
-                            "response": {
-                                "success": success,
-                                "message": message
-                            }
-                        }]
+                func_resp = {
+                    "name": tool_name,
+                    "response": {
+                        "success": success,
+                        "message": message
                     }
                 }
+                if call_id:
+                    func_resp["id"] = call_id
+                tool_response = {"tool_response": {"function_responses": [func_resp]}}
                 await self.goog_live_ws.send(json.dumps(tool_response))
                 logger.debug(f"Sent tool response for {tool_name}")
             except Exception as e:
