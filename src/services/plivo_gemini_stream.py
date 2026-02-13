@@ -245,7 +245,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns
+        self._session_split_interval = 8  # Split every 8 turns (Vertex AI needs longer context)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
