@@ -104,6 +104,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Token manager init failed: {e} - using static token")
 
     logger.info(f"Server starting on http://{config.host}:{config.port}")
+    if config.use_vertex_ai:
+        logger.info(f"Gemini: Vertex AI ({config.vertex_location}) | Project: {config.vertex_project_id}")
+    else:
+        logger.info(f"Gemini: Google AI Studio")
     logger.info(f"Gemini Voice: {config.tts_voice}")
     logger.info(f"Session DB: {session_db._db_path}")
 

@@ -52,9 +52,9 @@ class Config(BaseModel):
     tts_voice: str = os.getenv("TTS_VOICE", "Kore")
 
     # Vertex AI settings (for lower latency with regional endpoints)
-    use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
+    use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "true").lower() == "true"
     vertex_project_id: str = os.getenv("VERTEX_PROJECT_ID", "")
-    vertex_location: str = os.getenv("VERTEX_LOCATION", "asia-south1")  # Mumbai
+    vertex_location: str = os.getenv("VERTEX_LOCATION", "us-central1")
     vertex_credentials_path: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 
     # Audio settings
@@ -108,9 +108,14 @@ class Config(BaseModel):
         """Validate required configuration values based on active provider"""
         errors = []
 
-        # Always required
+        # Always required (Google API key needed as fallback even with Vertex AI)
         if not self.google_api_key:
             errors.append("GOOGLE_API_KEY is required")
+
+        # Vertex AI validation
+        if self.use_vertex_ai:
+            if not self.vertex_project_id:
+                errors.append("VERTEX_PROJECT_ID is required when USE_VERTEX_AI=true")
 
         # Provider-specific validation
         if self.call_provider == "whatsapp":
