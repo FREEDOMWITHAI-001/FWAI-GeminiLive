@@ -13,6 +13,7 @@ import sys
 
 from fastapi import FastAPI, Request, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 
@@ -150,6 +151,14 @@ app = FastAPI(
     description="AI Voice Agent for WhatsApp Business Voice Calls",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# CORS - allow Wavelength and other frontends to call API directly
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Mount audio directory for serving generated audio files
