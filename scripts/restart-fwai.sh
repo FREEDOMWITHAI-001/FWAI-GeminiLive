@@ -15,8 +15,8 @@ echo "$(date) - Maintenance flag set, rejecting new calls"
 echo "$(date) - Waiting ${DRAIN_WAIT}s for active calls to drain..."
 sleep $DRAIN_WAIT
 
-# Restart
-systemctl restart fwai-app
+# Restart (use sudo for manual runs; root crontab won't need it)
+sudo systemctl restart fwai-app
 sleep 5
 
 # Remove flag
