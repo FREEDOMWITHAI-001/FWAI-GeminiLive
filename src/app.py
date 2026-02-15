@@ -194,6 +194,11 @@ async def api_make_call(request: MakeCallRequest):
 
     The AI agent will start speaking when the user answers
     """
+    # Reject new calls during maintenance/restart window
+    if Path(".maintenance").exists():
+        logger.warning(f"Call rejected during maintenance: {request.phoneNumber}")
+        raise HTTPException(status_code=503, detail="Service restarting, try again shortly")
+
     logger.info(f"Make call request: {request.phoneNumber}")
 
     result = await make_outbound_call(
