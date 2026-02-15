@@ -93,26 +93,33 @@ def detect_voice_from_prompt(prompt: str) -> str:
         return "Puck"
     prompt_lower = prompt.lower()
 
-    # FIRST: Check for male names - if found, use male voice (Puck)
+    # HIGHEST PRIORITY: Explicit voice directive in prompt (e.g. "Must use Female Voice")
+    if "male voice" in prompt_lower:
+        # Check female first since "female voice" also contains "male voice"
+        if "female voice" in prompt_lower:
+            logger.info("Explicit 'Female Voice' directive in prompt - using Kore")
+            return "Kore"
+        logger.info("Explicit 'Male Voice' directive in prompt - using Puck")
+        return "Puck"
+
+    # THEN: Check for agent name indicators
+    female_indicators = [
+        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya",
+        "sunita", "anita", "kavita", "rekha", "meena", "sita", "geeta"
+    ]
+    for indicator in female_indicators:
+        if indicator in prompt_lower:
+            logger.info(f"Detected female agent name '{indicator}' in prompt - using Kore voice")
+            return "Kore"
+
     male_names = [
         "rahul", "vishnu", "avinash", "arjun", "raj", "amit", "vijay", "suresh",
         "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar"
     ]
     for name in male_names:
         if name in prompt_lower:
-            logger.info(f"Detected male name '{name}' in prompt - using Puck voice")
+            logger.info(f"Detected male agent name '{name}' in prompt - using Puck voice")
             return "Puck"
-
-    # THEN: Check for female indicators
-    female_indicators = [
-        "female", "woman", "girl", "lady",
-        "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya",
-        "sunita", "anita", "kavita", "rekha", "meena", "sita", "geeta"
-    ]
-    for indicator in female_indicators:
-        if indicator in prompt_lower:
-            logger.info(f"Detected female voice indicator '{indicator}' in prompt - using Kore voice")
-            return "Kore"
 
     # Default to male voice
     return "Puck"
