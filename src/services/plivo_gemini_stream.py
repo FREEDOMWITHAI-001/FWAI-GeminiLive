@@ -205,7 +205,7 @@ class PlivoGeminiSession:
         self._current_turn_user_text = []  # Accumulate user speech fragments per turn
 
         # Audio send queue and worker
-        self._plivo_send_queue = asyncio.Queue(maxsize=200)
+        self._plivo_send_queue = asyncio.Queue(maxsize=500)
         self._current_turn_id = 0
         self._sender_worker_task = None
 
@@ -632,12 +632,12 @@ Rules:
             wait_ms = (time.time() - self._preload_start_time) * 1000
             self.log.detail(f"Ring duration: {wait_ms:.0f}ms")
         self.log.detail(f"Plivo WS attached, {preload_count} preloaded chunks")
+        # Start sender worker BEFORE sending preloaded audio so consumer is ready
+        self._sender_worker_task = asyncio.create_task(self._plivo_sender_worker())
         if self.preloaded_audio:
             asyncio.create_task(self._send_preloaded_audio())
         else:
             self.log.warn("No preloaded audio - greeting will lag")
-        # Start sender worker
-        self._sender_worker_task = asyncio.create_task(self._plivo_sender_worker())
         # Start call duration timer
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (3 second SLA)
