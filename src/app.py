@@ -408,6 +408,16 @@ async def get_call_transcript(call_id: str):
         )
 
 
+@app.get("/calls/{call_id}/status")
+async def get_call_status(call_id: str):
+    """Get call status and data by call_uuid — used by Wavelength polling"""
+    from src.db.session_db import session_db
+    call = session_db.get_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
+    return call
+
+
 @app.get("/calls/{call_id}/recording")
 async def get_call_recording(call_id: str):
     """Download the recording for a call by call_uuid"""

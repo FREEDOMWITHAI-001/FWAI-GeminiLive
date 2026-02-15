@@ -1845,6 +1845,22 @@ Rules:
         try:
             import httpx
 
+            # Derive question stats from turn exchanges
+            questions_completed = self._turn_count
+            total_questions = max(questions_completed, 1)
+            completion_rate = questions_completed / total_questions if total_questions > 0 else 1.0
+
+            # Derive interest level from completion rate
+            if completion_rate > 0.7:
+                interest_level = "High"
+            elif completion_rate > 0.4:
+                interest_level = "Medium"
+            else:
+                interest_level = "Low"
+
+            # Basic summary from transcript
+            call_summary = transcript[:200] if transcript else ""
+
             payload = {
                 "event": "call_ended",
                 "call_uuid": self.call_uuid,
@@ -1855,7 +1871,26 @@ Rules:
                 "timestamp": datetime.now().isoformat(),
                 # Transcript
                 "transcript": transcript,
-                "transcript_entries": self._full_transcript
+                "transcript_entries": self._full_transcript,
+                # Question stats
+                "questions_completed": questions_completed,
+                "total_questions": total_questions,
+                "completion_rate": completion_rate,
+                "interest_level": interest_level,
+                "call_summary": call_summary,
+                "objections_raised": [],
+                "collected_responses": {},
+                "question_pairs": [],
+                "call_metrics": {
+                    "total_duration_s": round(duration, 1),
+                    "questions_completed": questions_completed,
+                    "avg_latency_ms": 0,
+                    "p90_latency_ms": 0,
+                    "min_latency_ms": 0,
+                    "max_latency_ms": 0,
+                    "total_nudges": 0,
+                },
+                "recording_url": f"/calls/{self.call_uuid}/recording",
             }
 
             self.log.detail(f"Webhook: {self.webhook_url}")
