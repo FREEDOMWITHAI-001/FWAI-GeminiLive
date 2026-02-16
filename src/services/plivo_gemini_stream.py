@@ -279,6 +279,17 @@ class PlivoGeminiSession:
         # Structured logger
         self.log = CallLogger(call_uuid)
 
+        # Pre-call intelligence brief (injected after preload)
+        self._intelligence_brief = ""
+
+    def inject_intelligence(self, brief: str):
+        """Store pre-call intelligence brief. Must be called BEFORE preload starts
+        so it gets included in the initial system prompt via _send_session_setup_on_ws."""
+        if not brief:
+            return
+        self._intelligence_brief = brief
+        self.log.detail(f"Intelligence stored ({len(brief)} chars)")
+
     # Minimum turns before goodbye detection activates (prevents premature call end)
     MIN_TURNS_FOR_GOODBYE = 6
 
@@ -1171,6 +1182,28 @@ Rules:
             "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
         )
 
+        # Inject pre-call intelligence into system prompt (not as user message)
+        if self._intelligence_brief:
+            full_prompt += (
+                "\n\n[BACKGROUND INTEL ON THIS PROSPECT - use naturally, "
+                "NEVER mention you looked anything up or did any research. "
+                "Weave facts casually like 'Oh I heard...']\n"
+                f"{self._intelligence_brief}"
+            )
+
+        # Real-time search usage instructions (only if live search is enabled)
+        if config.enable_live_search:
+            full_prompt += (
+                "\n\nREAL-TIME KNOWLEDGE: You have access to Google Search. "
+                "When the customer mentions their company, role, industry, or any specific entity, "
+                "you may naturally reference relevant recent information. "
+                "CRITICAL RULES: "
+                "1) NEVER say 'I searched' or 'according to my research' or 'I found that' "
+                "2) Weave information naturally: 'Oh [company], I heard they just...' "
+                "3) Only use search when it genuinely helps the conversation "
+                "4) Keep responses SHORT (1-2 sentences max) even when using search results"
+            )
+
         # On reconnect or hot-swap, append conversation context + anti-repetition
         # to system_instruction so AI knows where the conversation is.
         if not self._is_first_connection:
@@ -1222,7 +1255,10 @@ Rules:
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
-                "tools": [{"function_declarations": TOOL_DECLARATIONS}]
+                "tools": [
+                    {"function_declarations": TOOL_DECLARATIONS},
+                    *([] if not config.enable_live_search else [{"google_search": {}}])
+                ]
             }
         }
         await ws.send(json.dumps(msg))
@@ -1925,7 +1961,7 @@ def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
         logger.error(f"  _preloading_sessions keys: {list(_preloading_sessions.keys())}")
         logger.error(f"  _sessions keys: {list(_sessions.keys())}")
 
-async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None) -> bool:
+async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "") -> bool:
     """Preload a session while phone is ringing"""
     async with _sessions_lock:
         total = len(_sessions) + len(_preloading_sessions)
@@ -1933,6 +1969,8 @@ async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None,
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
         session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
+        if intelligence_brief:
+            session.inject_intelligence(intelligence_brief)
         _preloading_sessions[call_uuid] = session
     success = await session.preload()
     return success
@@ -1970,6 +2008,10 @@ async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: st
 async def get_session(call_uuid: str) -> Optional[PlivoGeminiSession]:
     async with _sessions_lock:
         return _sessions.get(call_uuid)
+
+def get_preloading_session(call_uuid: str) -> Optional[PlivoGeminiSession]:
+    """Get a preloading session (non-async, for intelligence injection)."""
+    return _preloading_sessions.get(call_uuid)
 
 async def remove_session(call_uuid: str):
     """Remove and stop session atomically"""

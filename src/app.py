@@ -165,6 +165,11 @@ app.add_middleware(
 AUDIO_DIR.mkdir(exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 
+# Mount static directory for test dashboard UI
+STATIC_DIR = Path(__file__).parent.parent / "static"
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
 
 # Request models
 class MakeCallRequest(BaseModel):
@@ -176,6 +181,34 @@ class WebhookVerification(BaseModel):
     hub_mode: str
     hub_verify_token: str
     hub_challenge: str
+
+
+# ============================================================================
+# Prompt Management (for dashboard UI)
+# ============================================================================
+
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+PROMPTS_DIR.mkdir(exist_ok=True)
+
+@app.get("/prompts/{client_name}")
+async def get_prompt(client_name: str):
+    """Load prompt file for a client"""
+    prompt_file = PROMPTS_DIR / f"{client_name}_prompt.txt"
+    if prompt_file.exists():
+        return {"success": True, "prompt": prompt_file.read_text(encoding="utf-8")}
+    return {"success": False, "error": f"No prompt file found for '{client_name}'"}
+
+@app.post("/prompts/update")
+async def update_prompt(request: Request):
+    """Save prompt file for a client"""
+    body = await request.json()
+    client_name = body.get("client_name", "fwai")
+    prompt = body.get("prompt", "")
+    if not prompt.strip():
+        return {"success": False, "error": "Prompt cannot be empty"}
+    prompt_file = PROMPTS_DIR / f"{client_name}_prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    return {"success": True, "message": f"Prompt saved for {client_name}"}
 
 
 # ============================================================================
@@ -500,6 +533,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Generate call_uuid first (before Plivo call)
         call_uuid = str(uuid.uuid4())
 
+        # Load default prompt if none provided
+        if not request.prompt:
+            default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
+            if default_prompt_file.exists():
+                request.prompt = default_prompt_file.read_text(encoding="utf-8")
+                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars)")
+
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
@@ -523,16 +563,27 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             contact_name=request.contactName, webhook_url=request.webhookUrl
         )
 
-        # PRELOAD Gemini session FIRST (before phone rings)
-        from src.services.plivo_gemini_stream import preload_session
-        logger.info(f"Preloading Gemini session for {call_uuid}...")
+        # Gather intelligence FIRST, then preload with it baked into system prompt
+        from src.services.plivo_gemini_stream import preload_session, get_preloading_session
+        from src.services.intelligence import gather_intelligence
+
+        logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
+
+        # Step 1: Gather intelligence (runs before preload so it's in the system prompt)
+        intelligence_brief = await gather_intelligence(request.contactName, context)
+        if intelligence_brief:
+            logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
+
+        # Step 2: Preload Gemini session (intelligence will be in system prompt via session._intelligence_brief)
         await preload_session(
             call_uuid,
             request.phoneNumber,
             prompt=request.prompt,
             context=context,
-            webhook_url=request.webhookUrl
+            webhook_url=request.webhookUrl,
+            intelligence_brief=intelligence_brief
         )
+
         logger.info(f"Gemini preload complete for {call_uuid} - now making call")
 
         # NOW make the Plivo call (AI is already ready)
