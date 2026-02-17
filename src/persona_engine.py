@@ -190,6 +190,8 @@ def compose_prompt(
     persona_key: Optional[str],
     active_situations: list[str],
     is_early_call: bool,
+    mirror_instruction: str = "",
+    active_product_sections: list[str] = None,
 ) -> str:
     """
     Compose modular prompt from file-based components.
@@ -235,6 +237,17 @@ def compose_prompt(
         situation_content = load_module(SITUATIONS_DIR / f"{situation_key}.txt")
         if situation_content:
             parts.append(situation_content)
+
+    # Layer 5: Linguistic Mirror (style adaptation)
+    if mirror_instruction:
+        parts.append(mirror_instruction)
+
+    # Layer 6: Product knowledge sections (progressive revelation)
+    if active_product_sections:
+        from src.product_intelligence import load_product_sections
+        product_content = load_product_sections(active_product_sections)
+        if product_content:
+            parts.append(product_content)
 
     combined = "\n\n".join(parts)
     return render_prompt(combined, context)

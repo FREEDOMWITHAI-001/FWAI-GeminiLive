@@ -65,6 +65,32 @@ class SessionDB:
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
+        # Social Proof Engine: enrollment stats by company, city, role
+        conn.execute('''CREATE TABLE IF NOT EXISTS social_proof_company (
+            company_name TEXT PRIMARY KEY COLLATE NOCASE,
+            enrollments_count INTEGER DEFAULT 0,
+            last_enrollment_date TEXT,
+            notable_outcomes TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS social_proof_city (
+            city_name TEXT PRIMARY KEY COLLATE NOCASE,
+            enrollments_count INTEGER DEFAULT 0,
+            trending INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS social_proof_role (
+            role_name TEXT PRIMARY KEY COLLATE NOCASE,
+            enrollments_count INTEGER DEFAULT 0,
+            avg_salary_increase TEXT,
+            success_stories TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
+        # Migration: add linguistic_style column if missing
+        try:
+            conn.execute("ALTER TABLE contact_memory ADD COLUMN linguistic_style TEXT DEFAULT '{}'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         conn.commit()
         conn.close()
         logger.info(f"Session DB initialized: {self._db_path}")
@@ -214,6 +240,141 @@ class SessionDB:
         """Delete contact memory for a phone number (non-blocking)."""
         self._write_queue.put((
             "DELETE FROM contact_memory WHERE phone = ?", (phone,)
+        ))
+
+    # =========================================================================
+    # Social Proof Stats
+    # =========================================================================
+
+    def get_social_proof_by_company(self, company_name: str) -> dict:
+        """Look up company enrollment stats (blocking, fast ~1ms)."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM social_proof_company WHERE company_name = ? COLLATE NOCASE",
+            (company_name,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_social_proof_by_city(self, city_name: str) -> dict:
+        """Look up city enrollment stats (blocking, fast ~1ms)."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM social_proof_city WHERE city_name = ? COLLATE NOCASE",
+            (city_name,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_social_proof_by_role(self, role_name: str) -> dict:
+        """Look up role enrollment stats (blocking, fast ~1ms)."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM social_proof_role WHERE role_name = ? COLLATE NOCASE",
+            (role_name,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_social_proof_top(self, table: str, limit: int = 5) -> list:
+        """Get top stats by enrollment count for summary generation."""
+        valid_tables = {"social_proof_company", "social_proof_city", "social_proof_role"}
+        if table not in valid_tables:
+            return []
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM {table} ORDER BY enrollments_count DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_social_proof_total(self, table: str) -> int:
+        """Get total enrollment count from a stats table."""
+        valid_tables = {"social_proof_company", "social_proof_city", "social_proof_role"}
+        if table not in valid_tables:
+            return 0
+        conn = sqlite3.connect(str(self._db_path))
+        row = conn.execute(f"SELECT SUM(enrollments_count) as total FROM {table}").fetchone()
+        conn.close()
+        return row[0] or 0 if row else 0
+
+    def upsert_social_proof_company(self, company_name: str, **kwargs):
+        """Upsert company stats (non-blocking via write queue)."""
+        kwargs["updated_at"] = datetime.now().isoformat()
+        columns = list(kwargs.keys())
+        values = [company_name] + [kwargs[c] for c in columns]
+        placeholders = ", ".join(["?"] * len(values))
+        col_list = "company_name, " + ", ".join(columns)
+        conflict_updates = ", ".join(f"{c} = excluded.{c}" for c in columns)
+        self._write_queue.put((
+            f"""INSERT INTO social_proof_company ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(company_name) DO UPDATE SET {conflict_updates}""",
+            tuple(values)
+        ))
+
+    def upsert_social_proof_city(self, city_name: str, **kwargs):
+        """Upsert city stats (non-blocking via write queue)."""
+        kwargs["updated_at"] = datetime.now().isoformat()
+        columns = list(kwargs.keys())
+        values = [city_name] + [kwargs[c] for c in columns]
+        placeholders = ", ".join(["?"] * len(values))
+        col_list = "city_name, " + ", ".join(columns)
+        conflict_updates = ", ".join(f"{c} = excluded.{c}" for c in columns)
+        self._write_queue.put((
+            f"""INSERT INTO social_proof_city ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(city_name) DO UPDATE SET {conflict_updates}""",
+            tuple(values)
+        ))
+
+    def upsert_social_proof_role(self, role_name: str, **kwargs):
+        """Upsert role stats (non-blocking via write queue)."""
+        kwargs["updated_at"] = datetime.now().isoformat()
+        columns = list(kwargs.keys())
+        values = [role_name] + [kwargs[c] for c in columns]
+        placeholders = ", ".join(["?"] * len(values))
+        col_list = "role_name, " + ", ".join(columns)
+        conflict_updates = ", ".join(f"{c} = excluded.{c}" for c in columns)
+        self._write_queue.put((
+            f"""INSERT INTO social_proof_role ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(role_name) DO UPDATE SET {conflict_updates}""",
+            tuple(values)
+        ))
+
+    def get_all_social_proof(self) -> dict:
+        """Return all social proof data for dashboard/API."""
+        return {
+            "companies": self.get_social_proof_top("social_proof_company", limit=100),
+            "cities": self.get_social_proof_top("social_proof_city", limit=100),
+            "roles": self.get_social_proof_top("social_proof_role", limit=100),
+        }
+
+    def delete_social_proof_company(self, company_name: str):
+        """Delete company stats (non-blocking)."""
+        self._write_queue.put((
+            "DELETE FROM social_proof_company WHERE company_name = ? COLLATE NOCASE",
+            (company_name,)
+        ))
+
+    def delete_social_proof_city(self, city_name: str):
+        """Delete city stats (non-blocking)."""
+        self._write_queue.put((
+            "DELETE FROM social_proof_city WHERE city_name = ? COLLATE NOCASE",
+            (city_name,)
+        ))
+
+    def delete_social_proof_role(self, role_name: str):
+        """Delete role stats (non-blocking)."""
+        self._write_queue.put((
+            "DELETE FROM social_proof_role WHERE role_name = ? COLLATE NOCASE",
+            (role_name,)
         ))
 
     def cleanup_stale(self, max_age_minutes: int = 10):

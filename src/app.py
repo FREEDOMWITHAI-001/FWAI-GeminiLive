@@ -363,6 +363,219 @@ async def delete_memory(phone: str):
 
 
 # ============================================================================
+# Social Proof Engine API
+# ============================================================================
+
+@app.get("/social-proof/stats")
+async def list_social_proof():
+    """List all social proof stats (companies, cities, roles)"""
+    return session_db.get_all_social_proof()
+
+@app.get("/social-proof/summary")
+async def social_proof_summary():
+    """Get aggregate summary (same data injected into pre-call prompt)"""
+    from src.social_proof import load_social_proof_summary
+    summary = load_social_proof_summary()
+    return {"summary": summary}
+
+@app.get("/social-proof/stats/company/{name}")
+async def get_company_stats(name: str):
+    """Get enrollment stats for a specific company"""
+    stats = session_db.get_social_proof_by_company(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for company '{name}'"}
+
+@app.post("/social-proof/stats/company")
+async def upsert_company_stats(request: Request):
+    """Create or update company enrollment stats"""
+    body = await request.json()
+    company_name = body.pop("company_name", None)
+    if not company_name:
+        return JSONResponse(status_code=400, content={"error": "company_name is required"})
+    session_db.upsert_social_proof_company(company_name, **body)
+    return {"success": True, "message": f"Stats updated for {company_name}"}
+
+@app.delete("/social-proof/stats/company/{name}")
+async def delete_company_stats(name: str):
+    """Delete company enrollment stats"""
+    session_db.delete_social_proof_company(name)
+    return {"success": True, "message": f"Company stats deleted for {name}"}
+
+@app.get("/social-proof/stats/city/{name}")
+async def get_city_stats(name: str):
+    """Get enrollment stats for a specific city"""
+    stats = session_db.get_social_proof_by_city(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for city '{name}'"}
+
+@app.post("/social-proof/stats/city")
+async def upsert_city_stats(request: Request):
+    """Create or update city enrollment stats"""
+    body = await request.json()
+    city_name = body.pop("city_name", None)
+    if not city_name:
+        return JSONResponse(status_code=400, content={"error": "city_name is required"})
+    session_db.upsert_social_proof_city(city_name, **body)
+    return {"success": True, "message": f"Stats updated for {city_name}"}
+
+@app.delete("/social-proof/stats/city/{name}")
+async def delete_city_stats(name: str):
+    """Delete city enrollment stats"""
+    session_db.delete_social_proof_city(name)
+    return {"success": True, "message": f"City stats deleted for {name}"}
+
+@app.get("/social-proof/stats/role/{name}")
+async def get_role_stats(name: str):
+    """Get enrollment stats for a specific role"""
+    stats = session_db.get_social_proof_by_role(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for role '{name}'"}
+
+@app.post("/social-proof/stats/role")
+async def upsert_role_stats(request: Request):
+    """Create or update role enrollment stats"""
+    body = await request.json()
+    role_name = body.pop("role_name", None)
+    if not role_name:
+        return JSONResponse(status_code=400, content={"error": "role_name is required"})
+    session_db.upsert_social_proof_role(role_name, **body)
+    return {"success": True, "message": f"Stats updated for {role_name}"}
+
+@app.delete("/social-proof/stats/role/{name}")
+async def delete_role_stats(name: str):
+    """Delete role enrollment stats"""
+    session_db.delete_social_proof_role(name)
+    return {"success": True, "message": f"Role stats deleted for {name}"}
+
+@app.post("/social-proof/bulk")
+async def bulk_update_social_proof(request: Request):
+    """CRM webhook endpoint for bulk stats updates.
+    Accepts: {"companies": [...], "cities": [...], "roles": [...]}"""
+    body = await request.json()
+    counts = {"companies": 0, "cities": 0, "roles": 0}
+
+    for item in body.get("companies", []):
+        name = item.pop("company_name", None)
+        if name:
+            session_db.upsert_social_proof_company(name, **item)
+            counts["companies"] += 1
+
+    for item in body.get("cities", []):
+        name = item.pop("city_name", None)
+        if name:
+            session_db.upsert_social_proof_city(name, **item)
+            counts["cities"] += 1
+
+    for item in body.get("roles", []):
+        name = item.pop("role_name", None)
+        if name:
+            session_db.upsert_social_proof_role(name, **item)
+            counts["roles"] += 1
+
+    return {
+        "success": True,
+        "message": f"Bulk update: {counts['companies']} companies, {counts['cities']} cities, {counts['roles']} roles"
+    }
+
+
+# ============================================================================
+# Product Intelligence API
+# ============================================================================
+
+PRODUCTS_DIR = PROMPTS_DIR / "products"
+PRODUCTS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/products")
+async def list_products():
+    """List all product knowledge sections"""
+    sections = [f.stem for f in PRODUCTS_DIR.glob("*.txt")]
+    return {"sections": sorted(sections)}
+
+
+@app.post("/products/upload")
+async def upload_product_document(request: Request):
+    """Upload raw product document for AI processing into structured sections."""
+    body = await request.json()
+    raw_content = body.get("content", "")
+    source_type = body.get("source_type", "text")
+
+    if not raw_content or not raw_content.strip():
+        return {"error": "Content cannot be empty"}
+
+    from src.product_intelligence import process_document, save_product_sections
+
+    result = await process_document(raw_content, source_type=source_type)
+
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+
+    sections = result.get("sections", {})
+    keywords = result.get("keywords", {})
+
+    if sections:
+        save_product_sections(sections, keywords)
+        return {
+            "success": True,
+            "sections_created": list(sections.keys()),
+            "message": f"Processed into {len(sections)} sections",
+        }
+    return {"success": False, "error": "No sections extracted from document"}
+
+
+@app.get("/products/{name}")
+async def get_product(name: str):
+    """Get product section content"""
+    path = PRODUCTS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Product section '{name}' not found"}
+
+
+@app.post("/products/{name}")
+async def save_product(name: str, request: Request):
+    """Create or update product section"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = PRODUCTS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Product section '{name}' saved"}
+
+
+@app.delete("/products/{name}")
+async def delete_product(name: str):
+    """Delete a product section"""
+    path = PRODUCTS_DIR / f"{name}.txt"
+    if path.exists():
+        path.unlink()
+        return {"success": True, "message": f"Product section '{name}' deleted"}
+    return {"error": f"Product section '{name}' not found"}
+
+
+@app.get("/product-config")
+async def get_product_config():
+    """Get product section detection keyword config"""
+    pk_path = PROMPTS_DIR / "product_keywords.json"
+    if pk_path.exists():
+        return json.loads(pk_path.read_text(encoding="utf-8"))
+    return {}
+
+
+@app.post("/product-config")
+async def update_product_config(request: Request):
+    """Update product section detection keyword config"""
+    body = await request.json()
+    pk_path = PROMPTS_DIR / "product_keywords.json"
+    pk_path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"success": True, "message": "Product keywords config updated"}
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
 
@@ -729,6 +942,9 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             # If memory has a persona, pre-set it so AI skips discovery
             if memory_data.get("persona"):
                 context["_memory_persona"] = memory_data["persona"]
+            # Pre-load linguistic style for Linguistic Mirror
+            if memory_data.get("linguistic_style"):
+                context["_memory_linguistic_style"] = memory_data["linguistic_style"]
             logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
 
         # Step 2: Gather intelligence (runs before preload so it's in the system prompt)
@@ -736,14 +952,21 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if intelligence_brief:
             logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
 
-        # Step 3: Preload Gemini session (intelligence + memory will be in system prompt)
+        # Step 2.5: Load social proof summary (instant, local DB lookup)
+        from src.social_proof import load_social_proof_summary
+        social_proof_summary = load_social_proof_summary()
+        if social_proof_summary:
+            logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
+
+        # Step 3: Preload Gemini session (intelligence + memory + social proof will be in system prompt)
         await preload_session(
             call_uuid,
             request.phoneNumber,
             prompt=request.prompt,
             context=context,
             webhook_url=request.webhookUrl,
-            intelligence_brief=intelligence_brief
+            intelligence_brief=intelligence_brief,
+            social_proof_summary=social_proof_summary,
         )
 
         logger.info(f"Gemini preload complete for {call_uuid} - now making call")

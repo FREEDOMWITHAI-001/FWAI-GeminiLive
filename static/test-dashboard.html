@@ -528,7 +528,9 @@
                     <button class="tab-btn active" onclick="switchTab('testing')">Testing</button>
                     <button class="tab-btn" onclick="switchTab('personas')">Personas</button>
                     <button class="tab-btn" onclick="switchTab('memory')">Memory</button>
+                    <button class="tab-btn" onclick="switchTab('products')">Products</button>
                     <button class="tab-btn" onclick="switchTab('prompts')">Prompts</button>
+                    <button class="tab-btn" onclick="switchTab('socialproof')">Social Proof</button>
                     <button class="tab-btn" onclick="switchTab('metrics')">Live Metrics</button>
                 </div>
             </div>
@@ -808,6 +810,112 @@
             </div>
         </div>
 
+        <!-- PRODUCTS TAB -->
+        <div id="productsTab" class="tab-content">
+            <div class="grid">
+                <!-- Upload Card -->
+                <div class="card">
+                    <h2>Upload Product Document</h2>
+                    <div class="prompt-info">
+                        Upload a file (PDF, TXT, DOCX), paste text, or enter a URL. AI will process it into structured sections with auto-generated detection keywords.
+                    </div>
+                    <div class="form-group">
+                        <label for="productSourceType">Source Type</label>
+                        <select id="productSourceType" onchange="toggleProductInput()">
+                            <option value="file">Upload File</option>
+                            <option value="text">Paste Text</option>
+                            <option value="url">URL</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="productFileGroup">
+                        <div id="dropZone" style="border: 2px dashed #d1d5db; border-radius: 10px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: #f9fafb;" onclick="document.getElementById('productFileInput').click()">
+                            <div style="font-size: 36px; margin-bottom: 10px; color: #9ca3af;">&#128196;</div>
+                            <div style="color: #6b7280; font-weight: 600;">Drop file here or click to browse</div>
+                            <div style="color: #9ca3af; font-size: 13px; margin-top: 5px;">Supports PDF, TXT, DOC, DOCX, MD</div>
+                        </div>
+                        <input type="file" id="productFileInput" accept=".pdf,.txt,.doc,.docx,.text,.md" style="display: none;" onchange="handleFileSelect(event)">
+                        <div id="fileInfo" style="display: none; margin-top: 10px; padding: 10px 15px; background: #eef2ff; border-radius: 8px;">
+                            <span id="fileName" style="font-weight: 600; color: #4338ca;"></span>
+                            <span id="fileSize" style="color: #6b7280; margin-left: 10px; font-size: 13px;"></span>
+                            <span onclick="clearFileSelection()" style="float: right; cursor: pointer; color: #ef4444; font-weight: bold;">&#10005;</span>
+                        </div>
+                    </div>
+                    <div class="form-group" id="productTextGroup" style="display: none;">
+                        <label>Content</label>
+                        <textarea id="productUploadContent" class="prompt-editor" style="min-height: 250px;" placeholder="Paste your product brochure, description, or any product content here..."></textarea>
+                    </div>
+                    <div class="form-group" id="productUrlGroup" style="display: none;">
+                        <label>URL</label>
+                        <input type="url" id="productUploadUrl" placeholder="https://example.com/product-page">
+                    </div>
+                    <button class="btn" id="processProductBtn" onclick="uploadProductDocument()">
+                        Process with AI
+                    </button>
+                    <div id="uploadStatus"></div>
+                </div>
+
+                <!-- Section Editor Card -->
+                <div class="card">
+                    <h2>Product Sections</h2>
+                    <div class="prompt-info">
+                        Sections are loaded progressively during calls based on conversation context. <strong>overview</strong> always loads first. Other sections load when the customer mentions relevant topics.
+                    </div>
+                    <div class="module-list" id="productChips">
+                        <span class="module-chip loading">Loading...</span>
+                    </div>
+                    <div class="inline-form">
+                        <input type="text" id="newProductSection" placeholder="new_section_name (snake_case)">
+                        <button class="btn-small btn-add" onclick="createProductSection()">+ Add</button>
+                    </div>
+                    <hr class="section-divider">
+                    <div id="productEditorSection" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <label style="font-weight: 700; font-size: 15px;" id="productEditorLabel">Editing: ---</label>
+                            <button class="btn-small btn-danger" onclick="deleteProductSection()">Delete</button>
+                        </div>
+                        <textarea class="prompt-editor" id="productEditor" style="min-height: 250px;" placeholder="Enter product section content..."></textarea>
+                        <div class="form-group" style="margin-top: 15px;">
+                            <label>Detection Keywords (comma-separated)</label>
+                            <input type="text" id="productSectionKeywords" placeholder="price, cost, how much, payment">
+                        </div>
+                        <div class="button-group">
+                            <button class="btn" onclick="saveProductSection()">Save Section</button>
+                        </div>
+                        <div id="productSectionStatus"></div>
+                    </div>
+                    <div id="productEmptyState" class="empty-state" style="padding: 20px;">
+                        <div>Select a section above to edit, or upload a document to auto-generate sections</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Product Keywords Config -->
+            <div class="grid">
+                <div class="card full-width">
+                    <h2>Product Detection Keywords</h2>
+                    <div class="prompt-info">
+                        These keywords determine which product sections load during a call. When the customer says a keyword, the matching section gets added to the AI's knowledge for the next turn.
+                    </div>
+                    <div id="productKeywordsDisplay">
+                        <div class="empty-state" style="padding: 20px;">Loading keyword config...</div>
+                    </div>
+                    <hr class="section-divider">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label style="font-weight: 700;">Edit Raw JSON</label>
+                        <button class="btn-small btn-outline" onclick="toggleProductKeywordsEditor()">Toggle Editor</button>
+                    </div>
+                    <div id="productKeywordsEditorWrap" style="display: none; margin-top: 10px;">
+                        <textarea class="prompt-editor" id="productKeywordsEditor" style="min-height: 300px;" placeholder="Loading..."></textarea>
+                        <div class="button-group">
+                            <button class="btn" onclick="saveProductKeywords()">Save Keywords Config</button>
+                            <button class="btn btn-secondary" onclick="loadProductKeywords()">Reload</button>
+                        </div>
+                        <div id="productKeywordsStatus"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- PROMPTS TAB -->
         <div id="promptsTab" class="tab-content">
             <div class="card full-width">
@@ -849,6 +957,156 @@
                     • <code>{{location}}</code> - Location<br>
                     • <code>{{course_name}}</code> - Product/course name<br>
                     • <code>{{price}}</code> - Price in rupees
+                </div>
+            </div>
+        </div>
+
+        <!-- SOCIAL PROOF TAB -->
+        <div id="socialproofTab" class="tab-content">
+            <div class="card full-width">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>📊 Social Proof Engine</h2>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" onclick="loadSocialProof()">🔄 Refresh</button>
+                        <button class="btn" onclick="showSPAddForm()">+ Add New</button>
+                    </div>
+                </div>
+                <p style="color: #666; margin-bottom: 15px;">
+                    Real-time enrollment stats injected mid-call. When the AI learns a prospect's company, city, or role, it references real numbers naturally: <em>"Actually, 32 people from Wipro enrolled recently."</em>
+                </p>
+
+                <!-- Summary Preview -->
+                <div id="spSummaryBox" style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                    <strong style="color: #0369a1;">Pre-call Summary (injected into every call)</strong>
+                    <pre id="spSummaryText" style="margin-top: 8px; white-space: pre-wrap; color: #334155; font-size: 13px;">Loading...</pre>
+                </div>
+
+                <!-- Sub-tabs: Companies | Cities | Roles -->
+                <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                    <button class="tab-btn active" id="spSubCompanies" onclick="switchSPSub('companies')" style="font-size: 13px; padding: 6px 14px;">Companies</button>
+                    <button class="tab-btn" id="spSubCities" onclick="switchSPSub('cities')" style="font-size: 13px; padding: 6px 14px;">Cities</button>
+                    <button class="tab-btn" id="spSubRoles" onclick="switchSPSub('roles')" style="font-size: 13px; padding: 6px 14px;">Roles</button>
+                </div>
+
+                <!-- Stats Tables -->
+                <div id="spCompaniesSection">
+                    <table style="width: 100%; border-collapse: collapse;" id="spCompaniesTable">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid #e5e7eb;">
+                                <th style="padding: 10px;">Company</th>
+                                <th style="padding: 10px;">Enrollments</th>
+                                <th style="padding: 10px;">Last Enrolled</th>
+                                <th style="padding: 10px;">Notable Outcomes</th>
+                                <th style="padding: 10px; width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="spCompaniesBody"></tbody>
+                    </table>
+                </div>
+
+                <div id="spCitiesSection" style="display: none;">
+                    <table style="width: 100%; border-collapse: collapse;" id="spCitiesTable">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid #e5e7eb;">
+                                <th style="padding: 10px;">City</th>
+                                <th style="padding: 10px;">Enrollments</th>
+                                <th style="padding: 10px;">Trending</th>
+                                <th style="padding: 10px; width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="spCitiesBody"></tbody>
+                    </table>
+                </div>
+
+                <div id="spRolesSection" style="display: none;">
+                    <table style="width: 100%; border-collapse: collapse;" id="spRolesTable">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid #e5e7eb;">
+                                <th style="padding: 10px;">Role</th>
+                                <th style="padding: 10px;">Enrollments</th>
+                                <th style="padding: 10px;">Avg Salary Increase</th>
+                                <th style="padding: 10px;">Success Stories</th>
+                                <th style="padding: 10px; width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="spRolesBody"></tbody>
+                    </table>
+                </div>
+
+                <!-- Add/Edit Form (hidden by default) -->
+                <div id="spFormWrap" style="display: none; background: #f9fafb; border-radius: 10px; padding: 20px; margin-top: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 id="spFormTitle">Add Entry</h3>
+                        <button class="btn btn-secondary" onclick="hideSPForm()">Cancel</button>
+                    </div>
+
+                    <!-- Company form fields -->
+                    <div id="spFormCompany">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>Company Name *</label>
+                                <input type="text" id="spCompanyName" placeholder="e.g. TCS, Wipro, Infosys">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>Enrollments Count</label>
+                                <input type="number" id="spCompanyCount" placeholder="e.g. 45" min="0">
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label>Last Enrollment Date</label>
+                            <input type="date" id="spCompanyDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Notable Outcomes / Success Story</label>
+                            <textarea id="spCompanyOutcomes" rows="3" placeholder="e.g. 3 got promoted to AI leads within 4 months" style="width: 100%; font-family: inherit; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- City form fields -->
+                    <div id="spFormCity" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>City Name *</label>
+                                <input type="text" id="spCityName" placeholder="e.g. Hyderabad, Bangalore, Mumbai">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>Enrollments Count</label>
+                                <input type="number" id="spCityCount" placeholder="e.g. 340" min="0">
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label>Trending?</label>
+                            <select id="spCityTrending" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                                <option value="0">No</option>
+                                <option value="1">Yes</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Role form fields -->
+                    <div id="spFormRole" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>Role Name *</label>
+                                <input type="text" id="spRoleName" placeholder="e.g. Software Engineer, Data Analyst">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>Enrollments Count</label>
+                                <input type="number" id="spRoleCount" placeholder="e.g. 180" min="0">
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label>Avg Salary Increase</label>
+                            <input type="text" id="spRoleSalary" placeholder="e.g. 45%">
+                        </div>
+                        <div class="form-group">
+                            <label>Success Story</label>
+                            <textarea id="spRoleStory" rows="3" placeholder="e.g. Someone from your exact role built an AI SaaS tool and doubled their freelance income" style="width: 100%; font-family: inherit; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
+                        </div>
+                    </div>
+
+                    <button class="btn" onclick="saveSPEntry()" style="margin-top: 10px;">💾 Save</button>
+                    <div id="spFormStatus"></div>
                 </div>
             </div>
         </div>
@@ -971,10 +1229,19 @@
                 document.getElementById('memoryTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'memory\')"]').classList.add('active');
                 loadMemoryList();
+            } else if (tabName === 'products') {
+                document.getElementById('productsTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'products\')"]').classList.add('active');
+                loadProductsList();
+                loadProductKeywords();
             } else if (tabName === 'prompts') {
                 document.getElementById('promptsTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'prompts\')"]').classList.add('active');
                 loadPrompt();
+            } else if (tabName === 'socialproof') {
+                document.getElementById('socialproofTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'socialproof\')"]').classList.add('active');
+                loadSocialProof();
             } else if (tabName === 'metrics') {
                 document.getElementById('metricsTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'metrics\')"]').classList.add('active');
@@ -1840,12 +2107,529 @@
             setTimeout(() => div.innerHTML = '', 4000);
         }
 
+        // =========================================================================
+        // Product Intelligence Functions
+        // =========================================================================
+
+        let currentProductSection = null;
+        let productKeywordsCache = {};
+        let _selectedFile = null;
+
+        function toggleProductInput() {
+            const sourceType = document.getElementById('productSourceType').value;
+            document.getElementById('productFileGroup').style.display = sourceType === 'file' ? 'block' : 'none';
+            document.getElementById('productTextGroup').style.display = sourceType === 'text' ? 'block' : 'none';
+            document.getElementById('productUrlGroup').style.display = sourceType === 'url' ? 'block' : 'none';
+        }
+
+        // Drag & drop setup
+        function setupDropZone() {
+            const dz = document.getElementById('dropZone');
+            if (!dz) return;
+            dz.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dz.style.borderColor = '#667eea';
+                dz.style.background = '#eef2ff';
+            });
+            dz.addEventListener('dragleave', () => {
+                dz.style.borderColor = '#d1d5db';
+                dz.style.background = '#f9fafb';
+            });
+            dz.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dz.style.borderColor = '#d1d5db';
+                dz.style.background = '#f9fafb';
+                if (e.dataTransfer.files.length > 0) {
+                    processSelectedFile(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        function handleFileSelect(event) {
+            if (event.target.files.length > 0) processSelectedFile(event.target.files[0]);
+        }
+
+        function processSelectedFile(file) {
+            const allowedExts = ['.pdf', '.txt', '.text', '.md', '.doc', '.docx'];
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (!allowedExts.includes(ext)) {
+                showUploadAlert('Unsupported file type. Use PDF, TXT, DOC, DOCX, or MD.', 'error');
+                return;
+            }
+            if (file.size > 10 * 1024 * 1024) {
+                showUploadAlert('File too large. Max 10 MB.', 'error');
+                return;
+            }
+            _selectedFile = file;
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
+            document.getElementById('fileInfo').style.display = 'block';
+        }
+
+        function clearFileSelection() {
+            _selectedFile = null;
+            document.getElementById('fileInfo').style.display = 'none';
+            document.getElementById('productFileInput').value = '';
+        }
+
+        // Upload and process product document
+        async function uploadProductDocument() {
+            const sourceType = document.getElementById('productSourceType').value;
+            let content = '';
+            let finalSourceType = sourceType;
+
+            if (sourceType === 'file') {
+                if (!_selectedFile) {
+                    showUploadAlert('Please select a file first', 'error');
+                    return;
+                }
+                const ext = _selectedFile.name.split('.').pop().toLowerCase();
+                if (ext === 'pdf') {
+                    // Send PDF as base64
+                    const buf = await _selectedFile.arrayBuffer();
+                    const bytes = new Uint8Array(buf);
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                    content = btoa(binary);
+                    finalSourceType = 'pdf';
+                } else {
+                    // Text-based files
+                    content = await _selectedFile.text();
+                    finalSourceType = 'text';
+                }
+            } else if (sourceType === 'url') {
+                content = document.getElementById('productUploadUrl').value.trim();
+            } else {
+                content = document.getElementById('productUploadContent').value.trim();
+            }
+
+            if (!content) {
+                showUploadAlert('Please provide content, select a file, or enter a URL', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('processProductBtn');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            showUploadAlert('⏳ AI is structuring your document into sections... This may take 15-30 seconds.', 'success', true);
+
+            try {
+                const resp = await fetch(`${API_BASE}/products/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content, source_type: finalSourceType })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    const names = data.sections_created.join(', ');
+                    showUploadAlert(`✅ Document processed! Created ${data.sections_created.length} sections: ${names}`, 'success', true);
+                    clearFileSelection();
+                    await loadProductsList();
+                    loadProductKeywords();
+                    // Auto-select first section so user can see the content
+                    if (data.sections_created.length > 0) {
+                        selectProductSection(data.sections_created[0]);
+                    }
+                } else {
+                    showUploadAlert(data.error || 'Processing failed', 'error');
+                }
+            } catch (e) {
+                showUploadAlert('Error: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Process with AI';
+            }
+        }
+
+        function showUploadAlert(msg, type, persistent = false) {
+            const div = document.getElementById('uploadStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            if (!persistent) setTimeout(() => div.innerHTML = '', 8000);
+        }
+
+        // Load product sections list
+        async function loadProductsList() {
+            try {
+                const res = await fetch(`${API_BASE}/products`);
+                const data = await res.json();
+                const chips = document.getElementById('productChips');
+                if (data.sections && data.sections.length > 0) {
+                    chips.innerHTML = data.sections.map(name =>
+                        `<span class="module-chip ${name === currentProductSection ? 'active' : ''}" onclick="selectProductSection('${name}')">${name}</span>`
+                    ).join('');
+                } else {
+                    chips.innerHTML = '<span style="color: #94a3b8; font-size: 13px;">No product sections yet. Upload a document or create one manually.</span>';
+                }
+            } catch (e) {
+                document.getElementById('productChips').innerHTML = '<span style="color: #ef4444;">Failed to load</span>';
+            }
+        }
+
+        // Select a product section for editing
+        async function selectProductSection(name) {
+            currentProductSection = name;
+            loadProductsList();
+
+            try {
+                const res = await fetch(`${API_BASE}/products/${name}`);
+                const data = await res.json();
+                document.getElementById('productEditor').value = data.content || '';
+                document.getElementById('productEditorLabel').textContent = `Editing: ${name}`;
+                document.getElementById('productEditorSection').style.display = 'block';
+                document.getElementById('productEmptyState').style.display = 'none';
+
+                // Load keywords for this section
+                const kwConfig = productKeywordsCache[name] || {};
+                document.getElementById('productSectionKeywords').value = (kwConfig.keywords || []).join(', ');
+            } catch (e) {
+                showProductSectionAlert('Failed to load section: ' + e.message, 'error');
+            }
+        }
+
+        // Save product section
+        async function saveProductSection() {
+            if (!currentProductSection) return;
+            const content = document.getElementById('productEditor').value;
+            const keywordsStr = document.getElementById('productSectionKeywords').value;
+
+            try {
+                // Save section content
+                await fetch(`${API_BASE}/products/${currentProductSection}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+
+                // Update keywords in config
+                const keywords = keywordsStr.split(',').map(k => k.trim()).filter(k => k);
+                productKeywordsCache[currentProductSection] = { keywords };
+
+                await fetch(`${API_BASE}/product-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(productKeywordsCache)
+                });
+
+                showProductSectionAlert('Section saved!', 'success');
+                loadProductKeywords();
+            } catch (e) {
+                showProductSectionAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Create new product section
+        async function createProductSection() {
+            const nameInput = document.getElementById('newProductSection');
+            const name = nameInput.value.trim().toLowerCase().replace(/\s+/g, '_');
+            if (!name) { alert('Enter a section name'); return; }
+
+            try {
+                const res = await fetch(`${API_BASE}/products/${name}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: `[PRODUCT KNOWLEDGE: ${name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}]\n- ` })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    nameInput.value = '';
+                    await loadProductsList();
+                    selectProductSection(name);
+                    showProductSectionAlert('Section created!', 'success');
+                }
+            } catch (e) {
+                showProductSectionAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Delete product section
+        async function deleteProductSection() {
+            if (!currentProductSection) return;
+            if (!confirm(`Delete product section "${currentProductSection}"?`)) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/products/${currentProductSection}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    currentProductSection = null;
+                    document.getElementById('productEditorSection').style.display = 'none';
+                    document.getElementById('productEmptyState').style.display = 'block';
+                    loadProductsList();
+                    showProductSectionAlert('Section deleted', 'success');
+                }
+            } catch (e) {
+                showProductSectionAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        function showProductSectionAlert(msg, type) {
+            const div = document.getElementById('productSectionStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
+        // Load product keywords config
+        async function loadProductKeywords() {
+            try {
+                const res = await fetch(`${API_BASE}/product-config`);
+                productKeywordsCache = await res.json();
+
+                const display = document.getElementById('productKeywordsDisplay');
+                let html = '';
+                for (const [section, config] of Object.entries(productKeywordsCache)) {
+                    html += `<div style="margin-bottom: 15px;">`;
+                    html += `<strong style="font-size: 14px; text-transform: capitalize;">${section.replace(/_/g, ' ')}</strong><br>`;
+                    if (config.keywords && config.keywords.length > 0) {
+                        config.keywords.forEach(kw => {
+                            html += `<span class="keyword-tag">${kw}</span>`;
+                        });
+                    } else {
+                        html += `<span style="color: #94a3b8; font-size: 12px;">always loaded</span>`;
+                    }
+                    html += `</div>`;
+                }
+                display.innerHTML = html || '<div class="empty-state" style="padding: 20px;">No keywords configured. Upload a document to auto-generate.</div>';
+
+                document.getElementById('productKeywordsEditor').value = JSON.stringify(productKeywordsCache, null, 2);
+            } catch (e) {
+                document.getElementById('productKeywordsDisplay').innerHTML = '<span style="color: #ef4444;">Failed to load</span>';
+            }
+        }
+
+        // Save product keywords config
+        async function saveProductKeywords() {
+            const editor = document.getElementById('productKeywordsEditor');
+            try {
+                const parsed = JSON.parse(editor.value);
+                const res = await fetch(`${API_BASE}/product-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(parsed)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showProductKeywordsAlert('Keywords config saved!', 'success');
+                    productKeywordsCache = parsed;
+                    loadProductKeywords();
+                } else {
+                    showProductKeywordsAlert('Failed to save', 'error');
+                }
+            } catch (e) {
+                if (e instanceof SyntaxError) {
+                    showProductKeywordsAlert('Invalid JSON! Check your syntax.', 'error');
+                } else {
+                    showProductKeywordsAlert('Error: ' + e.message, 'error');
+                }
+            }
+        }
+
+        function toggleProductKeywordsEditor() {
+            const wrap = document.getElementById('productKeywordsEditorWrap');
+            wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function showProductKeywordsAlert(msg, type) {
+            const div = document.getElementById('productKeywordsStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
+        // ============================================================
+        // Social Proof Engine
+        // ============================================================
+
+        let spCurrentSub = 'companies';
+
+        function switchSPSub(sub) {
+            spCurrentSub = sub;
+            ['companies', 'cities', 'roles'].forEach(s => {
+                const cap = s.charAt(0).toUpperCase() + s.slice(1);
+                document.getElementById('spSub' + cap).classList.remove('active');
+                document.getElementById('sp' + cap + 'Section').style.display = 'none';
+            });
+            const cap = sub.charAt(0).toUpperCase() + sub.slice(1);
+            document.getElementById('spSub' + cap).classList.add('active');
+            document.getElementById('sp' + cap + 'Section').style.display = 'block';
+            hideSPForm();
+        }
+
+        async function loadSocialProof() {
+            try {
+                const sumRes = await fetch(API_BASE + '/social-proof/summary');
+                const sumData = await sumRes.json();
+                document.getElementById('spSummaryText').textContent = sumData.summary || '(No data yet — add entries below)';
+
+                const statsRes = await fetch(API_BASE + '/social-proof/stats');
+                const stats = await statsRes.json();
+                renderSPCompanies(stats.companies || []);
+                renderSPCities(stats.cities || []);
+                renderSPRoles(stats.roles || []);
+            } catch (e) {
+                document.getElementById('spSummaryText').textContent = 'Error loading: ' + e.message;
+            }
+        }
+
+        function renderSPCompanies(items) {
+            const tbody = document.getElementById('spCompaniesBody');
+            if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#999;">No companies yet</td></tr>'; return; }
+            tbody.innerHTML = items.map(c => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:10px;font-weight:600;">${c.company_name}</td>
+                    <td style="padding:10px;">${c.enrollments_count}</td>
+                    <td style="padding:10px;color:#666;">${c.last_enrollment_date || '-'}</td>
+                    <td style="padding:10px;color:#666;font-size:13px;">${c.notable_outcomes || '-'}</td>
+                    <td style="padding:10px;">
+                        <button onclick="editSPCompany('${c.company_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Edit">✏️</button>
+                        <button onclick="deleteSPEntry('company','${c.company_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Delete">🗑️</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        function renderSPCities(items) {
+            const tbody = document.getElementById('spCitiesBody');
+            if (!items.length) { tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:#999;">No cities yet</td></tr>'; return; }
+            tbody.innerHTML = items.map(c => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:10px;font-weight:600;">${c.city_name}</td>
+                    <td style="padding:10px;">${c.enrollments_count}</td>
+                    <td style="padding:10px;">${c.trending ? '<span style="color:#10b981;font-weight:600;">🔥 Yes</span>' : 'No'}</td>
+                    <td style="padding:10px;">
+                        <button onclick="editSPCity('${c.city_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Edit">✏️</button>
+                        <button onclick="deleteSPEntry('city','${c.city_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Delete">🗑️</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        function renderSPRoles(items) {
+            const tbody = document.getElementById('spRolesBody');
+            if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#999;">No roles yet</td></tr>'; return; }
+            tbody.innerHTML = items.map(r => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                    <td style="padding:10px;font-weight:600;">${r.role_name}</td>
+                    <td style="padding:10px;">${r.enrollments_count}</td>
+                    <td style="padding:10px;">${r.avg_salary_increase || '-'}</td>
+                    <td style="padding:10px;color:#666;font-size:13px;">${r.success_stories || '-'}</td>
+                    <td style="padding:10px;">
+                        <button onclick="editSPRole('${r.role_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Edit">✏️</button>
+                        <button onclick="deleteSPEntry('role','${r.role_name.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;font-size:16px;" title="Delete">🗑️</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        function showSPAddForm() {
+            document.getElementById('spFormWrap').style.display = 'block';
+            const singular = spCurrentSub.slice(0,-1);
+            document.getElementById('spFormTitle').textContent = 'Add ' + singular.charAt(0).toUpperCase() + singular.slice(1);
+            document.getElementById('spFormCompany').style.display = spCurrentSub === 'companies' ? 'block' : 'none';
+            document.getElementById('spFormCity').style.display = spCurrentSub === 'cities' ? 'block' : 'none';
+            document.getElementById('spFormRole').style.display = spCurrentSub === 'roles' ? 'block' : 'none';
+            ['spCompanyName','spCompanyCount','spCompanyDate','spCompanyOutcomes',
+             'spCityName','spCityCount','spRoleName','spRoleCount','spRoleSalary','spRoleStory'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            document.getElementById('spCityTrending').value = '0';
+        }
+
+        function hideSPForm() {
+            document.getElementById('spFormWrap').style.display = 'none';
+            document.getElementById('spFormStatus').innerHTML = '';
+        }
+
+        async function editSPCompany(name) {
+            switchSPSub('companies');
+            try {
+                const res = await fetch(API_BASE + '/social-proof/stats/company/' + encodeURIComponent(name));
+                const data = await res.json();
+                if (data.success && data.stats) {
+                    showSPAddForm();
+                    document.getElementById('spFormTitle').textContent = 'Edit Company: ' + name;
+                    document.getElementById('spCompanyName').value = data.stats.company_name || '';
+                    document.getElementById('spCompanyCount').value = data.stats.enrollments_count || '';
+                    document.getElementById('spCompanyDate').value = data.stats.last_enrollment_date || '';
+                    document.getElementById('spCompanyOutcomes').value = data.stats.notable_outcomes || '';
+                }
+            } catch(e) { alert('Error: ' + e.message); }
+        }
+
+        async function editSPCity(name) {
+            switchSPSub('cities');
+            try {
+                const res = await fetch(API_BASE + '/social-proof/stats/city/' + encodeURIComponent(name));
+                const data = await res.json();
+                if (data.success && data.stats) {
+                    showSPAddForm();
+                    document.getElementById('spFormTitle').textContent = 'Edit City: ' + name;
+                    document.getElementById('spCityName').value = data.stats.city_name || '';
+                    document.getElementById('spCityCount').value = data.stats.enrollments_count || '';
+                    document.getElementById('spCityTrending').value = data.stats.trending ? '1' : '0';
+                }
+            } catch(e) { alert('Error: ' + e.message); }
+        }
+
+        async function editSPRole(name) {
+            switchSPSub('roles');
+            try {
+                const res = await fetch(API_BASE + '/social-proof/stats/role/' + encodeURIComponent(name));
+                const data = await res.json();
+                if (data.success && data.stats) {
+                    showSPAddForm();
+                    document.getElementById('spFormTitle').textContent = 'Edit Role: ' + name;
+                    document.getElementById('spRoleName').value = data.stats.role_name || '';
+                    document.getElementById('spRoleCount').value = data.stats.enrollments_count || '';
+                    document.getElementById('spRoleSalary').value = data.stats.avg_salary_increase || '';
+                    document.getElementById('spRoleStory').value = data.stats.success_stories || '';
+                }
+            } catch(e) { alert('Error: ' + e.message); }
+        }
+
+        async function saveSPEntry() {
+            const statusDiv = document.getElementById('spFormStatus');
+            try {
+                let url, body;
+                if (spCurrentSub === 'companies') {
+                    const name = document.getElementById('spCompanyName').value.trim();
+                    if (!name) { statusDiv.innerHTML = '<div class="alert alert-error">Company name required</div>'; return; }
+                    url = '/social-proof/stats/company';
+                    body = { company_name: name, enrollments_count: parseInt(document.getElementById('spCompanyCount').value) || 0, last_enrollment_date: document.getElementById('spCompanyDate').value || null, notable_outcomes: document.getElementById('spCompanyOutcomes').value.trim() || null };
+                } else if (spCurrentSub === 'cities') {
+                    const name = document.getElementById('spCityName').value.trim();
+                    if (!name) { statusDiv.innerHTML = '<div class="alert alert-error">City name required</div>'; return; }
+                    url = '/social-proof/stats/city';
+                    body = { city_name: name, enrollments_count: parseInt(document.getElementById('spCityCount').value) || 0, trending: parseInt(document.getElementById('spCityTrending').value) || 0 };
+                } else if (spCurrentSub === 'roles') {
+                    const name = document.getElementById('spRoleName').value.trim();
+                    if (!name) { statusDiv.innerHTML = '<div class="alert alert-error">Role name required</div>'; return; }
+                    url = '/social-proof/stats/role';
+                    body = { role_name: name, enrollments_count: parseInt(document.getElementById('spRoleCount').value) || 0, avg_salary_increase: document.getElementById('spRoleSalary').value.trim() || null, success_stories: document.getElementById('spRoleStory').value.trim() || null };
+                }
+                const res = await fetch(API_BASE + url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+                const data = await res.json();
+                if (data.success) {
+                    statusDiv.innerHTML = '<div class="alert alert-success">Saved!</div>';
+                    setTimeout(() => { hideSPForm(); loadSocialProof(); }, 800);
+                } else {
+                    statusDiv.innerHTML = '<div class="alert alert-error">' + (data.error || 'Save failed') + '</div>';
+                }
+            } catch (e) {
+                statusDiv.innerHTML = '<div class="alert alert-error">Error: ' + e.message + '</div>';
+            }
+        }
+
+        async function deleteSPEntry(type, name) {
+            if (!confirm('Delete ' + type + ' "' + name + '"?')) return;
+            try {
+                await fetch(API_BASE + '/social-proof/stats/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' });
+                loadSocialProof();
+            } catch (e) { alert('Delete failed: ' + e.message); }
+        }
+
         // Initialize
         addLog('Dashboard initialized', 'success');
         addLog('Monitoring server at http://localhost:3001', 'info');
 
         checkServerStatus();
         updateMetrics();
+        setupDropZone();
 
         setInterval(updateMetrics, 2000);
         setInterval(checkServerStatus, 10000);

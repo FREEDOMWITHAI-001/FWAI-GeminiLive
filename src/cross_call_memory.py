@@ -56,6 +56,7 @@ def extract_and_save_memory(
     accumulated_user_text: str,
     duration: float,
     interest_level: str = "",
+    linguistic_style: dict = None,
 ):
     """
     Extract key facts from a completed call and save/update contact memory.
@@ -122,6 +123,17 @@ def extract_and_save_memory(
         final_role = role
         final_name = contact_name if contact_name and contact_name != "Customer" else None
 
+    # Merge linguistic style (latest call wins)
+    final_style = linguistic_style or {}
+    if existing and not final_style:
+        raw = existing.get("linguistic_style")
+        if raw:
+            import json as _json
+            try:
+                final_style = _json.loads(raw) if isinstance(raw, str) else raw
+            except Exception:
+                final_style = {}
+
     # Save to DB
     session_db.save_contact_memory(
         phone,
@@ -137,12 +149,13 @@ def extract_and_save_memory(
         last_call_summary=call_summary,
         last_call_outcome=interest_level or "Unknown",
         all_call_uuids=all_uuids,
+        linguistic_style=final_style,
     )
 
     logger.info(
         f"Memory saved for {phone}: call #{call_count}, "
         f"persona={final_persona}, objections={merged_objections}, "
-        f"facts={len(merged_facts)}"
+        f"facts={len(merged_facts)}, style={final_style}"
     )
 
 
@@ -228,9 +241,20 @@ def load_memory_context(phone: str) -> dict:
     if not memory or not memory.get("call_count"):
         return {}
 
+    # Parse linguistic style from DB
+    raw_style = memory.get("linguistic_style")
+    style = {}
+    if raw_style:
+        import json as _json
+        try:
+            style = _json.loads(raw_style) if isinstance(raw_style, str) else raw_style
+        except Exception:
+            style = {}
+
     return {
         "prompt": _format_memory_for_prompt(memory),
         "persona": memory.get("persona"),
+        "linguistic_style": style,
     }
 
 
