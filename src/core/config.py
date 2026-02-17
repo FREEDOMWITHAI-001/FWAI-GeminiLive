@@ -104,6 +104,7 @@ class Config(BaseModel):
     # WhatsApp Phone ID (for Meta API)
     whatsapp_phone_id: str = os.getenv("WHATSAPP_PHONE_ID", "")
 
+
     def validate_config(self) -> list[str]:
         """Validate required configuration values based on active provider"""
         errors = []

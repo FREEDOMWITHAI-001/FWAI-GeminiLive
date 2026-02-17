@@ -161,6 +161,8 @@ class PlivoGeminiSession:
         logger.info(f"[{call_uuid[:8]}] Direct prompt mode for client: {client_name or 'default'}")
 
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
+        self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
+        self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
         self.is_active = False
@@ -281,6 +283,26 @@ class PlivoGeminiSession:
 
     # Minimum turns before goodbye detection activates (prevents premature call end)
     MIN_TURNS_FOR_GOODBYE = 6
+
+    def _get_tool_declarations(self):
+        """Build tool declarations dynamically based on session capabilities."""
+        tools = list(TOOL_DECLARATIONS)  # Always include end_call
+        if self.ghl_webhook_url:
+            tools.append({
+                "name": "send_whatsapp",
+                "description": "Send a WhatsApp message to the caller via the configured workflow. Use this when your prompt instructs you to send a WhatsApp message. Can only be sent once per call.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief reason for sending the message, e.g. 'welcome message after greeting'"
+                        }
+                    },
+                    "required": ["reason"]
+                }
+            })
+        return tools
 
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end.
@@ -1222,7 +1244,7 @@ Rules:
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
-                "tools": [{"function_declarations": TOOL_DECLARATIONS}]
+                "tools": [{"function_declarations": self._get_tool_declarations()}]
             }
         }
         await ws.send(json.dumps(msg))
@@ -1313,6 +1335,45 @@ Rules:
                 # Fallback: if user doesn't respond within 5 seconds, end anyway
                 if not self._closing_call:
                     asyncio.create_task(self._fallback_hangup(5.0))
+                return
+
+            # Handle send_whatsapp tool - trigger GHL workflow
+            if tool_name == "send_whatsapp":
+                reason = tool_args.get("reason", "")
+                self.log.detail(f"Send WhatsApp: {reason}")
+                self._save_transcript("TOOL", f"send_whatsapp: {reason}")
+
+                if self._whatsapp_sent:
+                    msg = "WhatsApp already sent this call"
+                    self.log.detail(msg)
+                elif not self.ghl_webhook_url:
+                    msg = "WhatsApp not configured for this call"
+                    self.log.warn(msg)
+                else:
+                    self._whatsapp_sent = True
+                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    result = await trigger_ghl_workflow(
+                        self.caller_phone,
+                        self.context.get("customer_name", "Customer"),
+                        self.ghl_webhook_url,
+                        email=self.context.get("email", "")
+                    )
+                    msg = "WhatsApp message sent successfully" if result.get("success") else f"WhatsApp send failed: {result.get('error', 'unknown')}"
+                    self.log.detail(msg)
+
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": {"success": self._whatsapp_sent, "message": msg}
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except Exception:
+                    pass
                 return
 
             # Execute the tool with context for templates - graceful error handling
