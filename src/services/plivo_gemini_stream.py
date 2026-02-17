@@ -289,7 +289,7 @@ class PlivoGeminiSession:
     def _get_tool_declarations(self):
         """Build tool declarations dynamically based on session capabilities."""
         tools = list(TOOL_DECLARATIONS)  # Always include end_call
-        if self.ghl_webhook_url:
+        if self.ghl_api_key and self.ghl_location_id:
             tools.append({
                 "name": "send_whatsapp",
                 "description": "Send a WhatsApp message to the caller via the configured workflow. Use this when your prompt instructs you to send a WhatsApp message. Can only be sent once per call.",
@@ -1348,34 +1348,28 @@ Rules:
                 if self._whatsapp_sent:
                     msg = "WhatsApp already sent this call"
                     self.log.detail(msg)
-                elif not self.ghl_webhook_url:
-                    msg = "WhatsApp not configured for this call"
+                elif not self.ghl_api_key or not self.ghl_location_id:
+                    msg = "WhatsApp not configured - GHL API key or location ID missing"
                     self.log.warn(msg)
                 else:
                     self._whatsapp_sent = True
-                    from src.services.ghl_whatsapp import trigger_ghl_workflow, tag_ghl_contact
-                    result = await trigger_ghl_workflow(
-                        self.caller_phone,
-                        self.context.get("customer_name", "Customer"),
-                        self.ghl_webhook_url,
-                        email=self.context.get("email", "")
-                    )
-                    msg = "WhatsApp message sent successfully" if result.get("success") else f"WhatsApp send failed: {result.get('error', 'unknown')}"
-                    self.log.detail(msg)
-
-                    # Tag the GHL contact (non-blocking, don't fail the WhatsApp send)
-                    if self.ghl_api_key and self.ghl_location_id:
-                        try:
-                            tag_result = await tag_ghl_contact(
-                                phone=self.caller_phone,
-                                email=self.context.get("email", ""),
-                                api_key=self.ghl_api_key,
-                                location_id=self.ghl_location_id,
-                                tag="ai-onboardcall-goldmember",
-                            )
-                            self.log.detail(f"GHL tag result: {tag_result}")
-                        except Exception as e:
-                            self.log.warn(f"GHL tagging failed: {e}")
+                    from src.services.ghl_whatsapp import tag_ghl_contact
+                    try:
+                        tag_result = await tag_ghl_contact(
+                            phone=self.caller_phone,
+                            email=self.context.get("email", ""),
+                            api_key=self.ghl_api_key,
+                            location_id=self.ghl_location_id,
+                            tag="ai-onboardcall-goldmember",
+                        )
+                        if tag_result.get("success"):
+                            msg = "WhatsApp triggered via GHL contact tag"
+                        else:
+                            msg = f"GHL tagging failed: {tag_result.get('error', 'unknown')}"
+                        self.log.detail(f"GHL tag result: {tag_result}")
+                    except Exception as e:
+                        msg = f"GHL tagging failed: {e}"
+                        self.log.warn(msg)
 
                 try:
                     tool_response = {
