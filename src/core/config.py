@@ -99,6 +99,9 @@ class Config(BaseModel):
     intelligence_timeout: float = float(os.getenv("INTELLIGENCE_TIMEOUT", "5.0"))
     enable_live_search: bool = os.getenv("ENABLE_LIVE_SEARCH", "true").lower() == "true"
 
+    # Micro-Moment Detection (behavioral buying signal / resistance detection)
+    enable_micro_moments: bool = os.getenv("ENABLE_MICRO_MOMENTS", "true").lower() == "true"
+
     # SMTP Email settings
     smtp_host: str = os.getenv("SMTP_HOST", "")
     smtp_port: int = int(os.getenv("SMTP_PORT", "587"))

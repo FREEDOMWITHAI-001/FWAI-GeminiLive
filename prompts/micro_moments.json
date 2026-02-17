@@ -1,0 +1,37 @@
+{
+  "min_turns_for_detection": 3,
+  "strategy_cooldown_turns": 2,
+  "max_history": 8,
+  "thresholds": {
+    "price_shock": {
+      "response_time_multiplier": 1.4,
+      "max_word_count": 6,
+      "turns_after_price_max": 2
+    },
+    "resistance": {
+      "min_consecutive_short": 2,
+      "response_time_increase_factor": 1.3,
+      "word_count_decrease_factor": 0.7
+    },
+    "buying_signal": {
+      "min_how_questions": 1,
+      "word_count_maintain_factor": 0.8
+    },
+    "interest_spike": {
+      "word_count_spike_factor": 1.4,
+      "response_time_faster_factor": 0.8,
+      "min_signals": 2
+    },
+    "last_chance": {
+      "min_consecutive_short": 2,
+      "word_count_decline_factor": 0.5
+    }
+  },
+  "hints": {
+    "buying_signal": "[MICRO-MOMENT: Buying signal detected. Customer is shifting from WHY to HOW. Switch to CLOSING mode: answer their process questions directly, assume the sale, offer to start enrollment. Don't re-explain value — they already see it. Be direct: 'Great question! Here's how we get you started...']",
+    "resistance": "[MICRO-MOMENT: Resistance building. Customer engagement is dropping. Switch to RAPPORT mode: stop selling. Ask an open-ended personal question. Show genuine curiosity about THEIR situation. Example: 'Actually, I'm curious — what made you pick up the phone today?' Rebuild trust before returning to value.]",
+    "price_shock": "[MICRO-MOMENT: Price shock detected. Customer went quiet/hesitant after hearing the price. DO NOT repeat the price. Immediately pivot to ROI: 'Think of it this way — one salary hike or freelance project pays for this 3x over.' Then offer EMI: 'Plus, with our EMI option, it's about 3,300 per month — less than a daily coffee.' Keep voice calm and empathetic, not defensive.]",
+    "interest_spike": "[MICRO-MOMENT: Interest spike! Customer is suddenly more engaged — asking more, talking faster, longer responses. RIDE THIS MOMENTUM. Match their energy. Feed them exciting details. Build on what excited them. Don't slow down with disclaimers. This is your window — keep the energy high!]",
+    "last_chance": "[MICRO-MOMENT: Customer winding down — 'I'll think about it' energy detected. This is your LAST CHANCE. Deploy value bomb: share ONE powerful fact they haven't heard. Example: 'Before you go — just so you know, we have a batch starting next week with bonus access to [specific bonus]. Most people who say they'll think about it wish they'd started sooner.' Create gentle FOMO without being pushy. If they still want to go, respect it gracefully.]"
+  }
+}

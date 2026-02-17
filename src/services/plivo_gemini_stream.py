@@ -332,6 +332,10 @@ class PlivoGeminiSession:
         self._active_situations = []
         self._previous_situations = []
         self._accumulated_user_text = ""
+        # Micro-Moment Detector (behavioral buying signal / resistance detection)
+        self._micro_moment_detector = None
+        self._agent_turn_complete_time = None   # Set at turnComplete
+        self._user_response_start_time = None   # Set at first user transcript of next turn
         if self._use_persona_engine:
             self.log.detail("Persona engine: ON")
             # Pre-set persona from cross-call memory (skips NEPQ discovery)
@@ -339,6 +343,12 @@ class PlivoGeminiSession:
             if memory_persona:
                 self._detected_persona = memory_persona
                 self.log.detail(f"Persona pre-loaded from memory: {memory_persona}")
+            # Initialize Micro-Moment Detector
+            from src.core.config import config as app_config
+            if app_config.enable_micro_moments:
+                from src.micro_moment_detector import MicroMomentDetector
+                self._micro_moment_detector = MicroMomentDetector()
+                self.log.detail("Micro-moment detector: ON")
 
     def inject_intelligence(self, brief: str):
         """Store pre-call intelligence brief. Must be called BEFORE preload starts
@@ -1686,6 +1696,26 @@ Rules:
                                     self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
                             self._previous_situations = list(self._active_situations)
 
+                        # Micro-Moment Detection (behavioral, every turn)
+                        if self._micro_moment_detector and full_user:
+                            response_time_ms = 0
+                            if self._agent_turn_complete_time and self._user_response_start_time:
+                                response_time_ms = (self._user_response_start_time - self._agent_turn_complete_time) * 1000
+                            mm_hint = self._micro_moment_detector.record_turn(
+                                turn_number=self._turn_count,
+                                full_user=full_user,
+                                full_agent=full_agent,
+                                response_time_ms=response_time_ms,
+                                turn_duration_ms=turn_duration_ms,
+                            )
+                            if mm_hint and self.goog_live_ws:
+                                asyncio.create_task(self._inject_situation_hint(mm_hint))
+                                self.log.detail(f"Micro-moment: {self._micro_moment_detector.current_strategy}")
+
+                        # Update timing markers for next turn's response time measurement
+                        self._agent_turn_complete_time = time.time()
+                        self._user_response_start_time = None
+
                         extra = ""
                         if self._turns_since_reconnect == self._session_split_interval - 1:
                             extra = "prewarm standby"
@@ -1777,6 +1807,9 @@ Rules:
                         if not is_noise:
                             self._last_user_speech_time = time.time()  # Track for latency
                             self._last_user_transcript_time = time.time()
+                            # Micro-moment: capture when user FIRST speaks this turn
+                            if self._user_response_start_time is None:
+                                self._user_response_start_time = time.time()
                             logger.debug(f"[{self.call_uuid[:8]}] USER fragment: {user_text}")
                             self._current_turn_user_text.append(user_text)
                             self._save_transcript("USER", user_text)
@@ -2135,6 +2168,10 @@ Rules:
                     "total_nudges": 0,
                 },
                 "recording_url": f"/calls/{self.call_uuid}/recording",
+                "micro_moments": {
+                    "final_strategy": self._micro_moment_detector.current_strategy if self._micro_moment_detector else "discovery",
+                    "moments_detected": self._micro_moment_detector.get_moments_log() if self._micro_moment_detector else [],
+                },
             }
 
             self.log.detail(f"Webhook: {self.webhook_url}")
