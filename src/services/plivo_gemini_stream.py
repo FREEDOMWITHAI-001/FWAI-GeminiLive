@@ -162,6 +162,8 @@ class PlivoGeminiSession:
 
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
+        self.ghl_api_key = self.context.pop("ghl_api_key", "")  # GHL API key for contact lookup
+        self.ghl_location_id = self.context.pop("ghl_location_id", "")  # GHL location ID
         self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
@@ -1351,7 +1353,7 @@ Rules:
                     self.log.warn(msg)
                 else:
                     self._whatsapp_sent = True
-                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    from src.services.ghl_whatsapp import trigger_ghl_workflow, tag_ghl_contact
                     result = await trigger_ghl_workflow(
                         self.caller_phone,
                         self.context.get("customer_name", "Customer"),
@@ -1360,6 +1362,20 @@ Rules:
                     )
                     msg = "WhatsApp message sent successfully" if result.get("success") else f"WhatsApp send failed: {result.get('error', 'unknown')}"
                     self.log.detail(msg)
+
+                    # Tag the GHL contact (non-blocking, don't fail the WhatsApp send)
+                    if self.ghl_api_key and self.ghl_location_id:
+                        try:
+                            tag_result = await tag_ghl_contact(
+                                phone=self.caller_phone,
+                                email=self.context.get("email", ""),
+                                api_key=self.ghl_api_key,
+                                location_id=self.ghl_location_id,
+                                tag="ai-onboardcall-goldmember",
+                            )
+                            self.log.detail(f"GHL tag result: {tag_result}")
+                        except Exception as e:
+                            self.log.warn(f"GHL tagging failed: {e}")
 
                 try:
                     tool_response = {
