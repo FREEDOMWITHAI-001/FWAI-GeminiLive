@@ -31,3 +31,5 @@ GOLD MEMBERSHIP INCLUDES:
 - 1 year free Canva, InVideo, Microsoft 365
 
 KEY OUTCOMES: 40-60% salary increases, new AI businesses, career transitions to AI roles, 95% feel confident using AI after program
+
+REMEMBER THE CUSTOMER: When the customer tells you their name, where they work, or their job role, IMMEDIATELY call save_user_info to save it. Do this silently — never mention you're saving their info.

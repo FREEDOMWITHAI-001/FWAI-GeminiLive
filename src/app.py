@@ -315,6 +315,54 @@ async def update_persona_config(request: Request):
 
 
 # ============================================================================
+# Cross-Call Memory API
+# ============================================================================
+
+@app.get("/memory")
+async def list_memories():
+    """List all contact memories"""
+    memories = session_db.get_all_contact_memories(limit=200)
+    return {"memories": memories, "total": len(memories)}
+
+
+@app.get("/memory/{phone}")
+async def get_memory(phone: str):
+    """Get contact memory for a phone number"""
+    # URL-decode phone (+ becomes space in URL params)
+    phone = phone.replace(" ", "+")
+    memory = session_db.get_contact_memory(phone)
+    if memory:
+        return {"success": True, "memory": memory}
+    return {"success": False, "error": f"No memory found for {phone}"}
+
+
+@app.post("/memory/{phone}")
+async def update_memory(phone: str, request: Request):
+    """Update contact memory for a phone number"""
+    phone = phone.replace(" ", "+")
+    body = await request.json()
+    # Filter only valid fields
+    valid_fields = {
+        "name", "persona", "company", "role", "objections",
+        "interest_areas", "key_facts", "last_call_summary",
+        "last_call_outcome",
+    }
+    updates = {k: v for k, v in body.items() if k in valid_fields}
+    if not updates:
+        return {"error": "No valid fields to update"}
+    session_db.save_contact_memory(phone, **updates)
+    return {"success": True, "message": f"Memory updated for {phone}"}
+
+
+@app.delete("/memory/{phone}")
+async def delete_memory(phone: str):
+    """Delete contact memory for a phone number"""
+    phone = phone.replace(" ", "+")
+    session_db.delete_contact_memory(phone)
+    return {"success": True, "message": f"Memory deleted for {phone}"}
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
 
@@ -667,18 +715,28 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             contact_name=request.contactName, webhook_url=request.webhookUrl
         )
 
-        # Gather intelligence FIRST, then preload with it baked into system prompt
+        # Gather intelligence + cross-call memory FIRST, then preload
         from src.services.plivo_gemini_stream import preload_session, get_preloading_session
         from src.services.intelligence import gather_intelligence
+        from src.cross_call_memory import load_memory_context
 
         logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
 
-        # Step 1: Gather intelligence (runs before preload so it's in the system prompt)
+        # Step 1: Load cross-call memory (instant, local DB lookup)
+        memory_data = load_memory_context(request.phoneNumber)
+        if memory_data:
+            context["_memory_context"] = memory_data.get("prompt", "")
+            # If memory has a persona, pre-set it so AI skips discovery
+            if memory_data.get("persona"):
+                context["_memory_persona"] = memory_data["persona"]
+            logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+
+        # Step 2: Gather intelligence (runs before preload so it's in the system prompt)
         intelligence_brief = await gather_intelligence(request.contactName, context)
         if intelligence_brief:
             logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
 
-        # Step 2: Preload Gemini session (intelligence will be in system prompt via session._intelligence_brief)
+        # Step 3: Preload Gemini session (intelligence + memory will be in system prompt)
         await preload_session(
             call_uuid,
             request.phoneNumber,

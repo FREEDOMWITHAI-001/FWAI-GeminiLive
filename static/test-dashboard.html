@@ -527,6 +527,7 @@
                 <div class="tab-buttons">
                     <button class="tab-btn active" onclick="switchTab('testing')">Testing</button>
                     <button class="tab-btn" onclick="switchTab('personas')">Personas</button>
+                    <button class="tab-btn" onclick="switchTab('memory')">Memory</button>
                     <button class="tab-btn" onclick="switchTab('prompts')">Prompts</button>
                     <button class="tab-btn" onclick="switchTab('metrics')">Live Metrics</button>
                 </div>
@@ -734,6 +735,79 @@
             </div>
         </div>
 
+        <!-- MEMORY TAB -->
+        <div id="memoryTab" class="tab-content">
+            <div class="card full-width">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>🧠 Cross-Call Memory</h2>
+                    <button class="btn btn-secondary" onclick="loadMemoryList()">🔄 Refresh</button>
+                </div>
+                <p style="color: #666; margin-bottom: 15px;">
+                    Stores key facts about each phone number across calls. Repeat callers get personalized treatment — the AI remembers their name, profession, objections, and picks up where it left off.
+                </p>
+
+                <!-- Memory List -->
+                <div id="memoryList" style="margin-bottom: 20px;">
+                    <div style="color: #999; padding: 20px; text-align: center;">Loading memories...</div>
+                </div>
+
+                <!-- Memory Detail/Editor -->
+                <div id="memoryDetail" style="display: none; background: #f9fafb; border-radius: 10px; padding: 20px; margin-top: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 id="memoryDetailTitle" style="margin: 0;">Contact Details</h3>
+                        <div>
+                            <button class="btn btn-secondary" onclick="closeMemoryDetail()" style="margin-right: 8px;">Close</button>
+                            <button class="btn" onclick="deleteMemory()" style="background: #ef4444;">Delete</button>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Phone</label>
+                            <input type="text" id="memPhone" readonly style="background: #e5e7eb;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Name</label>
+                            <input type="text" id="memName">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Persona</label>
+                            <input type="text" id="memPersona" placeholder="e.g. student, working_professional">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Company</label>
+                            <input type="text" id="memCompany">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Role</label>
+                            <input type="text" id="memRole">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Last Outcome</label>
+                            <input type="text" id="memOutcome" placeholder="High / Medium / Low">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: 12px;">
+                        <label>Objections (comma-separated)</label>
+                        <input type="text" id="memObjections" placeholder="e.g. price, time/busy">
+                    </div>
+                    <div class="form-group">
+                        <label>Key Facts (one per line)</label>
+                        <textarea id="memKeyFacts" rows="4" style="width: 100%; font-family: inherit; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Last Call Summary</label>
+                        <textarea id="memSummary" rows="3" style="width: 100%; font-family: inherit; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span id="memCallCount" style="color: #666; font-size: 13px;"></span>
+                        <span id="memLastDate" style="color: #666; font-size: 13px;"></span>
+                    </div>
+                    <button class="btn" onclick="saveMemory()" style="margin-top: 12px;">💾 Save Changes</button>
+                    <div id="memoryStatus"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- PROMPTS TAB -->
         <div id="promptsTab" class="tab-content">
             <div class="card full-width">
@@ -893,6 +967,10 @@
                 document.querySelector('[onclick="switchTab(\'personas\')"]').classList.add('active');
                 loadPersonasList();
                 loadSituationsList();
+            } else if (tabName === 'memory') {
+                document.getElementById('memoryTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'memory\')"]').classList.add('active');
+                loadMemoryList();
             } else if (tabName === 'prompts') {
                 document.getElementById('promptsTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'prompts\')"]').classList.add('active');
@@ -1620,6 +1698,144 @@
 
         function showKeywordsAlert(msg, type) {
             const div = document.getElementById('keywordsStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
+        // =========================================================================
+        // Cross-Call Memory Functions
+        // =========================================================================
+
+        let _currentMemoryPhone = null;
+
+        async function loadMemoryList() {
+            const container = document.getElementById('memoryList');
+            try {
+                const resp = await fetch(`${API_BASE}/memory`);
+                const data = await resp.json();
+                const memories = data.memories || [];
+
+                if (memories.length === 0) {
+                    container.innerHTML = '<div style="color: #999; padding: 20px; text-align: center;">No contact memories yet. Make some calls and memories will be saved automatically.</div>';
+                    return;
+                }
+
+                let html = '<div style="display: grid; gap: 8px;">';
+                for (const mem of memories) {
+                    const outcomeColor = mem.last_call_outcome === 'High' ? '#10b981' : mem.last_call_outcome === 'Medium' ? '#f59e0b' : '#ef4444';
+                    const persona = mem.persona ? mem.persona.replace(/_/g, ' ') : 'unknown';
+                    html += `
+                        <div onclick="loadMemoryDetail('${mem.phone}')" style="display: flex; justify-content: space-between; align-items: center; background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='#667eea'" onmouseout="this.style.borderColor='#e5e7eb'">
+                            <div>
+                                <strong>${mem.name || 'Unknown'}</strong>
+                                <span style="color: #999; margin-left: 8px; font-size: 13px;">${mem.phone}</span>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <span style="background: #eef2ff; color: #667eea; padding: 2px 10px; border-radius: 12px; font-size: 12px;">${persona}</span>
+                                ${mem.company ? `<span style="color: #666; font-size: 13px;">${mem.company}</span>` : ''}
+                                <span style="background: ${outcomeColor}22; color: ${outcomeColor}; padding: 2px 10px; border-radius: 12px; font-size: 12px;">${mem.last_call_outcome || '?'}</span>
+                                <span style="color: #999; font-size: 12px;">${mem.call_count || 0} call(s)</span>
+                            </div>
+                        </div>`;
+                }
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = `<div style="color: #ef4444; padding: 10px;">Error loading memories: ${err.message}</div>`;
+            }
+        }
+
+        async function loadMemoryDetail(phone) {
+            try {
+                const resp = await fetch(`${API_BASE}/memory/${encodeURIComponent(phone)}`);
+                const data = await resp.json();
+                if (!data.success) {
+                    alert('Memory not found');
+                    return;
+                }
+                const mem = data.memory;
+                _currentMemoryPhone = phone;
+
+                document.getElementById('memPhone').value = phone;
+                document.getElementById('memName').value = mem.name || '';
+                document.getElementById('memPersona').value = mem.persona || '';
+                document.getElementById('memCompany').value = mem.company || '';
+                document.getElementById('memRole').value = mem.role || '';
+                document.getElementById('memOutcome').value = mem.last_call_outcome || '';
+
+                const objections = Array.isArray(mem.objections) ? mem.objections : [];
+                document.getElementById('memObjections').value = objections.join(', ');
+
+                const keyFacts = Array.isArray(mem.key_facts) ? mem.key_facts : [];
+                document.getElementById('memKeyFacts').value = keyFacts.join('\n');
+
+                document.getElementById('memSummary').value = mem.last_call_summary || '';
+                document.getElementById('memCallCount').textContent = `Calls: ${mem.call_count || 0}`;
+                document.getElementById('memLastDate').textContent = mem.last_call_date ? `Last: ${new Date(mem.last_call_date).toLocaleDateString()}` : '';
+
+                document.getElementById('memoryDetailTitle').textContent = `${mem.name || 'Contact'} — ${phone}`;
+                document.getElementById('memoryDetail').style.display = 'block';
+            } catch (err) {
+                alert('Error loading memory: ' + err.message);
+            }
+        }
+
+        async function saveMemory() {
+            if (!_currentMemoryPhone) return;
+            const keyFactsRaw = document.getElementById('memKeyFacts').value.trim();
+            const objectionsRaw = document.getElementById('memObjections').value.trim();
+
+            const payload = {
+                name: document.getElementById('memName').value.trim(),
+                persona: document.getElementById('memPersona').value.trim(),
+                company: document.getElementById('memCompany').value.trim(),
+                role: document.getElementById('memRole').value.trim(),
+                last_call_outcome: document.getElementById('memOutcome').value.trim(),
+                objections: objectionsRaw ? objectionsRaw.split(',').map(s => s.trim()).filter(Boolean) : [],
+                key_facts: keyFactsRaw ? keyFactsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [],
+                last_call_summary: document.getElementById('memSummary').value.trim(),
+            };
+
+            try {
+                const resp = await fetch(`${API_BASE}/memory/${encodeURIComponent(_currentMemoryPhone)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showMemoryAlert('✅ Memory saved', 'success');
+                    loadMemoryList();
+                } else {
+                    showMemoryAlert('❌ ' + (data.error || 'Save failed'), 'error');
+                }
+            } catch (err) {
+                showMemoryAlert('❌ Error: ' + err.message, 'error');
+            }
+        }
+
+        async function deleteMemory() {
+            if (!_currentMemoryPhone) return;
+            if (!confirm(`Delete memory for ${_currentMemoryPhone}?`)) return;
+            try {
+                const resp = await fetch(`${API_BASE}/memory/${encodeURIComponent(_currentMemoryPhone)}`, { method: 'DELETE' });
+                const data = await resp.json();
+                if (data.success) {
+                    closeMemoryDetail();
+                    loadMemoryList();
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function closeMemoryDetail() {
+            document.getElementById('memoryDetail').style.display = 'none';
+            _currentMemoryPhone = null;
+        }
+
+        function showMemoryAlert(msg, type) {
+            const div = document.getElementById('memoryStatus');
             div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
             setTimeout(() => div.innerHTML = '', 4000);
         }

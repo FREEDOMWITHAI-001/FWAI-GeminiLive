@@ -194,6 +194,9 @@ def compose_prompt(
     """
     Compose modular prompt from file-based components.
     Returns fully rendered string with placeholders replaced.
+
+    Order matters — memory context goes BEFORE persona module so the AI
+    reads "skip discovery" before it reads "PAIN POINTS to probe".
     """
     parts = []
 
@@ -202,7 +205,12 @@ def compose_prompt(
     if base:
         parts.append(base)
 
-    # Layer 2: NEPQ (early turns / no persona) or Persona module
+    # Layer 2: Cross-call memory (BEFORE persona so it takes priority)
+    memory_ctx = context.get("_memory_context", "")
+    if memory_ctx:
+        parts.append(memory_ctx)
+
+    # Layer 3: NEPQ (early turns / no persona) or Persona module
     if is_early_call or not persona_key:
         nepq = load_module(PROMPTS_DIR / "nepq.txt")
         if nepq:
@@ -210,14 +218,19 @@ def compose_prompt(
     else:
         persona_content = load_module(PERSONAS_DIR / f"{persona_key}.txt")
         if persona_content:
+            # For repeat callers, strip the FLOW line to avoid conflict with memory instructions
+            if memory_ctx and "FLOW:" in persona_content:
+                persona_content = "\n".join(
+                    line for line in persona_content.split("\n")
+                    if not line.strip().startswith("FLOW:")
+                )
             parts.append(persona_content)
         else:
-            # Fallback to NEPQ if persona file missing
             nepq = load_module(PROMPTS_DIR / "nepq.txt")
             if nepq:
                 parts.append(nepq)
 
-    # Layer 3: Active situation modules (max 2)
+    # Layer 4: Active situation modules (max 2)
     for situation_key in active_situations[:2]:
         situation_content = load_module(SITUATIONS_DIR / f"{situation_key}.txt")
         if situation_content:

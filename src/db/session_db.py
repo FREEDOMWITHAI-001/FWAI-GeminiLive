@@ -47,6 +47,24 @@ class SessionDB:
             webhook_url TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
+        # Cross-Call Memory: per-phone contact memory for repeat callers
+        conn.execute('''CREATE TABLE IF NOT EXISTS contact_memory (
+            phone TEXT PRIMARY KEY,
+            name TEXT,
+            persona TEXT,
+            company TEXT,
+            role TEXT,
+            objections TEXT DEFAULT '[]',
+            interest_areas TEXT DEFAULT '[]',
+            key_facts TEXT DEFAULT '[]',
+            call_count INTEGER DEFAULT 0,
+            last_call_date TEXT,
+            last_call_summary TEXT,
+            last_call_outcome TEXT,
+            all_call_uuids TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
         conn.commit()
         conn.close()
         logger.info(f"Session DB initialized: {self._db_path}")
@@ -132,6 +150,71 @@ class SessionDB:
         ).fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    # =========================================================================
+    # Cross-Call Memory
+    # =========================================================================
+
+    def get_contact_memory(self, phone: str) -> dict:
+        """Load contact memory by phone number (blocking, fast ~1ms)."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM contact_memory WHERE phone = ?", (phone,)).fetchone()
+        conn.close()
+        if row:
+            result = dict(row)
+            for field in ('objections', 'interest_areas', 'key_facts', 'all_call_uuids'):
+                if result.get(field):
+                    try:
+                        result[field] = json.loads(result[field])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            return result
+        return None
+
+    def save_contact_memory(self, phone: str, **kwargs):
+        """Upsert contact memory (non-blocking). JSON fields are auto-serialized."""
+        if not phone:
+            return
+        fields = {}
+        for key, value in kwargs.items():
+            if value is not None:
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value)
+                fields[key] = value
+        if not fields:
+            return
+        fields["updated_at"] = datetime.now().isoformat()
+        # Build upsert: INSERT ... ON CONFLICT(phone) DO UPDATE SET col = excluded.col
+        columns = list(fields.keys())
+        values = [phone] + [fields[c] for c in columns]
+        placeholders = ", ".join(["?"] * len(values))
+        col_list = "phone, " + ", ".join(columns)
+        conflict_updates = ", ".join(f"{c} = excluded.{c}" for c in columns)
+        self._write_queue.put((
+            f"""INSERT INTO contact_memory ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(phone) DO UPDATE SET {conflict_updates}""",
+            tuple(values)
+        ))
+
+    def get_all_contact_memories(self, limit: int = 100) -> list:
+        """List all contact memories for dashboard/API."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT phone, name, persona, company, role, call_count, "
+            "last_call_date, last_call_outcome, updated_at "
+            "FROM contact_memory ORDER BY updated_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def delete_contact_memory(self, phone: str):
+        """Delete contact memory for a phone number (non-blocking)."""
+        self._write_queue.put((
+            "DELETE FROM contact_memory WHERE phone = ?", (phone,)
+        ))
 
     def cleanup_stale(self, max_age_minutes: int = 10):
         """Clean up stale pending calls older than max_age_minutes"""

@@ -156,6 +156,31 @@ TOOL_DECLARATIONS = [
             },
             "required": ["reason"]
         }
+    },
+    {
+        "name": "save_user_info",
+        "description": "Save important information the user shared about themselves. Call this whenever the user tells you their name, company, job role, or other key personal details. This helps remember them for future calls.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "company": {
+                    "type": "string",
+                    "description": "The company or organization the user works at, if mentioned"
+                },
+                "role": {
+                    "type": "string",
+                    "description": "The user's job title or role, if mentioned"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The user's name, if they introduce themselves"
+                },
+                "key_detail": {
+                    "type": "string",
+                    "description": "Any other important detail the user shared (e.g. 'friend recommended the masterclass', 'looking to switch careers')"
+                }
+            }
+        }
     }
 ]
 
@@ -309,6 +334,11 @@ class PlivoGeminiSession:
         self._accumulated_user_text = ""
         if self._use_persona_engine:
             self.log.detail("Persona engine: ON")
+            # Pre-set persona from cross-call memory (skips NEPQ discovery)
+            memory_persona = self.context.get("_memory_persona")
+            if memory_persona:
+                self._detected_persona = memory_persona
+                self.log.detail(f"Persona pre-loaded from memory: {memory_persona}")
 
     def inject_intelligence(self, brief: str):
         """Store pre-call intelligence brief. Must be called BEFORE preload starts
@@ -1214,11 +1244,13 @@ Rules:
         """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
         if self._use_persona_engine:
             from src.persona_engine import compose_prompt
+            # If persona came from memory, skip NEPQ even on early turns
+            has_memory_persona = bool(self.context.get("_memory_persona"))
             full_prompt = compose_prompt(
                 context=self.context,
                 persona_key=self._detected_persona,
                 active_situations=self._active_situations,
-                is_early_call=(self._turn_count < 3),
+                is_early_call=(self._turn_count < 3 and not has_memory_persona),
             )
         else:
             full_prompt = self.prompt
@@ -1240,6 +1272,10 @@ Rules:
                 "Weave facts casually like 'Oh I heard...']\n"
                 f"{self._intelligence_brief}"
             )
+
+        # Cross-call memory is injected inside compose_prompt() (before persona module)
+        if self.context.get("_memory_context"):
+            self.log.detail(f"Memory context injected ({len(self.context['_memory_context'])} chars)")
 
         # Real-time search usage instructions (only if live search is enabled)
         if config.enable_live_search:
@@ -1307,6 +1343,15 @@ Rules:
                         "thinking_budget": 0  # Disable reasoning for fastest responses
                     }
                 },
+                "realtime_input_config": {
+                    "automatic_activity_detection": {
+                        "disabled": False,
+                        "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "prefix_padding_ms": 20,
+                        "silence_duration_ms": 500,
+                    }
+                },
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
@@ -1330,7 +1375,16 @@ Rules:
         trigger_text = self.context.get("greeting_trigger", "")
         if not trigger_text:
             customer_name = self.context.get("customer_name", "")
-            if customer_name:
+            has_memory = bool(self.context.get("_memory_context"))
+            if has_memory and customer_name:
+                # Repeat caller: use the memory-based greeting and ask a follow-up
+                trigger_text = (
+                    f"[Start the conversation now. This is a REPEAT CALLER. "
+                    f"Use the GREETING from the PREVIOUS INTERACTION instructions. "
+                    f"Reference what you know about {customer_name} from last time. "
+                    f"After greeting, immediately ask a follow-up question to keep the conversation going.]"
+                )
+            elif customer_name:
                 trigger_text = f"[Start the conversation now. Greet {customer_name} naturally using your opening line from the instructions.]"
             else:
                 trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
@@ -1404,6 +1458,52 @@ Rules:
                 # Fallback: if user doesn't respond within 5 seconds, end anyway
                 if not self._closing_call:
                     asyncio.create_task(self._fallback_hangup(5.0))
+                return
+
+            # Handle save_user_info tool — saves user details via Gemini's audio understanding
+            if tool_name == "save_user_info":
+                try:
+                    from src.cross_call_memory import save_from_tool_call
+                    t_company = tool_args.get("company")
+                    t_role = tool_args.get("role")
+                    t_name = tool_args.get("name")
+                    t_key_detail = tool_args.get("key_detail")
+
+                    save_from_tool_call(
+                        phone=self.caller_phone,
+                        company=t_company,
+                        role=t_role,
+                        name=t_name,
+                        key_detail=t_key_detail,
+                    )
+                    self.log.detail(f"User info saved: company={t_company}, role={t_role}, name={t_name}")
+
+                    # Update session state for persona detection
+                    if t_role and not self._detected_persona:
+                        from src.persona_engine import detect_persona
+                        role_text = f"I work as a {t_role}" + (f" at {t_company}" if t_company else "")
+                        self._accumulated_user_text += " " + role_text
+                        detected = detect_persona(self._accumulated_user_text)
+                        if detected:
+                            self._detected_persona = detected
+                            self.log.detail(f"Persona detected from tool call: {detected}")
+                except Exception as e:
+                    logger.error(f"save_user_info error: {e}")
+
+                # Send success response so conversation continues
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": {"success": True, "message": "Information saved"}
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except Exception:
+                    pass
                 return
 
             # Execute the tool with context for templates - graceful error handling
@@ -1937,7 +2037,36 @@ Rules:
                     transcript=transcript,
                 )
 
-                # Step 5: Call webhook AFTER everything is saved
+                # Step 5: Save cross-call memory (per phone number)
+                try:
+                    from src.cross_call_memory import extract_and_save_memory
+                    # Derive interest level
+                    completion_rate = self._turn_count / max(self._turn_count, 1)
+                    if completion_rate > 0.7:
+                        interest_level = "High"
+                    elif completion_rate > 0.4:
+                        interest_level = "Medium"
+                    else:
+                        interest_level = "Low"
+                    # Gather all situations that were active during the call
+                    all_situations = list(set(
+                        self._previous_situations + self._active_situations
+                    ))
+                    extract_and_save_memory(
+                        phone=self.caller_phone,
+                        contact_name=self.context.get("customer_name", ""),
+                        call_uuid=self.call_uuid,
+                        detected_persona=self._detected_persona,
+                        active_situations=all_situations,
+                        turn_exchanges=list(self._turn_exchanges),
+                        accumulated_user_text=self._accumulated_user_text,
+                        duration=duration,
+                        interest_level=interest_level,
+                    )
+                except Exception as e:
+                    logger.error(f"Cross-call memory save error: {e}")
+
+                # Step 6: Call webhook AFTER everything is saved
                 if self.webhook_url:
                     import asyncio as _asyncio
                     loop = _asyncio.new_event_loop()
