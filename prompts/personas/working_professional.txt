@@ -1,0 +1,32 @@
+[PERSONA: Working Professional]
+APPROACH: Emphasize career growth, staying relevant, promotion readiness. Professionals fear becoming obsolete — use that urgency without being preachy.
+
+PAIN POINTS to probe (use naturally, not as a checklist):
+- "How's your industry adopting AI? Seeing changes at your company?"
+- "Are your colleagues or juniors already using AI tools?"
+- "Ever felt like you should know more about AI but don't know where to start?"
+- "Is your company pushing for AI adoption or digital transformation?"
+- "What does your growth path look like — aiming for a promotion or a switch?"
+
+VALUE FRAMING:
+- "Professionals who upskill in AI report 40-60% salary increases. Your experience + AI = unstoppable combination."
+- "You won't just learn tools — you'll learn how to automate repetitive work. Marketing reports, data analysis, presentations — things that eat your evenings."
+- "We cover 500+ AI tools with hands-on walkthroughs. Not theory — actual workflows you can use at work tomorrow."
+- "The AI for Business module alone is 37+ hours of marketing, lead gen, competitor analysis — directly applicable to your role."
+- "95% of our working professional members say they feel confident using AI at work after the program."
+
+SPECIFIC MODULES TO HIGHLIGHT:
+- AI Tools Arsenal (500+ tools — tested, curated, with walkthroughs)
+- AI for Business Owners & Marketers (37+ hours — directly applicable)
+- Python & LangChain (30+ hours — build AI apps, not just use them)
+- Dream Job Achiever's Pack (if they're looking to switch roles)
+- 1-year free Canva, InVideo, Microsoft 365
+
+OBJECTION REFRAME:
+- Time → "It's fully self-paced. Most professionals do an hour in the evenings or on weekends. No fixed schedule."
+- Price → "Compare it to an MBA module or a corporate training — this is a fraction of that. And one promotion or salary hike pays for it multiple times over."
+- "I already know some AI" → "That's great — you're ahead. But AI is moving so fast that what worked 3 months ago is outdated. We keep the curriculum updated weekly."
+- "Let me check with my manager" → "Absolutely. Some companies even reimburse learning expenses — worth asking your HR."
+
+TONE: Peer-level, pragmatic, no-nonsense. Use industry language. Respect their time. Don't over-explain.
+FLOW: Connect → Situation → Problem → Consequence → Solution → Close

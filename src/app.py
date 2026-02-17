@@ -212,6 +212,109 @@ async def update_prompt(request: Request):
 
 
 # ============================================================================
+# Dynamic Persona Engine API
+# ============================================================================
+
+PERSONAS_DIR = PROMPTS_DIR / "personas"
+SITUATIONS_DIR = PROMPTS_DIR / "situations"
+PERSONAS_DIR.mkdir(exist_ok=True)
+SITUATIONS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/personas")
+async def list_personas():
+    """List all available persona modules"""
+    personas = [f.stem for f in PERSONAS_DIR.glob("*.txt")]
+    return {"personas": sorted(personas)}
+
+
+@app.get("/personas/{name}")
+async def get_persona(name: str):
+    """Get persona module content"""
+    path = PERSONAS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Persona '{name}' not found"}
+
+
+@app.post("/personas/{name}")
+async def save_persona(name: str, request: Request):
+    """Create or update persona module"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = PERSONAS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Persona '{name}' saved"}
+
+
+@app.delete("/personas/{name}")
+async def delete_persona(name: str):
+    """Delete a persona module"""
+    path = PERSONAS_DIR / f"{name}.txt"
+    if path.exists():
+        path.unlink()
+        return {"success": True, "message": f"Persona '{name}' deleted"}
+    return {"error": f"Persona '{name}' not found"}
+
+
+@app.get("/situations")
+async def list_situations():
+    """List all available situation modules"""
+    situations = [f.stem for f in SITUATIONS_DIR.glob("*.txt")]
+    return {"situations": sorted(situations)}
+
+
+@app.get("/situations/{name}")
+async def get_situation(name: str):
+    """Get situation module content"""
+    path = SITUATIONS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Situation '{name}' not found"}
+
+
+@app.post("/situations/{name}")
+async def save_situation(name: str, request: Request):
+    """Create or update situation module"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = SITUATIONS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Situation '{name}' saved"}
+
+
+@app.get("/persona-config")
+async def get_persona_config():
+    """Get persona and situation detection keyword configs"""
+    persona_kw = {}
+    situation_kw = {}
+    pk_path = PROMPTS_DIR / "persona_keywords.json"
+    sk_path = PROMPTS_DIR / "situation_keywords.json"
+    if pk_path.exists():
+        persona_kw = json.loads(pk_path.read_text(encoding="utf-8"))
+    if sk_path.exists():
+        situation_kw = json.loads(sk_path.read_text(encoding="utf-8"))
+    return {"persona_keywords": persona_kw, "situation_keywords": situation_kw}
+
+
+@app.post("/persona-config")
+async def update_persona_config(request: Request):
+    """Update persona and/or situation detection keyword configs"""
+    body = await request.json()
+    if "persona_keywords" in body:
+        pk_path = PROMPTS_DIR / "persona_keywords.json"
+        pk_path.write_text(json.dumps(body["persona_keywords"], indent=2), encoding="utf-8")
+    if "situation_keywords" in body:
+        sk_path = PROMPTS_DIR / "situation_keywords.json"
+        sk_path.write_text(json.dumps(body["situation_keywords"], indent=2), encoding="utf-8")
+    return {"success": True, "message": "Config updated"}
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
 
@@ -533,20 +636,21 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Generate call_uuid first (before Plivo call)
         call_uuid = str(uuid.uuid4())
 
-        # Load default prompt if none provided
+        # Build context first
+        context = request.context or {}
+        context.setdefault("customer_name", request.contactName)
+
+        # Load default prompt if none provided — enable persona engine for FWAI
         if not request.prompt:
             default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
             if default_prompt_file.exists():
                 request.prompt = default_prompt_file.read_text(encoding="utf-8")
-                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars)")
+                context["_persona_engine"] = True
+                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars) + persona engine ON")
 
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
-
-        # Add customer_name to context if not present
-        context = request.context or {}
-        context.setdefault("customer_name", request.contactName)
 
         # Store all call data
         async with _call_data_lock:

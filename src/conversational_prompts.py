@@ -3,14 +3,14 @@
 
 # Default context values (used if not provided in API call)
 DEFAULT_CONTEXT = {
-    "agent_name": "Rahul",
+    "agent_name": "Rahul Kumar",
     "company_name": "Freedom with AI",
     "location": "Hyderabad",
     "customer_name": "there",
     "event_name": "AI Masterclass",
     "event_host": "Avinash Mada",
-    "product_name": "AI Upskilling Program",
-    "product_description": "12 modules, 300+ AI tools, hands-on projects, self-paced with weekend live classes",
+    "product_name": "Gold Membership",
+    "product_description": "500+ AI tools, prompt engineering, Python & LangChain, mentorship, AI Expert Certification",
     "price": "40,000 rupees",
     "intelligence_brief": "",
 }

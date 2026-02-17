@@ -88,7 +88,11 @@ class CallLogger:
 
 
 def detect_voice_from_prompt(prompt: str) -> str:
-    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for male (default)."""
+    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for male (default).
+
+    Only checks the IDENTITY line (first line) for agent name to avoid matching customer names.
+    Explicit 'Female Voice'/'Male Voice' directives take highest priority anywhere in prompt.
+    """
     if not prompt:
         return "Puck"
     prompt_lower = prompt.lower()
@@ -102,14 +106,29 @@ def detect_voice_from_prompt(prompt: str) -> str:
         logger.info("Explicit 'Male Voice' directive in prompt - using Puck")
         return "Puck"
 
-    # THEN: Check for agent name indicators
+    # Extract only the IDENTITY line (first line or line containing "IDENTITY:")
+    # to avoid matching customer names like "Priya" in the rest of the prompt
+    identity_line = ""
+    for line in prompt_lower.split("\n"):
+        line = line.strip()
+        if line.startswith("identity:") or line.startswith("identity :"):
+            identity_line = line
+            break
+    if not identity_line:
+        # Fallback: use just the first non-empty line
+        for line in prompt_lower.split("\n"):
+            if line.strip():
+                identity_line = line.strip()
+                break
+
+    # Check agent name in identity line only
     female_indicators = [
         "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya",
         "sunita", "anita", "kavita", "rekha", "meena", "sita", "geeta"
     ]
     for indicator in female_indicators:
-        if indicator in prompt_lower:
-            logger.info(f"Detected female agent name '{indicator}' in prompt - using Kore voice")
+        if indicator in identity_line:
+            logger.info(f"Detected female agent name '{indicator}' in identity - using Kore voice")
             return "Kore"
 
     male_names = [
@@ -117,8 +136,8 @@ def detect_voice_from_prompt(prompt: str) -> str:
         "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar"
     ]
     for name in male_names:
-        if name in prompt_lower:
-            logger.info(f"Detected male agent name '{name}' in prompt - using Puck voice")
+        if name in identity_line:
+            logger.info(f"Detected male agent name '{name}' in identity - using Puck voice")
             return "Puck"
 
     # Default to male voice
@@ -282,6 +301,15 @@ class PlivoGeminiSession:
         # Pre-call intelligence brief (injected after preload)
         self._intelligence_brief = ""
 
+        # Dynamic Persona Engine state
+        self._use_persona_engine = bool(self.context.get("_persona_engine"))
+        self._detected_persona = None
+        self._active_situations = []
+        self._previous_situations = []
+        self._accumulated_user_text = ""
+        if self._use_persona_engine:
+            self.log.detail("Persona engine: ON")
+
     def inject_intelligence(self, brief: str):
         """Store pre-call intelligence brief. Must be called BEFORE preload starts
         so it gets included in the initial system prompt via _send_session_setup_on_ws."""
@@ -289,6 +317,19 @@ class PlivoGeminiSession:
             return
         self._intelligence_brief = brief
         self.log.detail(f"Intelligence stored ({len(brief)} chars)")
+
+    async def _inject_situation_hint(self, hint: str):
+        """Inject a short situation hint via client_content (no audio pause)."""
+        try:
+            msg = {
+                "client_content": {
+                    "turns": [{"role": "user", "parts": [{"text": hint}]}],
+                    "turn_complete": False
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+        except Exception as e:
+            self.log.warn(f"Failed to inject situation hint: {e}")
 
     # Minimum turns before goodbye detection activates (prevents premature call end)
     MIN_TURNS_FOR_GOODBYE = 6
@@ -1171,7 +1212,16 @@ Rules:
 
     async def _send_session_setup_on_ws(self, ws, is_standby=False):
         """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
-        full_prompt = self.prompt
+        if self._use_persona_engine:
+            from src.persona_engine import compose_prompt
+            full_prompt = compose_prompt(
+                context=self.context,
+                persona_key=self._detected_persona,
+                active_situations=self._active_situations,
+                is_early_call=(self._turn_count < 3),
+            )
+        else:
+            full_prompt = self.prompt
 
         # Add natural speech variation and voice consistency guidance
         full_prompt += (
@@ -1214,9 +1264,14 @@ Rules:
                 agent_ref = self._last_agent_question or self._last_agent_text
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
-                    full_prompt += f'\n\n[YOUR LAST QUESTION was: "{agent_ref[:300]}"'
+                    full_prompt += f'\n\n[CRITICAL — YOUR LAST QUESTION was: "{agent_ref[:300]}"'
                     full_prompt += f' Customer responded: "{last_user[:200]}".'
-                    full_prompt += ' DO NOT repeat or rephrase this question. Ask the NEXT question in the flow.]'
+                    full_prompt += (
+                        ' DO NOT repeat, rephrase, or re-ask this question or any question the customer already answered above.'
+                        ' The customer has already told you their situation — acknowledge what they said and move FORWARD in the flow.'
+                        ' If they mentioned their job/studies, do NOT ask "what do you do" again.'
+                        ' If they raised a concern, address it directly.]'
+                    )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
                 file_history = self._load_conversation_from_file()
@@ -1506,6 +1561,30 @@ Rules:
                             self._turn_exchanges.append({"agent": full_agent, "user": full_user})
                             if len(self._turn_exchanges) > 5:
                                 self._turn_exchanges = self._turn_exchanges[-5:]
+
+                        # Dynamic Persona Engine: detect persona + situations
+                        if self._use_persona_engine and full_user:
+                            self._accumulated_user_text += " " + full_user
+                            # Persona detection (one-time, locked after first detection)
+                            if not self._detected_persona:
+                                from src.persona_engine import detect_persona
+                                detected = detect_persona(self._accumulated_user_text)
+                                if detected:
+                                    self._detected_persona = detected
+                                    self.log.detail(f"Persona detected: {detected}")
+                            # Situation detection (re-evaluated every turn)
+                            from src.persona_engine import detect_situations, get_situation_hint
+                            self._active_situations = detect_situations(full_user)
+                            if self._active_situations:
+                                self.log.detail(f"Situations active: {self._active_situations}")
+                            # Inject hint for NEW situations via client_content
+                            new_situations = set(self._active_situations) - set(self._previous_situations)
+                            if new_situations and self.goog_live_ws:
+                                hint = get_situation_hint(list(new_situations)[0])
+                                if hint:
+                                    asyncio.create_task(self._inject_situation_hint(hint))
+                                    self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
+                            self._previous_situations = list(self._active_situations)
 
                         extra = ""
                         if self._turns_since_reconnect == self._session_split_interval - 1:

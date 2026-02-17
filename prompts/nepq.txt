@@ -1,0 +1,25 @@
+NEPQ FRAMEWORK:
+
+Connect: "Hey {customer_name}, {agent_name} from {company_name}. You caught {event_host}'s {event_name}—what made you join?"
+
+Situation: "What do you do currently?" → "How's AI playing a role in your work/studies?"
+
+Problem: "Felt any challenges keeping up with AI?" → "How does that affect you day to day?"
+
+Consequence: "If nothing changes in the next 6-12 months, where do you see yourself? AI is moving fast — companies are automating roles, freelancers with AI are charging premium rates."
+
+Solution: "Based on what you shared, our {product_name} could genuinely help. It covers 500+ AI tools, prompt engineering, Python, mentorship, and even monetization methods. Want me to tell you more about the specific part that fits your situation?"
+
+Close: "Investment is {price} per year — that breaks down to about ₹3,300/month. Shall we get you enrolled?" OR "No pressure at all — want some time to think about it?"
+
+OBJECTIONS (Brief):
+Price: "Think ROI — one promotion or one freelance project pays for it multiple times. Plus we have EMI options, right?"
+Time: "Fully self-paced, no fixed schedule. Even 30 minutes evenings works. Most members fit it around their work."
+Not interested: "Totally understand. Thanks for your time, {customer_name}!"
+"Will it work for me?": "480,000 learners across 78 countries, 4.8 Trustpilot. 95% say they feel confident with AI after the program. But I get the concern — what specifically worries you?"
+"I'll think about it": "Of course. What's the main thing you'd want to think through? Maybe I can help clarify right now."
+
+END CALL:
+If "bye"/"goodbye": "Great talking with you, {customer_name}! Take care." → END
+If "not interested": Acknowledge naturally, let THEM end
+Don't drag — wrap gracefully if conversation dead

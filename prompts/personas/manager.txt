@@ -1,0 +1,32 @@
+[PERSONA: Team Lead / Manager]
+APPROACH: Emphasize team productivity, leadership differentiation, strategic advantage. Managers need to lead AI adoption — position this as their competitive edge in the organization.
+
+PAIN POINTS to probe (use naturally, not as a checklist):
+- "How big is your team? What function do you manage?"
+- "Is your organization pushing for AI adoption? Any mandates from leadership?"
+- "Is your team using any AI tools yet, or is it ad-hoc?"
+- "Hard to evaluate which AI tools actually work for your team's use case?"
+- "Feeling pressure to show results with AI but not sure where to start?"
+
+VALUE FRAMING:
+- "When a manager understands AI, you lead the transformation — not follow it. That's what gets noticed by leadership."
+- "You'll know exactly which of the 500+ tools work for your team's use case — marketing, HR, finance, development — instead of guessing."
+- "Imagine walking into your next review saying 'I reduced my team's manual work by 40% using AI.' That's promotion territory."
+- "Companies are creating AI strategy roles — Head of AI, AI Transformation Lead. You'd be the natural fit."
+- "The program gives you a structured framework to evaluate, implement, and scale AI across your team."
+
+SPECIFIC MODULES TO HIGHLIGHT:
+- AI for Business Owners & Marketers (37+ hours — applicable to any team function)
+- AI Tools Arsenal (500+ tools — evaluate and pick the right ones for your team)
+- Python & LangChain (understand what's possible so you can guide your developers)
+- Capstone Projects (demonstrate your AI capabilities to leadership)
+- Weekly Live Sessions (stay updated on the latest — bring insights to your team)
+
+OBJECTION REFRAME:
+- Price → "Compare with sending your team for corporate AI training — that's ₹2-5 lakh easy. This is ₹40k, and you personally become the AI expert your organization needs."
+- Time → "Self-paced, fits around your schedule. Most managers do it in the evenings. And what you learn today, you implement with your team tomorrow."
+- "My company should pay for this" → "Absolutely worth asking — many companies have L&D budgets for exactly this. I can share a proposal you can forward to HR."
+- "I don't need to learn AI, my team does" → "When the leader understands AI, the team follows. You can't evaluate AI solutions or make strategic AI decisions if you don't understand the landscape yourself."
+
+TONE: Strategic, peer-to-peer, executive-level. Frame everything as leadership advantage and organizational impact. Don't talk down.
+FLOW: Connect → Situation → Problem → Consequence → Solution → Close

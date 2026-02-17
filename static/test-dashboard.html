@@ -375,6 +375,145 @@
         .loading {
             animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
+
+        /* Persona Engine Styles */
+        .module-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .module-chip {
+            padding: 8px 16px;
+            background: #f3f4f6;
+            border: 2px solid #e5e7eb;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            color: #374151;
+            transition: all 0.2s;
+        }
+
+        .module-chip:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .module-chip.active {
+            background: #667eea;
+            border-color: #667eea;
+            color: white;
+        }
+
+        .module-chip.situation {
+            border-color: #f59e0b;
+        }
+
+        .module-chip.situation:hover {
+            border-color: #d97706;
+            color: #d97706;
+        }
+
+        .module-chip.situation.active {
+            background: #f59e0b;
+            border-color: #f59e0b;
+            color: white;
+        }
+
+        .module-chip .delete-x {
+            margin-left: 6px;
+            color: inherit;
+            opacity: 0.6;
+            font-weight: bold;
+        }
+
+        .module-chip .delete-x:hover {
+            opacity: 1;
+        }
+
+        .keyword-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #4338ca;
+            margin: 3px;
+        }
+
+        .keyword-tag.phrase {
+            background: #fef3c7;
+            border-color: #fde68a;
+            color: #92400e;
+        }
+
+        .section-divider {
+            border: none;
+            border-top: 2px solid #e5e7eb;
+            margin: 25px 0;
+        }
+
+        .btn-small {
+            padding: 6px 14px;
+            font-size: 13px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-add {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-add:hover {
+            background: #059669;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-outline {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn-outline:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .inline-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .inline-form input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .inline-form input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
     </style>
 </head>
 <body>
@@ -387,6 +526,7 @@
                 <span class="status-badge" id="statusBadge">● Server Running</span>
                 <div class="tab-buttons">
                     <button class="tab-btn active" onclick="switchTab('testing')">Testing</button>
+                    <button class="tab-btn" onclick="switchTab('personas')">Personas</button>
                     <button class="tab-btn" onclick="switchTab('prompts')">Prompts</button>
                     <button class="tab-btn" onclick="switchTab('metrics')">Live Metrics</button>
                 </div>
@@ -415,6 +555,16 @@
             <div class="grid">
                 <div class="card">
                     <h2>📞 Make Test Call</h2>
+                    <div style="margin-bottom: 15px;">
+                        <label style="font-size: 13px; font-weight: 600; color: #555; margin-bottom: 8px; display: block;">Quick Fill — Test Persona</label>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            <button type="button" class="btn-small btn-outline" onclick="prefillScenario('student')">Student</button>
+                            <button type="button" class="btn-small btn-outline" onclick="prefillScenario('working_professional')">Professional</button>
+                            <button type="button" class="btn-small btn-outline" onclick="prefillScenario('business_owner')">Business Owner</button>
+                            <button type="button" class="btn-small btn-outline" onclick="prefillScenario('freelancer')">Freelancer</button>
+                            <button type="button" class="btn-small btn-outline" onclick="prefillScenario('manager')">Manager</button>
+                        </div>
+                    </div>
                     <form id="callForm">
                         <div class="form-group">
                             <label for="phoneNumber">Phone Number *</label>
@@ -476,6 +626,109 @@
                     <div class="empty-state">
                         <div class="empty-state-icon">📈</div>
                         <div>Waiting for events...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PERSONAS TAB -->
+        <div id="personasTab" class="tab-content">
+            <div class="grid">
+                <!-- Persona Modules -->
+                <div class="card">
+                    <h2>Persona Modules</h2>
+                    <div class="prompt-info">
+                        Personas tailor the AI's approach based on who's on the call (student, professional, etc.).
+                        Detected automatically from conversation keywords.
+                    </div>
+                    <div class="module-list" id="personaChips">
+                        <span class="module-chip loading">Loading...</span>
+                    </div>
+                    <div class="inline-form">
+                        <input type="text" id="newPersonaName" placeholder="new_persona_name (snake_case)">
+                        <button class="btn-small btn-add" onclick="createPersona()">+ Add</button>
+                    </div>
+                    <hr class="section-divider">
+                    <div id="personaEditorSection" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <label style="font-weight: 700; font-size: 15px;" id="personaEditorLabel">Editing: ---</label>
+                            <button class="btn-small btn-danger" id="deletePersonaBtn" onclick="deleteCurrentPersona()">Delete</button>
+                        </div>
+                        <textarea class="prompt-editor" id="personaEditor" style="min-height: 250px;" placeholder="Enter persona module content..."></textarea>
+                        <div class="button-group">
+                            <button class="btn" onclick="savePersona()">Save Persona</button>
+                        </div>
+                        <div id="personaStatus"></div>
+                    </div>
+                    <div id="personaEmptyState" class="empty-state" style="padding: 20px;">
+                        <div>Select a persona above to edit</div>
+                    </div>
+                </div>
+
+                <!-- Situation Modules -->
+                <div class="card">
+                    <h2>Situation Modules</h2>
+                    <div class="prompt-info">
+                        Situations are detected per-turn from the latest user message (e.g., price objection, high interest).
+                        Up to 2 situations can be active at once.
+                    </div>
+                    <div class="module-list" id="situationChips">
+                        <span class="module-chip situation loading">Loading...</span>
+                    </div>
+                    <div class="inline-form">
+                        <input type="text" id="newSituationName" placeholder="new_situation (snake_case)">
+                        <button class="btn-small btn-add" onclick="createSituation()">+ Add</button>
+                    </div>
+                    <hr class="section-divider">
+                    <div id="situationEditorSection" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <label style="font-weight: 700; font-size: 15px;" id="situationEditorLabel">Editing: ---</label>
+                        </div>
+                        <textarea class="prompt-editor" id="situationEditor" style="min-height: 200px;" placeholder="Enter situation module content..."></textarea>
+
+                        <div class="form-group" style="margin-top: 15px;">
+                            <label>Detection Keywords (comma-separated)</label>
+                            <input type="text" id="situationKeywords" placeholder="expensive, costly, afford, budget">
+                        </div>
+                        <div class="form-group">
+                            <label>Injection Hint (1-line hint sent to AI immediately)</label>
+                            <input type="text" id="situationHint" placeholder="[HINT: Customer has price concerns...]">
+                        </div>
+                        <div class="button-group">
+                            <button class="btn" onclick="saveSituation()">Save Situation</button>
+                        </div>
+                        <div id="situationStatus"></div>
+                    </div>
+                    <div id="situationEmptyState" class="empty-state" style="padding: 20px;">
+                        <div>Select a situation above to edit</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detection Keywords Config -->
+            <div class="grid">
+                <div class="card full-width">
+                    <h2>Persona Detection Keywords</h2>
+                    <div class="prompt-info">
+                        These keywords/phrases determine which persona the AI detects during a call.
+                        Keywords score +1, phrases score +3. A persona is detected when score >= 2.
+                        Once detected, it's locked for the rest of the call.
+                    </div>
+                    <div id="personaKeywordsDisplay">
+                        <div class="empty-state" style="padding: 20px;">Loading keyword config...</div>
+                    </div>
+                    <hr class="section-divider">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label style="font-weight: 700;">Edit Raw JSON</label>
+                        <button class="btn-small btn-outline" onclick="toggleKeywordsEditor()">Toggle Editor</button>
+                    </div>
+                    <div id="keywordsEditorWrap" style="display: none; margin-top: 10px;">
+                        <textarea class="prompt-editor" id="personaKeywordsEditor" style="min-height: 300px;" placeholder="Loading..."></textarea>
+                        <div class="button-group">
+                            <button class="btn" onclick="savePersonaKeywords()">Save Keywords Config</button>
+                            <button class="btn btn-secondary" onclick="loadPersonaKeywords()">Reload</button>
+                        </div>
+                        <div id="keywordsStatus"></div>
                     </div>
                 </div>
             </div>
@@ -635,6 +888,11 @@
             if (tabName === 'testing') {
                 document.getElementById('testingTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'testing\')"]').classList.add('active');
+            } else if (tabName === 'personas') {
+                document.getElementById('personasTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'personas\')"]').classList.add('active');
+                loadPersonasList();
+                loadSituationsList();
             } else if (tabName === 'prompts') {
                 document.getElementById('promptsTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'prompts\')"]').classList.add('active');
@@ -1011,9 +1269,364 @@
             }
         }
 
+        // ==================== Test Scenario Prefills ====================
+
+        const testScenarios = {
+            student: {
+                contactName: 'Priya Sharma',
+                companyName: '',
+                role: '',
+                industry: '',
+                courseName: 'Gold Membership',
+                price: '40000',
+                description: 'B.Tech final year student from Delhi, worried about placements'
+            },
+            working_professional: {
+                contactName: 'Rahul Verma',
+                companyName: 'Infosys',
+                role: 'Software Engineer',
+                industry: 'IT',
+                courseName: 'Gold Membership',
+                price: '40000',
+                description: 'Mid-level IT professional at Infosys, 4 years experience'
+            },
+            business_owner: {
+                contactName: 'Amit Patel',
+                companyName: 'Patel Digital Solutions',
+                role: 'Founder',
+                industry: 'Digital Marketing',
+                courseName: 'Gold Membership',
+                price: '40000',
+                description: 'Runs a 12-person digital marketing agency in Mumbai'
+            },
+            freelancer: {
+                contactName: 'Sneha Reddy',
+                companyName: '',
+                role: 'Freelance Content Writer',
+                industry: 'Content & Copywriting',
+                courseName: 'Gold Membership',
+                price: '40000',
+                description: 'Freelancer on Upwork, writes blogs and ad copy'
+            },
+            manager: {
+                contactName: 'Vikram Singh',
+                companyName: 'Wipro',
+                role: 'Engineering Manager',
+                industry: 'IT Services',
+                courseName: 'Gold Membership',
+                price: '40000',
+                description: 'Manages a team of 15 developers at Wipro'
+            }
+        };
+
+        function prefillScenario(persona) {
+            const s = testScenarios[persona];
+            if (!s) return;
+            document.getElementById('contactName').value = s.contactName;
+            document.getElementById('companyName').value = s.companyName;
+            document.getElementById('role').value = s.role;
+            document.getElementById('industry').value = s.industry;
+            document.getElementById('courseName').value = s.courseName;
+            document.getElementById('price').value = s.price;
+            addLog(`Prefilled: ${persona} scenario — ${s.description}`, 'info');
+        }
+
+        // ==================== Persona Engine ====================
+
+        let currentPersonaName = null;
+        let currentSituationName = null;
+        let situationKeywordsCache = {};
+
+        // Load personas list
+        async function loadPersonasList() {
+            try {
+                const res = await fetch(`${API_BASE}/personas`);
+                const data = await res.json();
+                const chips = document.getElementById('personaChips');
+                if (data.personas && data.personas.length > 0) {
+                    chips.innerHTML = data.personas.map(name =>
+                        `<span class="module-chip ${name === currentPersonaName ? 'active' : ''}" onclick="selectPersona('${name}')">${name}</span>`
+                    ).join('');
+                } else {
+                    chips.innerHTML = '<span style="color: #94a3b8; font-size: 13px;">No personas yet. Create one below.</span>';
+                }
+            } catch (e) {
+                document.getElementById('personaChips').innerHTML = '<span style="color: #ef4444;">Failed to load</span>';
+            }
+        }
+
+        // Select a persona for editing
+        async function selectPersona(name) {
+            currentPersonaName = name;
+            loadPersonasList(); // Refresh chips to highlight active
+
+            try {
+                const res = await fetch(`${API_BASE}/personas/${name}`);
+                const data = await res.json();
+                document.getElementById('personaEditor').value = data.content || '';
+                document.getElementById('personaEditorLabel').textContent = `Editing: ${name}`;
+                document.getElementById('personaEditorSection').style.display = 'block';
+                document.getElementById('personaEmptyState').style.display = 'none';
+            } catch (e) {
+                showPersonaAlert('Failed to load persona: ' + e.message, 'error');
+            }
+        }
+
+        // Save persona module content
+        async function savePersona() {
+            if (!currentPersonaName) return;
+            const content = document.getElementById('personaEditor').value;
+            try {
+                const res = await fetch(`${API_BASE}/personas/${currentPersonaName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showPersonaAlert('Persona saved!', 'success');
+                } else {
+                    showPersonaAlert('Failed to save', 'error');
+                }
+            } catch (e) {
+                showPersonaAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Create new persona
+        async function createPersona() {
+            const nameInput = document.getElementById('newPersonaName');
+            const name = nameInput.value.trim().toLowerCase().replace(/\s+/g, '_');
+            if (!name) { alert('Enter a persona name'); return; }
+
+            try {
+                const res = await fetch(`${API_BASE}/personas/${name}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: `[PERSONA: ${name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}]\nAPPROACH: \nPAIN POINTS to probe: \nVALUE FRAMING: \nOBJECTION REFRAME: \nTONE: \nFLOW: Connect -> Situation -> Problem -> Consequence -> Solution -> Close` })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    nameInput.value = '';
+                    await loadPersonasList();
+                    selectPersona(name);
+                    showPersonaAlert('Persona created!', 'success');
+                }
+            } catch (e) {
+                showPersonaAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Delete current persona
+        async function deleteCurrentPersona() {
+            if (!currentPersonaName) return;
+            if (!confirm(`Delete persona "${currentPersonaName}"? This cannot be undone.`)) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/personas/${currentPersonaName}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    currentPersonaName = null;
+                    document.getElementById('personaEditorSection').style.display = 'none';
+                    document.getElementById('personaEmptyState').style.display = 'block';
+                    loadPersonasList();
+                    showPersonaAlert('Persona deleted', 'success');
+                }
+            } catch (e) {
+                showPersonaAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        function showPersonaAlert(msg, type) {
+            const div = document.getElementById('personaStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
+        // ==================== Situations ====================
+
+        // Load situations list
+        async function loadSituationsList() {
+            try {
+                const res = await fetch(`${API_BASE}/situations`);
+                const data = await res.json();
+
+                // Also load keywords config
+                const kwRes = await fetch(`${API_BASE}/persona-config`);
+                const kwData = await kwRes.json();
+                situationKeywordsCache = kwData.situation_keywords || {};
+
+                const chips = document.getElementById('situationChips');
+                if (data.situations && data.situations.length > 0) {
+                    chips.innerHTML = data.situations.map(name =>
+                        `<span class="module-chip situation ${name === currentSituationName ? 'active' : ''}" onclick="selectSituation('${name}')">${name}</span>`
+                    ).join('');
+                } else {
+                    chips.innerHTML = '<span style="color: #94a3b8; font-size: 13px;">No situations yet. Create one below.</span>';
+                }
+            } catch (e) {
+                document.getElementById('situationChips').innerHTML = '<span style="color: #ef4444;">Failed to load</span>';
+            }
+        }
+
+        // Select a situation for editing
+        async function selectSituation(name) {
+            currentSituationName = name;
+            loadSituationsList();
+
+            try {
+                const res = await fetch(`${API_BASE}/situations/${name}`);
+                const data = await res.json();
+                document.getElementById('situationEditor').value = data.content || '';
+                document.getElementById('situationEditorLabel').textContent = `Editing: ${name}`;
+                document.getElementById('situationEditorSection').style.display = 'block';
+                document.getElementById('situationEmptyState').style.display = 'none';
+
+                // Load keywords and hint for this situation
+                const kwConfig = situationKeywordsCache[name] || {};
+                document.getElementById('situationKeywords').value = (kwConfig.keywords || []).join(', ');
+                document.getElementById('situationHint').value = kwConfig.hint || '';
+            } catch (e) {
+                showSituationAlert('Failed to load situation: ' + e.message, 'error');
+            }
+        }
+
+        // Save situation (content + keywords + hint)
+        async function saveSituation() {
+            if (!currentSituationName) return;
+            const content = document.getElementById('situationEditor').value;
+            const keywordsStr = document.getElementById('situationKeywords').value;
+            const hint = document.getElementById('situationHint').value.trim();
+
+            try {
+                // Save module content
+                const res = await fetch(`${API_BASE}/situations/${currentSituationName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+
+                // Update keywords in config
+                const keywords = keywordsStr.split(',').map(k => k.trim()).filter(k => k);
+                situationKeywordsCache[currentSituationName] = { keywords, hint };
+
+                await fetch(`${API_BASE}/persona-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ situation_keywords: situationKeywordsCache })
+                });
+
+                showSituationAlert('Situation saved!', 'success');
+            } catch (e) {
+                showSituationAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Create new situation
+        async function createSituation() {
+            const nameInput = document.getElementById('newSituationName');
+            const name = nameInput.value.trim().toLowerCase().replace(/\s+/g, '_');
+            if (!name) { alert('Enter a situation name'); return; }
+
+            try {
+                const res = await fetch(`${API_BASE}/situations/${name}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: `[SITUATION: ${name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}]\n1. \n2. \n3. ` })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    nameInput.value = '';
+                    await loadSituationsList();
+                    selectSituation(name);
+                    showSituationAlert('Situation created!', 'success');
+                }
+            } catch (e) {
+                showSituationAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        function showSituationAlert(msg, type) {
+            const div = document.getElementById('situationStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
+        // ==================== Persona Keywords Config ====================
+
+        async function loadPersonaKeywords() {
+            try {
+                const res = await fetch(`${API_BASE}/persona-config`);
+                const data = await res.json();
+                const personaKw = data.persona_keywords || {};
+                situationKeywordsCache = data.situation_keywords || {};
+
+                // Display as visual tags
+                const display = document.getElementById('personaKeywordsDisplay');
+                let html = '';
+                for (const [persona, config] of Object.entries(personaKw)) {
+                    html += `<div style="margin-bottom: 15px;">`;
+                    html += `<strong style="font-size: 14px; text-transform: capitalize;">${persona.replace(/_/g, ' ')}</strong><br>`;
+                    if (config.keywords) {
+                        config.keywords.forEach(kw => {
+                            html += `<span class="keyword-tag">${kw}</span>`;
+                        });
+                    }
+                    if (config.phrases) {
+                        config.phrases.forEach(ph => {
+                            html += `<span class="keyword-tag phrase">${ph}</span>`;
+                        });
+                    }
+                    html += `</div>`;
+                }
+                display.innerHTML = html || '<div class="empty-state" style="padding: 20px;">No keywords configured</div>';
+
+                // Also fill the editor
+                document.getElementById('personaKeywordsEditor').value = JSON.stringify(personaKw, null, 2);
+            } catch (e) {
+                document.getElementById('personaKeywordsDisplay').innerHTML = '<span style="color: #ef4444;">Failed to load</span>';
+            }
+        }
+
+        async function savePersonaKeywords() {
+            const editor = document.getElementById('personaKeywordsEditor');
+            try {
+                const parsed = JSON.parse(editor.value);
+                const res = await fetch(`${API_BASE}/persona-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ persona_keywords: parsed })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showKeywordsAlert('Keywords config saved!', 'success');
+                    loadPersonaKeywords();
+                } else {
+                    showKeywordsAlert('Failed to save', 'error');
+                }
+            } catch (e) {
+                if (e instanceof SyntaxError) {
+                    showKeywordsAlert('Invalid JSON! Check your syntax.', 'error');
+                } else {
+                    showKeywordsAlert('Error: ' + e.message, 'error');
+                }
+            }
+        }
+
+        function toggleKeywordsEditor() {
+            const wrap = document.getElementById('keywordsEditorWrap');
+            wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function showKeywordsAlert(msg, type) {
+            const div = document.getElementById('keywordsStatus');
+            div.innerHTML = `<div class="alert alert-${type}" style="margin-top: 10px;">${msg}</div>`;
+            setTimeout(() => div.innerHTML = '', 4000);
+        }
+
         // Initialize
-        addLog('🚀 Dashboard initialized', 'success');
-        addLog('⚡ Monitoring server at http://localhost:3001', 'info');
+        addLog('Dashboard initialized', 'success');
+        addLog('Monitoring server at http://localhost:3001', 'info');
 
         checkServerStatus();
         updateMetrics();

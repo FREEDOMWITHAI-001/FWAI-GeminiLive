@@ -1,0 +1,22 @@
+{
+  "student": {
+    "keywords": ["student", "studying", "college", "university", "campus", "semester", "degree", "btech", "b.tech", "mtech", "mba", "graduation", "fresher", "placement", "internship", "final year", "first year", "hostel", "classmate", "engineering"],
+    "phrases": ["i am studying", "i'm a student", "just graduated", "looking for job", "campus placement", "no experience", "i'm in college", "i'm doing my", "iamastudent", "iamstudying"]
+  },
+  "business_owner": {
+    "keywords": ["business", "startup", "founder", "co-founder", "employees", "revenue", "my firm", "entrepreneur", "self-employed", "own company", "own business", "agency", "clients"],
+    "phrases": ["i run a", "i own a", "my company", "my business", "i started", "my startup", "i employ", "running a", "iruna", "iowna"]
+  },
+  "manager": {
+    "keywords": ["manager", "team lead", "head of", "director", "vp", "managing", "reportees", "leadership", "department", "strategy", "senior manager"],
+    "phrases": ["i manage", "i lead a team", "my team", "i'm heading", "reporting to me", "i handle a team", "imanage", "ileadateam"]
+  },
+  "freelancer": {
+    "keywords": ["freelance", "freelancer", "consulting", "consultant", "independent", "contract", "gig", "upwork", "fiverr", "self-employed"],
+    "phrases": ["i freelance", "i consult", "my clients", "i work independently", "project basis", "i do freelancing"]
+  },
+  "working_professional": {
+    "keywords": ["work at", "job", "office", "corporate", "company", "salary", "designation", "role", "experience", "software", "engineer", "developer", "analyst", "marketing", "hr", "finance", "infosys", "tcs", "wipro", "cognizant", "accenture", "hcl", "techm", "capgemini"],
+    "phrases": ["i work at", "i'm working", "my job", "in my role", "years experience", "i'm employed", "working in", "iworkat"]
+  }
+}

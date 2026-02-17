@@ -1,0 +1,102 @@
+{
+  "price_objection": {
+    "keywords": [
+      "expensive",
+      "costly",
+      "too much",
+      "afford",
+      "budget",
+      "cheap",
+      "price",
+      "cost",
+      "money",
+      "discount",
+      "offer",
+      "emi",
+      "installment",
+      "forty thousand",
+      "40k",
+      "40",
+      "000",
+      "40000",
+      "not worth"
+    ],
+    "hint": "[HINT: Customer has price concerns. Frame value, offer flexible payments. Don't discount.]"
+  },
+  "time_objection": {
+    "keywords": [
+      "no time",
+      "busy",
+      "hectic",
+      "schedule",
+      "time commitment",
+      "how long",
+      "how many hours",
+      "don't have time",
+      "can't commit",
+      "too much time"
+    ],
+    "hint": "[HINT: Customer worried about time. Emphasize self-paced, fits around work.]"
+  },
+  "skepticism": {
+    "keywords": [
+      "not sure",
+      "doubt",
+      "really work",
+      "guarantee",
+      "scam",
+      "legitimate",
+      "fake",
+      "trust",
+      "prove",
+      "how do i know",
+      "is it worth",
+      "sounds too good",
+      "waste of"
+    ],
+    "hint": "[HINT: Customer is skeptical. Ask what concerns them. Use social proof. Stay calm.]"
+  },
+  "high_interest": {
+    "keywords": [
+      "interested",
+      "sign me up",
+      "enroll",
+      "join",
+      "how do i start",
+      "payment",
+      "register",
+      "sounds good",
+      "sounds great",
+      "i want to",
+      "let's do it",
+      "i'm in",
+      "tell me more",
+      "love to",
+      "definitely",
+      "absolutely",
+      "when can i start",
+      "send me the link"
+    ],
+    "hint": "[HINT: Customer showing strong interest. Move to close. Don't over-explain.]"
+  },
+  "competitor_comparison": {
+    "keywords": [
+      "other course",
+      "coursera",
+      "udemy",
+      "udacity",
+      "youtube",
+      "free course",
+      "free tutorial",
+      "another program",
+      "other option",
+      "already enrolled",
+      "similar course",
+      "cheaper option",
+      "compared to",
+      "upgrad",
+      "scaler"
+    ],
+    "hint": "[HINT: Customer comparing options. Differentiate on mentorship + community. Never badmouth.]"
+  }
+}
