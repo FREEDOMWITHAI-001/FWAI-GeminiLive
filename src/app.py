@@ -874,6 +874,9 @@ class PlivoMakeCallRequest(BaseModel):
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
     webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
+    ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
+    ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
+    ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
 
 
 @app.post("/plivo/make-call")
@@ -912,6 +915,18 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
+
+        # Add customer_name to context if not present
+        context = request.context or {}
+        context.setdefault("customer_name", request.contactName)
+
+        # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
+        if request.ghlWhatsappWebhookUrl:
+            context["ghl_webhook_url"] = request.ghlWhatsappWebhookUrl
+        if request.ghlApiKey:
+            context["ghl_api_key"] = request.ghlApiKey
+        if request.ghlLocationId:
+            context["ghl_location_id"] = request.ghlLocationId
 
         # Store all call data
         async with _call_data_lock:

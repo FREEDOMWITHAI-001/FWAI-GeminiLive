@@ -226,6 +226,10 @@ class PlivoGeminiSession:
         logger.info(f"[{call_uuid[:8]}] Direct prompt mode for client: {client_name or 'default'}")
 
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
+        self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
+        self.ghl_api_key = self.context.pop("ghl_api_key", "")  # GHL API key for contact lookup
+        self.ghl_location_id = self.context.pop("ghl_location_id", "")  # GHL location ID
+        self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
         self.is_active = False
@@ -416,6 +420,26 @@ class PlivoGeminiSession:
 
     # Minimum turns before goodbye detection activates (prevents premature call end)
     MIN_TURNS_FOR_GOODBYE = 6
+
+    def _get_tool_declarations(self):
+        """Build tool declarations dynamically based on session capabilities."""
+        tools = list(TOOL_DECLARATIONS)  # Always include end_call
+        if self.ghl_api_key and self.ghl_location_id:
+            tools.append({
+                "name": "send_whatsapp",
+                "description": "Send a WhatsApp message to the caller via the configured workflow. Use this when your prompt instructs you to send a WhatsApp message. Can only be sent once per call.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief reason for sending the message, e.g. 'welcome message after greeting'"
+                        }
+                    },
+                    "required": ["reason"]
+                }
+            })
+        return tools
 
     def _is_goodbye_message(self, text: str) -> bool:
         """Detect if agent is saying goodbye - triggers auto call end.
@@ -1455,6 +1479,7 @@ Rules:
                     {"function_declarations": TOOL_DECLARATIONS},
                     *([] if not config.enable_live_search else [{"google_search": {}}])
                 ]
+                "tools": [{"function_declarations": self._get_tool_declarations()}]
             }
         }
         await ws.send(json.dumps(msg))
@@ -1615,6 +1640,37 @@ Rules:
                 except Exception as e:
                     logger.error(f"get_social_proof error: {e}")
                     sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
+            # Handle send_whatsapp tool - trigger GHL workflow
+            if tool_name == "send_whatsapp":
+                reason = tool_args.get("reason", "")
+                self.log.detail(f"Send WhatsApp: {reason}")
+                self._save_transcript("TOOL", f"send_whatsapp: {reason}")
+
+                if self._whatsapp_sent:
+                    msg = "WhatsApp already sent this call"
+                    self.log.detail(msg)
+                elif not self.ghl_api_key or not self.ghl_location_id:
+                    msg = "WhatsApp not configured - GHL API key or location ID missing"
+                    self.log.warn(msg)
+                else:
+                    self._whatsapp_sent = True
+                    from src.services.ghl_whatsapp import tag_ghl_contact
+                    try:
+                        tag_result = await tag_ghl_contact(
+                            phone=self.caller_phone,
+                            email=self.context.get("email", ""),
+                            api_key=self.ghl_api_key,
+                            location_id=self.ghl_location_id,
+                            tag="ai-onboardcall-goldmember",
+                        )
+                        if tag_result.get("success"):
+                            msg = "WhatsApp triggered via GHL contact tag"
+                        else:
+                            msg = f"GHL tagging failed: {tag_result.get('error', 'unknown')}"
+                        self.log.detail(f"GHL tag result: {tag_result}")
+                    except Exception as e:
+                        msg = f"GHL tagging failed: {e}"
+                        self.log.warn(msg)
 
                 try:
                     tool_response = {
@@ -1623,6 +1679,7 @@ Rules:
                                 "id": call_id,
                                 "name": tool_name,
                                 "response": sp_result
+                                "response": {"success": self._whatsapp_sent, "message": msg}
                             }]
                         }
                     }
