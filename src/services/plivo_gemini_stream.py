@@ -229,6 +229,8 @@ class PlivoGeminiSession:
         self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
         self.ghl_api_key = self.context.pop("ghl_api_key", "")  # GHL API key for contact lookup
         self.ghl_location_id = self.context.pop("ghl_location_id", "")  # GHL location ID
+        self.plivo_auth_id = self.context.pop("plivo_auth_id", "")  # Per-org Plivo Auth ID
+        self.plivo_auth_token = self.context.pop("plivo_auth_token", "")  # Per-org Plivo Auth Token
         self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
@@ -1762,10 +1764,13 @@ Rules:
             import httpx
             import base64
 
-            auth_string = f"{config.plivo_auth_id}:{config.plivo_auth_token}"
+            # Use per-org Plivo credentials if available, otherwise fall back to defaults
+            auth_id = self.plivo_auth_id or config.plivo_auth_id
+            auth_token = self.plivo_auth_token or config.plivo_auth_token
+            auth_string = f"{auth_id}:{auth_token}"
             auth_b64 = base64.b64encode(auth_string.encode()).decode()
 
-            url = f"https://api.plivo.com/v1/Account/{config.plivo_auth_id}/Call/{hangup_uuid}/"
+            url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{hangup_uuid}/"
 
             t0 = time.time()
             async with httpx.AsyncClient() as client:

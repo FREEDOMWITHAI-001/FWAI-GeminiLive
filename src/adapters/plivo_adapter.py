@@ -31,6 +31,9 @@ class PlivoAdapter(BaseCallAdapter):
         hangup_url: Optional[str] = None,
         ring_url: Optional[str] = None,
         caller_name: Optional[str] = None,
+        plivo_auth_id: Optional[str] = None,
+        plivo_auth_token: Optional[str] = None,
+        plivo_phone_number: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -43,17 +46,27 @@ class PlivoAdapter(BaseCallAdapter):
             hangup_url: URL to notify when call ends
             ring_url: URL to notify when call starts ringing
             caller_name: Optional caller name for caller ID
+            plivo_auth_id: Per-org Plivo Auth ID (overrides default)
+            plivo_auth_token: Per-org Plivo Auth Token (overrides default)
+            plivo_phone_number: Per-org Plivo phone number (overrides default)
 
         Returns:
             API response with call_uuid
         """
+        # Use per-org credentials if provided, otherwise fall back to defaults
+        auth_id = plivo_auth_id or self.auth_id
+        auth_token = plivo_auth_token or self.auth_token
+        from_number = plivo_phone_number or config.plivo_phone_number
+        api_base_url = f"https://api.plivo.com/v1/Account/{auth_id}"
+        auth = (auth_id, auth_token)
+
         if not answer_url:
             answer_url = f"{config.plivo_callback_url}/plivo/answer"
         if not hangup_url:
             hangup_url = f"{config.plivo_callback_url}/plivo/hangup"
 
         payload = {
-            "from": config.plivo_phone_number,
+            "from": from_number,
             "to": phone_number,
             "answer_url": answer_url,
             "answer_method": answer_method,
@@ -68,8 +81,8 @@ class PlivoAdapter(BaseCallAdapter):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/Call/",
-                    auth=self.auth,
+                    f"{api_base_url}/Call/",
+                    auth=auth,
                     json=payload,
                     timeout=30.0
                 )

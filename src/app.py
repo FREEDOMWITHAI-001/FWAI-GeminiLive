@@ -877,6 +877,9 @@ class PlivoMakeCallRequest(BaseModel):
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
     ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
+    plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
+    plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
+    plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
 
 
 @app.post("/plivo/make-call")
@@ -923,6 +926,12 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             context["ghl_api_key"] = request.ghlApiKey
         if request.ghlLocationId:
             context["ghl_location_id"] = request.ghlLocationId
+
+        # Pass per-org Plivo credentials in context for hangup
+        if request.plivoAuthId:
+            context["plivo_auth_id"] = request.plivoAuthId
+        if request.plivoAuthToken:
+            context["plivo_auth_token"] = request.plivoAuthToken
 
         # Store all call data
         async with _call_data_lock:
@@ -983,9 +992,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         logger.info(f"Gemini preload complete for {call_uuid} - now making call")
 
         # NOW make the Plivo call (AI is already ready)
+        # Use per-org Plivo credentials if provided, otherwise adapter uses env defaults
         result = await plivo_adapter.make_call(
             phone_number=request.phoneNumber,
-            caller_name=request.contactName
+            caller_name=request.contactName,
+            plivo_auth_id=request.plivoAuthId,
+            plivo_auth_token=request.plivoAuthToken,
+            plivo_phone_number=request.plivoPhoneNumber,
         )
 
         if result.get("success"):
