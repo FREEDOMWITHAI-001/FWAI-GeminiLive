@@ -1476,10 +1476,9 @@ Rules:
                 "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
                 "tools": [
-                    {"function_declarations": TOOL_DECLARATIONS},
+                    {"function_declarations": self._get_tool_declarations()},
                     *([] if not config.enable_live_search else [{"google_search": {}}])
                 ]
-                "tools": [{"function_declarations": self._get_tool_declarations()}]
             }
         }
         await ws.send(json.dumps(msg))
@@ -1640,6 +1639,23 @@ Rules:
                 except Exception as e:
                     logger.error(f"get_social_proof error: {e}")
                     sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
+
+                # Send tool response back to Gemini
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": sp_result
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except Exception:
+                    pass
+                return
+
             # Handle send_whatsapp tool - trigger GHL workflow
             if tool_name == "send_whatsapp":
                 reason = tool_args.get("reason", "")
@@ -1678,7 +1694,6 @@ Rules:
                             "function_responses": [{
                                 "id": call_id,
                                 "name": tool_name,
-                                "response": sp_result
                                 "response": {"success": self._whatsapp_sent, "message": msg}
                             }]
                         }

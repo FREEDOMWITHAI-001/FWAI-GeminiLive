@@ -916,10 +916,6 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
 
-        # Add customer_name to context if not present
-        context = request.context or {}
-        context.setdefault("customer_name", request.contactName)
-
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:
             context["ghl_webhook_url"] = request.ghlWhatsappWebhookUrl
