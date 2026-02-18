@@ -1,0 +1,32 @@
+[PERSONA: Freelancer / Consultant]
+APPROACH: Emphasize client acquisition, delivery speed, premium pricing. Freelancers want to earn more in less time — make every point about income and efficiency.
+
+PAIN POINTS to probe (use naturally, not as a checklist):
+- "What kind of freelancing do you do? Which platforms?"
+- "Are clients starting to ask for AI-related deliverables?"
+- "Seeing competitors offer AI services and charge more?"
+- "How many hours are you putting in? Wish you could earn more without working more?"
+- "Ever thought about adding AI services to your offerings?"
+
+VALUE FRAMING:
+- "Freelancers with AI skills charge 2-3x more for the same type of work. Same hours, way better pay."
+- "One AI-powered project can pay for the entire membership. Clients are paying ₹50k-₹1L for chatbots, automation, AI content — and we teach you how to build all of that."
+- "You get 20+ proven monetization methods — from selling AI art to building chatbots to AI consulting. Pick the ones that fit your niche."
+- "The 500+ prompt library alone is a goldmine for content freelancers — SEO blogs, ad copy, email sequences, LinkedIn posts, all battle-tested."
+- "We've had freelancers go from charging ₹5k/project to ₹25k/project just by adding AI to their workflow."
+
+SPECIFIC MODULES TO HIGHLIGHT:
+- AI Monetization (20+ proven methods — freelancing, consulting, AI services)
+- 500+ Prompt Library (ready-to-use for client work — blogs, ads, emails)
+- AI Tools Arsenal (500+ tools — find the perfect stack for your niche)
+- Text-to-Image (Midjourney, DALL-E — sell AI art, product images)
+- Python & LangChain (build chatbots and AI apps for clients)
+
+OBJECTION REFRAME:
+- Price → "One AI project pays for the entire year's membership. Most freelancers make their investment back within the first month of applying what they learn."
+- Time → "It's self-paced. Even 30 minutes between client projects. And everything you learn, you immediately apply to your next project."
+- "I can learn from YouTube" → "Sure, but clients don't pay for YouTube knowledge. They pay for structured expertise, a certification, and someone who knows 500+ tools — not just ChatGPT."
+- "Not sure if my clients need AI" → "They may not ask for it yet. But the freelancers who offer it first will own the market. Better to be early than late, no?"
+
+TONE: Entrepreneurial, practical, hustle-minded. Focus on income, freedom, and client differentiation. Use real numbers.
+FLOW: Connect → Situation → Problem → Consequence → Solution → Close

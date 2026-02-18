@@ -165,6 +165,11 @@ app.add_middleware(
 AUDIO_DIR.mkdir(exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 
+# Mount static directory for test dashboard UI
+STATIC_DIR = Path(__file__).parent.parent / "static"
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
 
 # Request models
 class MakeCallRequest(BaseModel):
@@ -176,6 +181,398 @@ class WebhookVerification(BaseModel):
     hub_mode: str
     hub_verify_token: str
     hub_challenge: str
+
+
+# ============================================================================
+# Prompt Management (for dashboard UI)
+# ============================================================================
+
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+PROMPTS_DIR.mkdir(exist_ok=True)
+
+@app.get("/prompts/{client_name}")
+async def get_prompt(client_name: str):
+    """Load prompt file for a client"""
+    prompt_file = PROMPTS_DIR / f"{client_name}_prompt.txt"
+    if prompt_file.exists():
+        return {"success": True, "prompt": prompt_file.read_text(encoding="utf-8")}
+    return {"success": False, "error": f"No prompt file found for '{client_name}'"}
+
+@app.post("/prompts/update")
+async def update_prompt(request: Request):
+    """Save prompt file for a client"""
+    body = await request.json()
+    client_name = body.get("client_name", "fwai")
+    prompt = body.get("prompt", "")
+    if not prompt.strip():
+        return {"success": False, "error": "Prompt cannot be empty"}
+    prompt_file = PROMPTS_DIR / f"{client_name}_prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    return {"success": True, "message": f"Prompt saved for {client_name}"}
+
+
+# ============================================================================
+# Dynamic Persona Engine API
+# ============================================================================
+
+PERSONAS_DIR = PROMPTS_DIR / "personas"
+SITUATIONS_DIR = PROMPTS_DIR / "situations"
+PERSONAS_DIR.mkdir(exist_ok=True)
+SITUATIONS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/personas")
+async def list_personas():
+    """List all available persona modules"""
+    personas = [f.stem for f in PERSONAS_DIR.glob("*.txt")]
+    return {"personas": sorted(personas)}
+
+
+@app.get("/personas/{name}")
+async def get_persona(name: str):
+    """Get persona module content"""
+    path = PERSONAS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Persona '{name}' not found"}
+
+
+@app.post("/personas/{name}")
+async def save_persona(name: str, request: Request):
+    """Create or update persona module"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = PERSONAS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Persona '{name}' saved"}
+
+
+@app.delete("/personas/{name}")
+async def delete_persona(name: str):
+    """Delete a persona module"""
+    path = PERSONAS_DIR / f"{name}.txt"
+    if path.exists():
+        path.unlink()
+        return {"success": True, "message": f"Persona '{name}' deleted"}
+    return {"error": f"Persona '{name}' not found"}
+
+
+@app.get("/situations")
+async def list_situations():
+    """List all available situation modules"""
+    situations = [f.stem for f in SITUATIONS_DIR.glob("*.txt")]
+    return {"situations": sorted(situations)}
+
+
+@app.get("/situations/{name}")
+async def get_situation(name: str):
+    """Get situation module content"""
+    path = SITUATIONS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Situation '{name}' not found"}
+
+
+@app.post("/situations/{name}")
+async def save_situation(name: str, request: Request):
+    """Create or update situation module"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = SITUATIONS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Situation '{name}' saved"}
+
+
+@app.get("/persona-config")
+async def get_persona_config():
+    """Get persona and situation detection keyword configs"""
+    persona_kw = {}
+    situation_kw = {}
+    pk_path = PROMPTS_DIR / "persona_keywords.json"
+    sk_path = PROMPTS_DIR / "situation_keywords.json"
+    if pk_path.exists():
+        persona_kw = json.loads(pk_path.read_text(encoding="utf-8"))
+    if sk_path.exists():
+        situation_kw = json.loads(sk_path.read_text(encoding="utf-8"))
+    return {"persona_keywords": persona_kw, "situation_keywords": situation_kw}
+
+
+@app.post("/persona-config")
+async def update_persona_config(request: Request):
+    """Update persona and/or situation detection keyword configs"""
+    body = await request.json()
+    if "persona_keywords" in body:
+        pk_path = PROMPTS_DIR / "persona_keywords.json"
+        pk_path.write_text(json.dumps(body["persona_keywords"], indent=2), encoding="utf-8")
+    if "situation_keywords" in body:
+        sk_path = PROMPTS_DIR / "situation_keywords.json"
+        sk_path.write_text(json.dumps(body["situation_keywords"], indent=2), encoding="utf-8")
+    return {"success": True, "message": "Config updated"}
+
+
+# ============================================================================
+# Cross-Call Memory API
+# ============================================================================
+
+@app.get("/memory")
+async def list_memories():
+    """List all contact memories"""
+    memories = session_db.get_all_contact_memories(limit=200)
+    return {"memories": memories, "total": len(memories)}
+
+
+@app.get("/memory/{phone}")
+async def get_memory(phone: str):
+    """Get contact memory for a phone number"""
+    # URL-decode phone (+ becomes space in URL params)
+    phone = phone.replace(" ", "+")
+    memory = session_db.get_contact_memory(phone)
+    if memory:
+        return {"success": True, "memory": memory}
+    return {"success": False, "error": f"No memory found for {phone}"}
+
+
+@app.post("/memory/{phone}")
+async def update_memory(phone: str, request: Request):
+    """Update contact memory for a phone number"""
+    phone = phone.replace(" ", "+")
+    body = await request.json()
+    # Filter only valid fields
+    valid_fields = {
+        "name", "persona", "company", "role", "objections",
+        "interest_areas", "key_facts", "last_call_summary",
+        "last_call_outcome",
+    }
+    updates = {k: v for k, v in body.items() if k in valid_fields}
+    if not updates:
+        return {"error": "No valid fields to update"}
+    session_db.save_contact_memory(phone, **updates)
+    return {"success": True, "message": f"Memory updated for {phone}"}
+
+
+@app.delete("/memory/{phone}")
+async def delete_memory(phone: str):
+    """Delete contact memory for a phone number"""
+    phone = phone.replace(" ", "+")
+    session_db.delete_contact_memory(phone)
+    return {"success": True, "message": f"Memory deleted for {phone}"}
+
+
+# ============================================================================
+# Social Proof Engine API
+# ============================================================================
+
+@app.get("/social-proof/stats")
+async def list_social_proof():
+    """List all social proof stats (companies, cities, roles)"""
+    return session_db.get_all_social_proof()
+
+@app.get("/social-proof/summary")
+async def social_proof_summary():
+    """Get aggregate summary (same data injected into pre-call prompt)"""
+    from src.social_proof import load_social_proof_summary
+    summary = load_social_proof_summary()
+    return {"summary": summary}
+
+@app.get("/social-proof/stats/company/{name}")
+async def get_company_stats(name: str):
+    """Get enrollment stats for a specific company"""
+    stats = session_db.get_social_proof_by_company(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for company '{name}'"}
+
+@app.post("/social-proof/stats/company")
+async def upsert_company_stats(request: Request):
+    """Create or update company enrollment stats"""
+    body = await request.json()
+    company_name = body.pop("company_name", None)
+    if not company_name:
+        return JSONResponse(status_code=400, content={"error": "company_name is required"})
+    session_db.upsert_social_proof_company(company_name, **body)
+    return {"success": True, "message": f"Stats updated for {company_name}"}
+
+@app.delete("/social-proof/stats/company/{name}")
+async def delete_company_stats(name: str):
+    """Delete company enrollment stats"""
+    session_db.delete_social_proof_company(name)
+    return {"success": True, "message": f"Company stats deleted for {name}"}
+
+@app.get("/social-proof/stats/city/{name}")
+async def get_city_stats(name: str):
+    """Get enrollment stats for a specific city"""
+    stats = session_db.get_social_proof_by_city(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for city '{name}'"}
+
+@app.post("/social-proof/stats/city")
+async def upsert_city_stats(request: Request):
+    """Create or update city enrollment stats"""
+    body = await request.json()
+    city_name = body.pop("city_name", None)
+    if not city_name:
+        return JSONResponse(status_code=400, content={"error": "city_name is required"})
+    session_db.upsert_social_proof_city(city_name, **body)
+    return {"success": True, "message": f"Stats updated for {city_name}"}
+
+@app.delete("/social-proof/stats/city/{name}")
+async def delete_city_stats(name: str):
+    """Delete city enrollment stats"""
+    session_db.delete_social_proof_city(name)
+    return {"success": True, "message": f"City stats deleted for {name}"}
+
+@app.get("/social-proof/stats/role/{name}")
+async def get_role_stats(name: str):
+    """Get enrollment stats for a specific role"""
+    stats = session_db.get_social_proof_by_role(name)
+    if stats:
+        return {"success": True, "stats": stats}
+    return {"success": False, "error": f"No stats for role '{name}'"}
+
+@app.post("/social-proof/stats/role")
+async def upsert_role_stats(request: Request):
+    """Create or update role enrollment stats"""
+    body = await request.json()
+    role_name = body.pop("role_name", None)
+    if not role_name:
+        return JSONResponse(status_code=400, content={"error": "role_name is required"})
+    session_db.upsert_social_proof_role(role_name, **body)
+    return {"success": True, "message": f"Stats updated for {role_name}"}
+
+@app.delete("/social-proof/stats/role/{name}")
+async def delete_role_stats(name: str):
+    """Delete role enrollment stats"""
+    session_db.delete_social_proof_role(name)
+    return {"success": True, "message": f"Role stats deleted for {name}"}
+
+@app.post("/social-proof/bulk")
+async def bulk_update_social_proof(request: Request):
+    """CRM webhook endpoint for bulk stats updates.
+    Accepts: {"companies": [...], "cities": [...], "roles": [...]}"""
+    body = await request.json()
+    counts = {"companies": 0, "cities": 0, "roles": 0}
+
+    for item in body.get("companies", []):
+        name = item.pop("company_name", None)
+        if name:
+            session_db.upsert_social_proof_company(name, **item)
+            counts["companies"] += 1
+
+    for item in body.get("cities", []):
+        name = item.pop("city_name", None)
+        if name:
+            session_db.upsert_social_proof_city(name, **item)
+            counts["cities"] += 1
+
+    for item in body.get("roles", []):
+        name = item.pop("role_name", None)
+        if name:
+            session_db.upsert_social_proof_role(name, **item)
+            counts["roles"] += 1
+
+    return {
+        "success": True,
+        "message": f"Bulk update: {counts['companies']} companies, {counts['cities']} cities, {counts['roles']} roles"
+    }
+
+
+# ============================================================================
+# Product Intelligence API
+# ============================================================================
+
+PRODUCTS_DIR = PROMPTS_DIR / "products"
+PRODUCTS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/products")
+async def list_products():
+    """List all product knowledge sections"""
+    sections = [f.stem for f in PRODUCTS_DIR.glob("*.txt")]
+    return {"sections": sorted(sections)}
+
+
+@app.post("/products/upload")
+async def upload_product_document(request: Request):
+    """Upload raw product document for AI processing into structured sections."""
+    body = await request.json()
+    raw_content = body.get("content", "")
+    source_type = body.get("source_type", "text")
+
+    if not raw_content or not raw_content.strip():
+        return {"error": "Content cannot be empty"}
+
+    from src.product_intelligence import process_document, save_product_sections
+
+    result = await process_document(raw_content, source_type=source_type)
+
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+
+    sections = result.get("sections", {})
+    keywords = result.get("keywords", {})
+
+    if sections:
+        save_product_sections(sections, keywords)
+        return {
+            "success": True,
+            "sections_created": list(sections.keys()),
+            "message": f"Processed into {len(sections)} sections",
+        }
+    return {"success": False, "error": "No sections extracted from document"}
+
+
+@app.get("/products/{name}")
+async def get_product(name: str):
+    """Get product section content"""
+    path = PRODUCTS_DIR / f"{name}.txt"
+    if path.exists():
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    return {"error": f"Product section '{name}' not found"}
+
+
+@app.post("/products/{name}")
+async def save_product(name: str, request: Request):
+    """Create or update product section"""
+    body = await request.json()
+    content = body.get("content", "")
+    if not content.strip():
+        return {"error": "Content cannot be empty"}
+    path = PRODUCTS_DIR / f"{name}.txt"
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "message": f"Product section '{name}' saved"}
+
+
+@app.delete("/products/{name}")
+async def delete_product(name: str):
+    """Delete a product section"""
+    path = PRODUCTS_DIR / f"{name}.txt"
+    if path.exists():
+        path.unlink()
+        return {"success": True, "message": f"Product section '{name}' deleted"}
+    return {"error": f"Product section '{name}' not found"}
+
+
+@app.get("/product-config")
+async def get_product_config():
+    """Get product section detection keyword config"""
+    pk_path = PROMPTS_DIR / "product_keywords.json"
+    if pk_path.exists():
+        return json.loads(pk_path.read_text(encoding="utf-8"))
+    return {}
+
+
+@app.post("/product-config")
+async def update_product_config(request: Request):
+    """Update product section detection keyword config"""
+    body = await request.json()
+    pk_path = PROMPTS_DIR / "product_keywords.json"
+    pk_path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"success": True, "message": "Product keywords config updated"}
 
 
 # ============================================================================
@@ -503,6 +900,18 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Generate call_uuid first (before Plivo call)
         call_uuid = str(uuid.uuid4())
 
+        # Build context first
+        context = request.context or {}
+        context.setdefault("customer_name", request.contactName)
+
+        # Load default prompt if none provided — enable persona engine for FWAI
+        if not request.prompt:
+            default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
+            if default_prompt_file.exists():
+                request.prompt = default_prompt_file.read_text(encoding="utf-8")
+                context["_persona_engine"] = True
+                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars) + persona engine ON")
+
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
@@ -534,16 +943,47 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             contact_name=request.contactName, webhook_url=request.webhookUrl
         )
 
-        # PRELOAD Gemini session FIRST (before phone rings)
-        from src.services.plivo_gemini_stream import preload_session
-        logger.info(f"Preloading Gemini session for {call_uuid}...")
+        # Gather intelligence + cross-call memory FIRST, then preload
+        from src.services.plivo_gemini_stream import preload_session, get_preloading_session
+        from src.services.intelligence import gather_intelligence
+        from src.cross_call_memory import load_memory_context
+
+        logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
+
+        # Step 1: Load cross-call memory (instant, local DB lookup)
+        memory_data = load_memory_context(request.phoneNumber)
+        if memory_data:
+            context["_memory_context"] = memory_data.get("prompt", "")
+            # If memory has a persona, pre-set it so AI skips discovery
+            if memory_data.get("persona"):
+                context["_memory_persona"] = memory_data["persona"]
+            # Pre-load linguistic style for Linguistic Mirror
+            if memory_data.get("linguistic_style"):
+                context["_memory_linguistic_style"] = memory_data["linguistic_style"]
+            logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+
+        # Step 2: Gather intelligence (runs before preload so it's in the system prompt)
+        intelligence_brief = await gather_intelligence(request.contactName, context)
+        if intelligence_brief:
+            logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
+
+        # Step 2.5: Load social proof summary (instant, local DB lookup)
+        from src.social_proof import load_social_proof_summary
+        social_proof_summary = load_social_proof_summary()
+        if social_proof_summary:
+            logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
+
+        # Step 3: Preload Gemini session (intelligence + memory + social proof will be in system prompt)
         await preload_session(
             call_uuid,
             request.phoneNumber,
             prompt=request.prompt,
             context=context,
-            webhook_url=request.webhookUrl
+            webhook_url=request.webhookUrl,
+            intelligence_brief=intelligence_brief,
+            social_proof_summary=social_proof_summary,
         )
+
         logger.info(f"Gemini preload complete for {call_uuid} - now making call")
 
         # NOW make the Plivo call (AI is already ready)

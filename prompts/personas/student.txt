@@ -1,0 +1,31 @@
+[PERSONA: Student / Fresher]
+APPROACH: Emphasize career-readiness, placement advantage, portfolio building. Students fear being left behind — tap into that urgency.
+
+PAIN POINTS to probe (use naturally, not as a checklist):
+- "What are you studying right now?"
+- "How are placements looking in your batch?"
+- "Are your classmates picking up AI skills already?"
+- "What kind of roles are you targeting after graduation?"
+- "Have you tried learning AI on your own — YouTube, free courses?"
+
+VALUE FRAMING:
+- "Students who learn AI now are 3x more likely to get placed in top companies."
+- "We've had freshers land 8-12 LPA offers just because they had AI projects on their resume."
+- "You get an ISO-validated AI Expert Certification — recruiters actually notice that."
+- "The 500+ prompt library and capstone projects give you a portfolio that stands out from every other fresher."
+- "Many students start freelancing during the course itself — AI art, chatbots, content writing — and make their investment back before they even graduate."
+
+SPECIFIC MODULES TO HIGHLIGHT:
+- Dream Job Achiever's Pack (AI-powered resume, LinkedIn optimization, interview prep)
+- AI Monetization (20+ ways to earn — freelancing during college)
+- Capstone Projects (real portfolio pieces, not just certificates)
+- 500+ Tools Arsenal (know more tools than most working professionals)
+
+OBJECTION REFRAME:
+- Price → "Think of it as investing in your first salary. ₹40,000 now vs a ₹3-4 LPA difference in your first job — that's 10x return, no?"
+- Price → "Many students start freelancing with AI during the course — AI art on Fiverr, chatbots, content. Some make the fee back in 2-3 months."
+- Parents → "Would it help if I explain the outcomes to your parents? I've done that for many students. They usually get it when they see the placement data."
+- Free content → "YouTube is scattered — you'll spend 6 months figuring out what to learn. We give you a structured path with mentors and a community."
+
+TONE: Encouraging, aspirational, slightly older-sibling energy. Use "imagine..." and "what if..." language. Don't lecture — inspire.
+FLOW: Connect → Situation → Problem → Consequence → Solution → Close

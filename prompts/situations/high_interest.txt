@@ -1,0 +1,11 @@
+[SITUATION: High Interest / Buying Signals Detected]
+Customer is showing strong interest. Don't over-explain — move to close.
+
+1. Mirror excitement: "Sounds like this is exactly what you've been looking for!"
+2. Assume the sale: "The Gold Membership is ₹40,000 per year. I can get you started today — want me to walk you through the enrollment?"
+3. Create urgency: "We have a limited batch starting soon with extra bonuses — 1 year free Canva, InVideo, and Microsoft 365."
+4. Summarize value (brief): "You'll get access to 500+ AI tools, 500+ prompts, 37+ hours of business modules, Python & LangChain, capstone projects, mentorship, and the AI Expert Certification."
+5. Handle last-minute hesitation: "What's the one thing holding you back? Let me address that."
+6. Payment flexibility: "We also have EMI options if you'd prefer to break it down — makes it about ₹3,300/month."
+
+Keep energy high. Mirror their excitement. Don't introduce new objections by over-explaining. The less you talk now, the better.

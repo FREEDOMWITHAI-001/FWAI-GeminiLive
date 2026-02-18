@@ -88,7 +88,11 @@ class CallLogger:
 
 
 def detect_voice_from_prompt(prompt: str) -> str:
-    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for male (default)."""
+    """Detect voice based on prompt content. Returns 'Kore' for female, 'Puck' for male (default).
+
+    Only checks the IDENTITY line (first line) for agent name to avoid matching customer names.
+    Explicit 'Female Voice'/'Male Voice' directives take highest priority anywhere in prompt.
+    """
     if not prompt:
         return "Puck"
     prompt_lower = prompt.lower()
@@ -102,14 +106,29 @@ def detect_voice_from_prompt(prompt: str) -> str:
         logger.info("Explicit 'Male Voice' directive in prompt - using Puck")
         return "Puck"
 
-    # THEN: Check for agent name indicators
+    # Extract only the IDENTITY line (first line or line containing "IDENTITY:")
+    # to avoid matching customer names like "Priya" in the rest of the prompt
+    identity_line = ""
+    for line in prompt_lower.split("\n"):
+        line = line.strip()
+        if line.startswith("identity:") or line.startswith("identity :"):
+            identity_line = line
+            break
+    if not identity_line:
+        # Fallback: use just the first non-empty line
+        for line in prompt_lower.split("\n"):
+            if line.strip():
+                identity_line = line.strip()
+                break
+
+    # Check agent name in identity line only
     female_indicators = [
         "mousumi", "priya", "anjali", "divya", "neha", "pooja", "shreya",
         "sunita", "anita", "kavita", "rekha", "meena", "sita", "geeta"
     ]
     for indicator in female_indicators:
-        if indicator in prompt_lower:
-            logger.info(f"Detected female agent name '{indicator}' in prompt - using Kore voice")
+        if indicator in identity_line:
+            logger.info(f"Detected female agent name '{indicator}' in identity - using Kore voice")
             return "Kore"
 
     male_names = [
@@ -117,8 +136,8 @@ def detect_voice_from_prompt(prompt: str) -> str:
         "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar"
     ]
     for name in male_names:
-        if name in prompt_lower:
-            logger.info(f"Detected male agent name '{name}' in prompt - using Puck voice")
+        if name in identity_line:
+            logger.info(f"Detected male agent name '{name}' in identity - using Puck voice")
             return "Puck"
 
     # Default to male voice
@@ -136,6 +155,52 @@ TOOL_DECLARATIONS = [
                 "reason": {"type": "string"}
             },
             "required": ["reason"]
+        }
+    },
+    {
+        "name": "save_user_info",
+        "description": "Save important information the user shared about themselves. Call this whenever the user tells you their name, company, job role, or other key personal details. This helps remember them for future calls.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "company": {
+                    "type": "string",
+                    "description": "The company or organization the user works at, if mentioned"
+                },
+                "role": {
+                    "type": "string",
+                    "description": "The user's job title or role, if mentioned"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The user's name, if they introduce themselves"
+                },
+                "key_detail": {
+                    "type": "string",
+                    "description": "Any other important detail the user shared (e.g. 'friend recommended the masterclass', 'looking to switch careers')"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_social_proof",
+        "description": "Get enrollment statistics to reference in conversation. Call this when you learn the prospect's company, city, or job role, to get real numbers you can mention naturally. Example: 'Actually, 12 people from Wipro enrolled last quarter.'",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "company": {
+                    "type": "string",
+                    "description": "The company/organization the prospect works at (e.g. 'Wipro', 'TCS', 'Infosys')"
+                },
+                "city": {
+                    "type": "string",
+                    "description": "The city the prospect is in (e.g. 'Hyderabad', 'Bangalore', 'Mumbai')"
+                },
+                "role": {
+                    "type": "string",
+                    "description": "The prospect's job role (e.g. 'Software Engineer', 'Data Analyst', 'Product Manager')"
+                }
+            }
         }
     }
 ]
@@ -282,6 +347,76 @@ class PlivoGeminiSession:
 
         # Structured logger
         self.log = CallLogger(call_uuid)
+
+        # Pre-call intelligence brief (injected after preload)
+        self._intelligence_brief = ""
+
+        # Social proof summary (pre-fetched aggregate stats for system prompt)
+        self._social_proof_summary = ""
+
+        # Dynamic Persona Engine state
+        self._use_persona_engine = bool(self.context.get("_persona_engine"))
+        self._detected_persona = None
+        self._active_situations = []
+        self._previous_situations = []
+        self._accumulated_user_text = ""
+        # Micro-Moment Detector (behavioral buying signal / resistance detection)
+        self._micro_moment_detector = None
+        self._agent_turn_complete_time = None   # Set at turnComplete
+        self._user_response_start_time = None   # Set at first user transcript of next turn
+        # Product Intelligence state
+        self._active_product_sections = ["overview"]
+        self._previous_product_sections = []
+        # Linguistic Mirror state
+        self._linguistic_style = {}
+        self._previous_linguistic_style = {}
+        memory_style = self.context.get("_memory_linguistic_style")
+        if memory_style:
+            self._linguistic_style = memory_style
+            self.log.detail(f"Linguistic style pre-loaded: {memory_style}")
+
+        if self._use_persona_engine:
+            self.log.detail("Persona engine: ON")
+            # Pre-set persona from cross-call memory (skips NEPQ discovery)
+            memory_persona = self.context.get("_memory_persona")
+            if memory_persona:
+                self._detected_persona = memory_persona
+                self.log.detail(f"Persona pre-loaded from memory: {memory_persona}")
+
+        # Initialize Micro-Moment Detector (runs on ALL calls, independent of persona engine)
+        from src.core.config import config as app_config
+        if app_config.enable_micro_moments:
+            from src.micro_moment_detector import MicroMomentDetector
+            self._micro_moment_detector = MicroMomentDetector()
+            self.log.detail("Micro-moment detector: ON")
+
+    def inject_intelligence(self, brief: str):
+        """Store pre-call intelligence brief. Must be called BEFORE preload starts
+        so it gets included in the initial system prompt via _send_session_setup_on_ws."""
+        if not brief:
+            return
+        self._intelligence_brief = brief
+        self.log.detail(f"Intelligence stored ({len(brief)} chars)")
+
+    def inject_social_proof(self, summary: str):
+        """Store pre-call social proof summary. Called BEFORE preload starts."""
+        if not summary:
+            return
+        self._social_proof_summary = summary
+        self.log.detail(f"Social proof stored ({len(summary)} chars)")
+
+    async def _inject_situation_hint(self, hint: str):
+        """Inject a short situation hint via client_content (no audio pause)."""
+        try:
+            msg = {
+                "client_content": {
+                    "turns": [{"role": "user", "parts": [{"text": hint}]}],
+                    "turn_complete": False
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+        except Exception as e:
+            self.log.warn(f"Failed to inject situation hint: {e}")
 
     # Minimum turns before goodbye detection activates (prevents premature call end)
     MIN_TURNS_FOR_GOODBYE = 6
@@ -1184,7 +1319,49 @@ Rules:
 
     async def _send_session_setup_on_ws(self, ws, is_standby=False):
         """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
-        full_prompt = self.prompt
+        # On session splits (not first connection), strip greeting instructions from memory
+        # to prevent the AI from re-greeting mid-call
+        if not self._is_first_connection and self.context.get("_memory_context"):
+            # Use the original memory context (before any stripping) as source
+            if not hasattr(self, "_original_memory_context"):
+                self._original_memory_context = self.context["_memory_context"]
+            raw = self._original_memory_context
+            # Strip GREETING, AFTER GREETING, and FLOW lines to prevent re-greeting on session splits
+            cleaned = "\n".join(
+                line for line in raw.split("\n")
+                if not line.strip().startswith(("GREETING:", "AFTER GREETING:", "FLOW:"))
+            )
+            cleaned += "\n[You are CONTINUING a mid-call conversation. Do NOT greet or re-introduce yourself.]"
+            self.context["_memory_context"] = cleaned
+
+        # Linguistic Mirror: build style instruction
+        from src.linguistic_mirror import compose_mirror_instruction
+        mirror_inst = compose_mirror_instruction(self._linguistic_style)
+
+        if self._use_persona_engine:
+            from src.persona_engine import compose_prompt
+            # If persona came from memory, skip NEPQ even on early turns
+            has_memory_persona = bool(self.context.get("_memory_persona"))
+            full_prompt = compose_prompt(
+                context=self.context,
+                persona_key=self._detected_persona,
+                active_situations=self._active_situations,
+                is_early_call=(self._turn_count < 3 and not has_memory_persona),
+                mirror_instruction=mirror_inst,
+                active_product_sections=self._active_product_sections,
+            )
+        else:
+            full_prompt = self.prompt
+            if mirror_inst:
+                full_prompt += "\n\n" + mirror_inst
+
+        # Product knowledge sections for direct prompt mode
+        # (persona engine path handles this via compose_prompt Layer 6)
+        if not self._use_persona_engine and self._active_product_sections:
+            from src.product_intelligence import load_product_sections
+            product_content = load_product_sections(self._active_product_sections)
+            if product_content:
+                full_prompt += "\n\n" + product_content
 
         # Add natural speech variation and voice consistency guidance
         full_prompt += (
@@ -1194,6 +1371,44 @@ Rules:
             "IMPORTANT: Maintain a consistent speaking voice — same warmth, same tone, same accent, same tempo baseline throughout the entire call. "
             "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
         )
+
+        # Inject pre-call intelligence into system prompt (not as user message)
+        if self._intelligence_brief:
+            full_prompt += (
+                "\n\n[BACKGROUND INTEL ON THIS PROSPECT - use naturally, "
+                "NEVER mention you looked anything up or did any research. "
+                "Weave facts casually like 'Oh I heard...']\n"
+                f"{self._intelligence_brief}"
+            )
+
+        # Pre-call social proof summary (generic aggregate stats)
+        if self._social_proof_summary:
+            full_prompt += (
+                "\n\n[SOCIAL PROOF STATS - enrollment data you can reference naturally. "
+                "When the prospect mentions their company, city, or role, call get_social_proof "
+                "to get specific numbers. For now, here are aggregate stats:]\n"
+                f"{self._social_proof_summary}"
+            )
+
+        # Cross-call memory: injected inside compose_prompt() for persona engine,
+        # but must be appended manually in direct prompt mode
+        if self.context.get("_memory_context"):
+            if not self._use_persona_engine:
+                full_prompt += "\n\n" + self.context["_memory_context"]
+            self.log.detail(f"Memory context injected ({len(self.context['_memory_context'])} chars)")
+
+        # Real-time search usage instructions (only if live search is enabled)
+        if config.enable_live_search:
+            full_prompt += (
+                "\n\nREAL-TIME KNOWLEDGE: You have access to Google Search. "
+                "When the customer mentions their company, role, industry, or any specific entity, "
+                "you may naturally reference relevant recent information. "
+                "CRITICAL RULES: "
+                "1) NEVER say 'I searched' or 'according to my research' or 'I found that' "
+                "2) Weave information naturally: 'Oh [company], I heard they just...' "
+                "3) Only use search when it genuinely helps the conversation "
+                "4) Keep responses SHORT (1-2 sentences max) even when using search results"
+            )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
         # to system_instruction so AI knows where the conversation is.
@@ -1205,9 +1420,14 @@ Rules:
                 agent_ref = self._last_agent_question or self._last_agent_text
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
-                    full_prompt += f'\n\n[YOUR LAST QUESTION was: "{agent_ref[:300]}"'
+                    full_prompt += f'\n\n[CRITICAL — YOUR LAST QUESTION was: "{agent_ref[:300]}"'
                     full_prompt += f' Customer responded: "{last_user[:200]}".'
-                    full_prompt += ' DO NOT repeat or rephrase this question. Ask the NEXT question in the flow.]'
+                    full_prompt += (
+                        ' DO NOT repeat, rephrase, or re-ask this question or any question the customer already answered above.'
+                        ' The customer has already told you their situation — acknowledge what they said and move FORWARD in the flow.'
+                        ' If they mentioned their job/studies, do NOT ask "what do you do" again.'
+                        ' If they raised a concern, address it directly.]'
+                    )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
                 file_history = self._load_conversation_from_file()
@@ -1243,9 +1463,22 @@ Rules:
                         "thinking_budget": 0  # Disable reasoning for fastest responses
                     }
                 },
+                "realtime_input_config": {
+                    "automatic_activity_detection": {
+                        "disabled": False,
+                        "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "prefix_padding_ms": 20,
+                        "silence_duration_ms": 500,
+                    }
+                },
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
                 "system_instruction": {"parts": [{"text": full_prompt}]},
+                "tools": [
+                    {"function_declarations": TOOL_DECLARATIONS},
+                    *([] if not config.enable_live_search else [{"google_search": {}}])
+                ]
                 "tools": [{"function_declarations": self._get_tool_declarations()}]
             }
         }
@@ -1263,7 +1496,16 @@ Rules:
         trigger_text = self.context.get("greeting_trigger", "")
         if not trigger_text:
             customer_name = self.context.get("customer_name", "")
-            if customer_name:
+            has_memory = bool(self.context.get("_memory_context"))
+            if has_memory and customer_name:
+                # Repeat caller: use the memory-based greeting and ask a follow-up
+                trigger_text = (
+                    f"[Start the conversation now. This is a REPEAT CALLER. "
+                    f"Use the GREETING from the PREVIOUS INTERACTION instructions. "
+                    f"Reference what you know about {customer_name} from last time. "
+                    f"After greeting, immediately ask a follow-up question to keep the conversation going.]"
+                )
+            elif customer_name:
                 trigger_text = f"[Start the conversation now. Greet {customer_name} naturally using your opening line from the instructions.]"
             else:
                 trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
@@ -1339,6 +1581,65 @@ Rules:
                     asyncio.create_task(self._fallback_hangup(5.0))
                 return
 
+            # Handle save_user_info tool — saves user details via Gemini's audio understanding
+            if tool_name == "save_user_info":
+                try:
+                    from src.cross_call_memory import save_from_tool_call
+                    t_company = tool_args.get("company")
+                    t_role = tool_args.get("role")
+                    t_name = tool_args.get("name")
+                    t_key_detail = tool_args.get("key_detail")
+
+                    save_from_tool_call(
+                        phone=self.caller_phone,
+                        company=t_company,
+                        role=t_role,
+                        name=t_name,
+                        key_detail=t_key_detail,
+                    )
+                    self.log.detail(f"User info saved: company={t_company}, role={t_role}, name={t_name}")
+
+                    # Update session state for persona detection
+                    if t_role and not self._detected_persona:
+                        from src.persona_engine import detect_persona
+                        role_text = f"I work as a {t_role}" + (f" at {t_company}" if t_company else "")
+                        self._accumulated_user_text += " " + role_text
+                        detected = detect_persona(self._accumulated_user_text)
+                        if detected:
+                            self._detected_persona = detected
+                            self.log.detail(f"Persona detected from tool call: {detected}")
+                except Exception as e:
+                    logger.error(f"save_user_info error: {e}")
+
+                # Send success response so conversation continues
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": {"success": True, "message": "Information saved"}
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except Exception:
+                    pass
+                return
+
+            # Handle get_social_proof tool — returns enrollment stats for conversation
+            if tool_name == "get_social_proof":
+                try:
+                    from src.social_proof import get_social_proof as _get_social_proof
+                    sp_result = _get_social_proof(
+                        company=tool_args.get("company"),
+                        city=tool_args.get("city"),
+                        role=tool_args.get("role"),
+                    )
+                    self.log.detail(f"Social proof: company={tool_args.get('company')}, city={tool_args.get('city')}, role={tool_args.get('role')}")
+                except Exception as e:
+                    logger.error(f"get_social_proof error: {e}")
+                    sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
             # Handle send_whatsapp tool - trigger GHL workflow
             if tool_name == "send_whatsapp":
                 reason = tool_args.get("reason", "")
@@ -1377,6 +1678,7 @@ Rules:
                             "function_responses": [{
                                 "id": call_id,
                                 "name": tool_name,
+                                "response": sp_result
                                 "response": {"success": self._whatsapp_sent, "message": msg}
                             }]
                         }
@@ -1542,6 +1844,72 @@ Rules:
                             if len(self._turn_exchanges) > 5:
                                 self._turn_exchanges = self._turn_exchanges[-5:]
 
+                        # Accumulate user text for detection engines (product, linguistic mirror, persona)
+                        if full_user:
+                            self._accumulated_user_text += " " + full_user
+
+                        # Dynamic Persona Engine: detect persona + situations
+                        if self._use_persona_engine and full_user:
+                            # Persona detection (one-time, locked after first detection)
+                            if not self._detected_persona:
+                                from src.persona_engine import detect_persona
+                                detected = detect_persona(self._accumulated_user_text)
+                                if detected:
+                                    self._detected_persona = detected
+                                    self.log.detail(f"Persona detected: {detected}")
+                            # Situation detection (re-evaluated every turn)
+                            from src.persona_engine import detect_situations, get_situation_hint
+                            self._active_situations = detect_situations(full_user)
+                            if self._active_situations:
+                                self.log.detail(f"Situations active: {self._active_situations}")
+                            # Inject hint for NEW situations via client_content
+                            new_situations = set(self._active_situations) - set(self._previous_situations)
+                            if new_situations and self.goog_live_ws:
+                                hint = get_situation_hint(list(new_situations)[0])
+                                if hint:
+                                    asyncio.create_task(self._inject_situation_hint(hint))
+                                    self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
+                            self._previous_situations = list(self._active_situations)
+
+                        # Product section detection — runs for ALL calls, not just persona engine
+                        if full_user:
+                            from src.product_intelligence import detect_product_sections
+                            self._active_product_sections = detect_product_sections(
+                                full_user, self._active_situations
+                            )
+                            if self._active_product_sections != self._previous_product_sections:
+                                self.log.detail(f"Product sections: {self._active_product_sections}")
+                            self._previous_product_sections = list(self._active_product_sections)
+
+                        # Linguistic Mirror: detect style from accumulated text
+                        if self._accumulated_user_text:
+                            from src.linguistic_mirror import detect_linguistic_style, style_changed
+                            new_style = detect_linguistic_style(self._accumulated_user_text)
+                            if new_style and style_changed(self._linguistic_style, new_style):
+                                self._previous_linguistic_style = dict(self._linguistic_style)
+                                self._linguistic_style = new_style
+                                self.log.detail(f"Linguistic style: {new_style}")
+
+                        # Micro-Moment Detection (behavioral, every turn)
+                        if self._micro_moment_detector and full_user:
+                            response_time_ms = 0
+                            if self._agent_turn_complete_time and self._user_response_start_time:
+                                response_time_ms = (self._user_response_start_time - self._agent_turn_complete_time) * 1000
+                            mm_hint = self._micro_moment_detector.record_turn(
+                                turn_number=self._turn_count,
+                                full_user=full_user,
+                                full_agent=full_agent,
+                                response_time_ms=response_time_ms,
+                                turn_duration_ms=turn_duration_ms,
+                            )
+                            if mm_hint and self.goog_live_ws:
+                                asyncio.create_task(self._inject_situation_hint(mm_hint))
+                                self.log.detail(f"Micro-moment: {self._micro_moment_detector.current_strategy}")
+
+                        # Update timing markers for next turn's response time measurement
+                        self._agent_turn_complete_time = time.time()
+                        self._user_response_start_time = None
+
                         extra = ""
                         if self._turns_since_reconnect == self._session_split_interval - 1:
                             extra = "prewarm standby"
@@ -1633,6 +2001,9 @@ Rules:
                         if not is_noise:
                             self._last_user_speech_time = time.time()  # Track for latency
                             self._last_user_transcript_time = time.time()
+                            # Micro-moment: capture when user FIRST speaks this turn
+                            if self._user_response_start_time is None:
+                                self._user_response_start_time = time.time()
                             logger.debug(f"[{self.call_uuid[:8]}] USER fragment: {user_text}")
                             self._current_turn_user_text.append(user_text)
                             self._save_transcript("USER", user_text)
@@ -1893,7 +2264,37 @@ Rules:
                     transcript=transcript,
                 )
 
-                # Step 5: Call webhook AFTER everything is saved
+                # Step 5: Save cross-call memory (per phone number)
+                try:
+                    from src.cross_call_memory import extract_and_save_memory
+                    # Derive interest level
+                    completion_rate = self._turn_count / max(self._turn_count, 1)
+                    if completion_rate > 0.7:
+                        interest_level = "High"
+                    elif completion_rate > 0.4:
+                        interest_level = "Medium"
+                    else:
+                        interest_level = "Low"
+                    # Gather all situations that were active during the call
+                    all_situations = list(set(
+                        self._previous_situations + self._active_situations
+                    ))
+                    extract_and_save_memory(
+                        phone=self.caller_phone,
+                        contact_name=self.context.get("customer_name", ""),
+                        call_uuid=self.call_uuid,
+                        detected_persona=self._detected_persona,
+                        active_situations=all_situations,
+                        turn_exchanges=list(self._turn_exchanges),
+                        accumulated_user_text=self._accumulated_user_text,
+                        duration=duration,
+                        interest_level=interest_level,
+                        linguistic_style=self._linguistic_style,
+                    )
+                except Exception as e:
+                    logger.error(f"Cross-call memory save error: {e}")
+
+                # Step 6: Call webhook AFTER everything is saved
                 if self.webhook_url:
                     import asyncio as _asyncio
                     loop = _asyncio.new_event_loop()
@@ -1962,6 +2363,10 @@ Rules:
                     "total_nudges": 0,
                 },
                 "recording_url": f"/calls/{self.call_uuid}/recording",
+                "micro_moments": {
+                    "final_strategy": self._micro_moment_detector.current_strategy if self._micro_moment_detector else "discovery",
+                    "moments_detected": self._micro_moment_detector.get_moments_log() if self._micro_moment_detector else [],
+                },
             }
 
             self.log.detail(f"Webhook: {self.webhook_url}")
@@ -1996,7 +2401,7 @@ def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
         logger.error(f"  _preloading_sessions keys: {list(_preloading_sessions.keys())}")
         logger.error(f"  _sessions keys: {list(_sessions.keys())}")
 
-async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None) -> bool:
+async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "", social_proof_summary: str = "") -> bool:
     """Preload a session while phone is ringing"""
     async with _sessions_lock:
         total = len(_sessions) + len(_preloading_sessions)
@@ -2004,6 +2409,10 @@ async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None,
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
         session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
+        if intelligence_brief:
+            session.inject_intelligence(intelligence_brief)
+        if social_proof_summary:
+            session.inject_social_proof(social_proof_summary)
         _preloading_sessions[call_uuid] = session
     success = await session.preload()
     return success
@@ -2041,6 +2450,10 @@ async def create_session(call_uuid: str, caller_phone: str, plivo_ws, prompt: st
 async def get_session(call_uuid: str) -> Optional[PlivoGeminiSession]:
     async with _sessions_lock:
         return _sessions.get(call_uuid)
+
+def get_preloading_session(call_uuid: str) -> Optional[PlivoGeminiSession]:
+    """Get a preloading session (non-async, for intelligence injection)."""
+    return _preloading_sessions.get(call_uuid)
 
 async def remove_session(call_uuid: str):
     """Remove and stop session atomically"""

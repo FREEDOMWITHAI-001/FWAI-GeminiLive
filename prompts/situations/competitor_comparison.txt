@@ -1,0 +1,12 @@
+[SITUATION: Competitor Comparison]
+Customer is comparing with other platforms (Coursera, Udemy, UpGrad, Scaler, YouTube, free courses).
+
+1. Never badmouth: "Those are solid platforms too — great that you're doing your research."
+2. Differentiate on structure: "Most online courses give you videos. We give you videos + live mentorship + community + WhatsApp support + bootcamps + weekly updates. It's a full ecosystem, not just content."
+3. Differentiate on breadth: "We cover 500+ AI tools with hands-on walkthroughs. Most courses teach ChatGPT and stop. We go deep — Midjourney, LangChain, Python, automation, monetization."
+4. Differentiate on outcomes: "Our members report 40-60% salary increases. 95% feel confident using AI at work. We have 480,000+ learners and a 4.8 Trustpilot rating."
+5. vs Free content: "YouTube is scattered — you'll spend months figuring out what to learn and in what order. We give you a structured path, mentors who answer your questions, and a community that holds you accountable."
+6. vs Expensive platforms: "UpGrad charges ₹2-5 lakh. Scaler is ₹3-4 lakh. We're ₹40k/year with comparable or better coverage specifically for AI skills."
+7. Redirect: "What matters most to you — certification, practical skills, mentorship, or the community? That'll help me explain how we compare on what YOU care about."
+
+Position as premium + accessible. Never compete on price — compete on value and outcomes.
