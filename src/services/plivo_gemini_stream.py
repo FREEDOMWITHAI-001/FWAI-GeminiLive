@@ -2383,6 +2383,10 @@ Rules:
                     "total_nudges": 0,
                 },
                 "recording_url": f"/calls/{self.call_uuid}/recording",
+                "triggered_persona": self._detected_persona,
+                "triggered_situations": [s["name"] for s in self._active_situations] if self._active_situations else [],
+                "triggered_product_sections": list(set(self._active_product_sections or [])),
+                "social_proof_used": bool(self._social_proof_summary),
                 "micro_moments": {
                     "final_strategy": self._micro_moment_detector.current_strategy if self._micro_moment_detector else "discovery",
                     "moments_detected": self._micro_moment_detector.get_moments_log() if self._micro_moment_detector else [],

@@ -88,6 +88,9 @@ class Config(BaseModel):
     def whatsapp_messages_url(self) -> str:
         return f"{self.whatsapp_api_url}/messages"
 
+    # Database
+    database_url: str = os.getenv("DATABASE_URL", "")
+
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     enable_transcripts: bool = os.getenv("ENABLE_TRANSCRIPTS", "true").lower() == "true"
