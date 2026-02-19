@@ -873,8 +873,12 @@ class PlivoMakeCallRequest(BaseModel):
     contactName: Optional[str] = "Customer"
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
-    webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
+    webhookUrl: Optional[str] = None  # URL to call when call ends (webhook back to frontend)
+    n8nWebhookUrl: Optional[str] = None  # URL for n8n transcript processing
     voice: Optional[str] = None  # Voice name from UI (e.g. "Puck", "Kore") — overrides auto-detection
+    preResearchEnabled: Optional[bool] = False  # Gather intelligence about contact before call
+    memoryRecallEnabled: Optional[bool] = False  # Load cross-call memory for returning callers
+    botNotes: Optional[str] = None  # Previous conversation notes for memory recall
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
     ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
@@ -961,23 +965,35 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         from src.cross_call_memory import load_memory_context
 
         logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
+        logger.info(f"  preResearchEnabled={request.preResearchEnabled}, memoryRecallEnabled={request.memoryRecallEnabled}")
 
-        # Step 1: Load cross-call memory (instant, local DB lookup)
-        memory_data = load_memory_context(request.phoneNumber)
-        if memory_data:
-            context["_memory_context"] = memory_data.get("prompt", "")
-            # If memory has a persona, pre-set it so AI skips discovery
-            if memory_data.get("persona"):
-                context["_memory_persona"] = memory_data["persona"]
-            # Pre-load linguistic style for Linguistic Mirror
-            if memory_data.get("linguistic_style"):
-                context["_memory_linguistic_style"] = memory_data["linguistic_style"]
-            logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+        # Step 1: Load cross-call memory (only if enabled)
+        if request.memoryRecallEnabled:
+            memory_data = load_memory_context(request.phoneNumber)
+            if memory_data:
+                context["_memory_context"] = memory_data.get("prompt", "")
+                # If memory has a persona, pre-set it so AI skips discovery
+                if memory_data.get("persona"):
+                    context["_memory_persona"] = memory_data["persona"]
+                # Pre-load linguistic style for Linguistic Mirror
+                if memory_data.get("linguistic_style"):
+                    context["_memory_linguistic_style"] = memory_data["linguistic_style"]
+                logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+            # Also inject bot notes from UI if available
+            if request.botNotes:
+                context["_bot_notes"] = request.botNotes
+                logger.info(f"Bot notes injected ({len(request.botNotes)} chars)")
+        else:
+            logger.info("Memory recall DISABLED — skipping cross-call memory")
 
-        # Step 2: Gather intelligence (runs before preload so it's in the system prompt)
-        intelligence_brief = await gather_intelligence(request.contactName, context)
-        if intelligence_brief:
-            logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
+        # Step 2: Gather intelligence (only if enabled)
+        intelligence_brief = ""
+        if request.preResearchEnabled:
+            intelligence_brief = await gather_intelligence(request.contactName, context)
+            if intelligence_brief:
+                logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
+        else:
+            logger.info("Pre-research DISABLED — skipping intelligence gathering")
 
         # Step 2.5: Load social proof summary (instant, local DB lookup)
         from src.social_proof import load_social_proof_summary
@@ -1183,14 +1199,61 @@ async def plivo_hangup(request: Request):
     plivo_uuid = body.get("CallUUID", "")
     duration = body.get("Duration", "0")
 
-    # Look up internal UUID for cleanup
+    # Look up internal UUID and call data for cleanup
     async with _call_data_lock:
         internal_uuid = _plivo_to_internal_uuid.pop(plivo_uuid, plivo_uuid)
-        _pending_call_data.pop(internal_uuid, None)
+        call_data = _pending_call_data.pop(internal_uuid, None)
         _internal_to_plivo_uuid.pop(internal_uuid, None)
 
     logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s")
     clear_conversation(internal_uuid)
+
+    # If duration is 0 and call data exists, this was an unanswered call.
+    # Send a "no-answer" webhook so the frontend can update the status.
+    if call_data and int(duration or 0) == 0:
+        from src.services.plivo_gemini_stream import get_session
+        session = await get_session(internal_uuid)
+        # Only send no-answer if there's no active session (call was never answered)
+        if not session:
+            webhook_url = call_data.get("webhookUrl")
+            if webhook_url:
+                import httpx
+                from datetime import datetime
+                no_answer_payload = {
+                    "event": "call_ended",
+                    "call_uuid": internal_uuid,
+                    "caller_phone": call_data.get("phone", ""),
+                    "contact_name": (call_data.get("context") or {}).get("customer_name", ""),
+                    "client_name": "",
+                    "duration_seconds": 0,
+                    "timestamp": datetime.now().isoformat(),
+                    "transcript": "",
+                    "transcript_entries": [],
+                    "questions_completed": 0,
+                    "total_questions": 0,
+                    "completion_rate": 0,
+                    "interest_level": "None",
+                    "call_summary": "Call was not answered",
+                    "objections_raised": [],
+                    "collected_responses": {},
+                    "question_pairs": [],
+                    "call_metrics": {
+                        "total_duration_s": 0,
+                        "questions_completed": 0,
+                        "avg_latency_ms": 0,
+                        "p90_latency_ms": 0,
+                        "min_latency_ms": 0,
+                        "max_latency_ms": 0,
+                        "total_nudges": 0,
+                    },
+                    "no_answer": True,
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.post(webhook_url, json=no_answer_payload)
+                    logger.info(f"Sent no-answer webhook for {internal_uuid}")
+                except Exception as e:
+                    logger.error(f"Failed to send no-answer webhook: {e}")
 
     return JSONResponse(content={"status": "ok"})
 
