@@ -16,7 +16,7 @@ from .tool_registry import ToolRegistry
 @ToolRegistry.register
 class BookDemoTool(BaseTool):
     name = "book_demo"
-    description = "Book a demo or consultation session for the Gold Membership program"
+    description = "Book a demo or consultation session for the customer"
     
     @property
     def parameters(self) -> Dict[str, Any]:

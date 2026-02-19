@@ -177,14 +177,14 @@ TOOL_DECLARATIONS = [
                 },
                 "key_detail": {
                     "type": "string",
-                    "description": "Any other important detail the user shared (e.g. 'friend recommended the masterclass', 'looking to switch careers')"
+                    "description": "Any other important detail the user shared (e.g. 'referred by a friend', 'looking to switch careers')"
                 }
             }
         }
     },
     {
         "name": "get_social_proof",
-        "description": "Get enrollment statistics to reference in conversation. Call this when you learn the prospect's company, city, or job role, to get real numbers you can mention naturally. Example: 'Actually, 12 people from Wipro enrolled last quarter.'",
+        "description": "Get social proof statistics to reference in conversation. Call this when you learn the prospect's company, city, or job role, to get real numbers you can mention naturally.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -1341,25 +1341,38 @@ Rules:
         mirror_inst = compose_mirror_instruction(self._linguistic_style)
 
         if self._use_persona_engine:
-            from src.persona_engine import compose_prompt
-            # If persona came from memory, skip NEPQ even on early turns
-            has_memory_persona = bool(self.context.get("_memory_persona"))
-            full_prompt = compose_prompt(
-                context=self.context,
-                persona_key=self._detected_persona,
-                active_situations=self._active_situations,
-                is_early_call=(self._turn_count < 3 and not has_memory_persona),
-                mirror_instruction=mirror_inst,
-                active_product_sections=self._active_product_sections,
-            )
+            # UI prompt is ALWAYS the base — persona engine adds lightweight hints
+            full_prompt = self.prompt
+
+            # Add detected persona hint
+            if self._detected_persona:
+                persona_label = self._detected_persona.replace("_", " ").title()
+                full_prompt += (
+                    f"\n\n[PERSONA DETECTED: {persona_label}. "
+                    f"Tailor your pitch to resonate with their specific needs, priorities, and pain points.]"
+                )
+
+            # Add situation hints
+            _SITUATION_HINTS = {
+                "price_objection": "Price Concern — Focus on value and ROI rather than price. Don't discount.",
+                "high_interest": "High Interest — Customer is showing strong interest. Guide toward next steps and closing.",
+                "skepticism": "Skepticism — Build credibility with facts, real results, and social proof.",
+                "time_objection": "Time Concern — Emphasize flexibility, self-paced options, and minimal time commitment.",
+                "competitor_comparison": "Competitor Comparison — Differentiate your offering, highlight unique strengths.",
+            }
+            for situation in self._active_situations[:2]:
+                hint = _SITUATION_HINTS.get(situation, situation.replace("_", " ").title())
+                full_prompt += f"\n[SITUATION: {hint}]"
+
+            if mirror_inst:
+                full_prompt += "\n\n" + mirror_inst
         else:
             full_prompt = self.prompt
             if mirror_inst:
                 full_prompt += "\n\n" + mirror_inst
 
-        # Product knowledge sections for direct prompt mode
-        # (persona engine path handles this via compose_prompt Layer 6)
-        if not self._use_persona_engine and self._active_product_sections:
+        # Product knowledge sections (loaded for both persona engine and direct prompt mode)
+        if self._active_product_sections:
             from src.product_intelligence import load_product_sections
             product_content = load_product_sections(self._active_product_sections)
             if product_content:

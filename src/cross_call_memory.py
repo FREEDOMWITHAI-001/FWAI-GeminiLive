@@ -339,10 +339,11 @@ def _format_memory_for_prompt(memory: dict) -> str:
     instruction = "CRITICAL INSTRUCTIONS FOR THIS REPEAT CALLER:\n"
 
     # Short greeting — keep it to ONE sentence so it's interruptible
+    # Use {agent_name} and {company_name} placeholders — filled by render_prompt() from API context
     if objections and "price" in objections:
-        instruction += f"GREETING: \"Hey {name}! Rahul here. I had some thoughts about the pricing since we last spoke.\"\n"
+        instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} here. I had some thoughts about the pricing since we last spoke.\"\n"
     else:
-        instruction += f"GREETING: \"Hey {name}! Rahul from Freedom with AI, good to talk again!\"\n"
+        instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} from {{{{company_name}}}}, good to talk again!\"\n"
 
     # Context referencing comes AFTER greeting, as a natural follow-up
     instruction += "AFTER GREETING: "
