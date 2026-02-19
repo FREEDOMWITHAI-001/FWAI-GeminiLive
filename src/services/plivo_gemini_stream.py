@@ -1455,7 +1455,8 @@ Rules:
                     full_prompt += history_text
                     self._is_reconnecting = False
 
-        voice_name = detect_voice_from_prompt(self.prompt)
+        # Use explicit voice from UI/API if provided, otherwise auto-detect from prompt
+        voice_name = self.context.get("_voice") or detect_voice_from_prompt(self.prompt)
 
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"

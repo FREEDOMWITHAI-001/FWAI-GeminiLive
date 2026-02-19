@@ -874,6 +874,7 @@ class PlivoMakeCallRequest(BaseModel):
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
     webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
+    voice: Optional[str] = None  # Voice name from UI (e.g. "Puck", "Kore") — overrides auto-detection
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
     ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
@@ -918,6 +919,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
+
+        # Pass explicit voice selection from UI (overrides auto-detection from prompt)
+        if request.voice:
+            context["_voice"] = request.voice
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:
@@ -1188,6 +1193,33 @@ async def plivo_hangup(request: Request):
     return JSONResponse(content={"status": "ok"})
 
 
+
+
+@app.post("/calls/{call_uuid}/hangup")
+async def hangup_call_by_uuid(call_uuid: str):
+    """Force-hangup a call by internal UUID. Called by frontend when user manually marks complete."""
+    from src.services.plivo_gemini_stream import remove_session, get_session
+
+    session = await get_session(call_uuid)
+    if session:
+        # Hang up via Plivo API if we have the Plivo UUID
+        plivo_uuid = session.plivo_call_uuid
+        if plivo_uuid:
+            try:
+                await plivo_adapter.terminate_call(plivo_uuid)
+            except Exception as e:
+                logger.warning(f"Plivo terminate failed for {call_uuid}: {e}")
+
+        await remove_session(call_uuid)
+        logger.info(f"Force-hangup call {call_uuid}")
+        return JSONResponse(content={"success": True, "message": f"Call {call_uuid} hung up"})
+
+    # Clean up pending data even if session not found
+    async with _call_data_lock:
+        _pending_call_data.pop(call_uuid, None)
+    clear_conversation(call_uuid)
+
+    return JSONResponse(content={"success": True, "message": f"Call {call_uuid} not found (may have already ended)"})
 
 
 @app.get("/call/history")
