@@ -231,6 +231,7 @@ class PlivoGeminiSession:
         self.ghl_location_id = self.context.pop("ghl_location_id", "")  # GHL location ID
         self.plivo_auth_id = self.context.pop("plivo_auth_id", "")  # Per-org Plivo Auth ID
         self.plivo_auth_token = self.context.pop("plivo_auth_token", "")  # Per-org Plivo Auth Token
+        self._social_proof_enabled = self.context.pop("_social_proof_enabled", False)  # Feature flag
         self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
@@ -425,7 +426,8 @@ class PlivoGeminiSession:
 
     def _get_tool_declarations(self):
         """Build tool declarations dynamically based on session capabilities."""
-        tools = list(TOOL_DECLARATIONS)  # Always include end_call
+        # Only include get_social_proof tool if social proof is enabled
+        tools = [t for t in TOOL_DECLARATIONS if t["name"] != "get_social_proof" or self._social_proof_enabled]
         if self.ghl_api_key and self.ghl_location_id:
             tools.append({
                 "name": "send_whatsapp",

@@ -878,6 +878,9 @@ class PlivoMakeCallRequest(BaseModel):
     voice: Optional[str] = None  # Voice name from UI (e.g. "Puck", "Kore") — overrides auto-detection
     preResearchEnabled: Optional[bool] = False  # Gather intelligence about contact before call
     memoryRecallEnabled: Optional[bool] = False  # Load cross-call memory for returning callers
+    socialProofEnabled: Optional[bool] = False  # Include social proof stats in conversation
+    personaEngineEnabled: Optional[bool] = False  # Enable persona detection and adaptation
+    productIntelligenceEnabled: Optional[bool] = False  # Enable product section targeting
     botNotes: Optional[str] = None  # Previous conversation notes for memory recall
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
@@ -929,6 +932,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if request.voice:
             context["_voice"] = request.voice
             logger.info(f"Voice override set: {request.voice}")
+
+        # Pass feature flags through context so session can use them
+        context["_social_proof_enabled"] = bool(request.socialProofEnabled)
+        logger.info(f"Feature flags: preResearch={request.preResearchEnabled}, memoryRecall={request.memoryRecallEnabled}, socialProof={request.socialProofEnabled}")
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:
@@ -995,11 +1002,15 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         else:
             logger.info("Pre-research DISABLED — skipping intelligence gathering")
 
-        # Step 2.5: Load social proof summary (instant, local DB lookup)
-        from src.social_proof import load_social_proof_summary
-        social_proof_summary = load_social_proof_summary()
-        if social_proof_summary:
-            logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
+        # Step 2.5: Load social proof summary (only if enabled)
+        social_proof_summary = ""
+        if request.socialProofEnabled:
+            from src.social_proof import load_social_proof_summary
+            social_proof_summary = load_social_proof_summary()
+            if social_proof_summary:
+                logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
+        else:
+            logger.info("Social proof DISABLED — skipping")
 
         # Step 3: Preload Gemini session (intelligence + memory + social proof will be in system prompt)
         await preload_session(
