@@ -921,8 +921,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             request.prompt = get_or_cache_prompt(request.prompt)
 
         # Pass explicit voice selection from UI (overrides auto-detection from prompt)
+        logger.info(f"Voice from request: '{request.voice}' (type={type(request.voice).__name__})")
         if request.voice:
             context["_voice"] = request.voice
+            logger.info(f"Voice override set: {request.voice}")
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:
