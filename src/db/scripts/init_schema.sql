@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS calls (
     collected_responses TEXT,
     objections_raised TEXT,
     webhook_url TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TEXT DEFAULT ''
 );
 
 -- contact_memory table
@@ -39,8 +39,8 @@ CREATE TABLE IF NOT EXISTS contact_memory (
     last_call_summary TEXT,
     last_call_outcome TEXT,
     all_call_uuids TEXT DEFAULT '[]',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TEXT DEFAULT '',
+    updated_at TEXT DEFAULT ''
 );
 
 -- social_proof_company
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS social_proof_company (
     enrollments_count INTEGER DEFAULT 0,
     last_enrollment_date TEXT,
     notable_outcomes TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TEXT DEFAULT ''
 );
 
 -- social_proof_city
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS social_proof_city (
     city_name TEXT PRIMARY KEY,
     enrollments_count INTEGER DEFAULT 0,
     trending INTEGER DEFAULT 0,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TEXT DEFAULT ''
 );
 
 -- social_proof_role
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS social_proof_role (
     enrollments_count INTEGER DEFAULT 0,
     avg_salary_increase TEXT,
     success_stories TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TEXT DEFAULT ''
 );
 
 -- Indexes for common queries
