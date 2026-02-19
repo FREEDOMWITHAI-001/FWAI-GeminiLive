@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Server starting on http://{config.host}:{config.port}")
     logger.info(f"Gemini Voice: {config.tts_voice}")
-    logger.info(f"Session DB: {session_db._db_path}")
+    logger.info(f"Session DB: PostgreSQL ({session_db._dsn.split('@')[-1] if session_db._dsn else 'unknown'})")
 
     # Start background cleanup task for stale pending data
     async def _cleanup_stale_data():
