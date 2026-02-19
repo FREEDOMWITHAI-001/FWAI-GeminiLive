@@ -94,13 +94,14 @@ def detect_voice_from_prompt(prompt: str) -> str:
 
 
 def load_conversation_script():
-    """Load FAWI_Call_BOT.txt and convert to system prompt"""
+    """Load FAWI_Call_BOT.txt and convert to system prompt.
+    NOTE: The primary prompt comes from the UI bot config. This is only a fallback."""
     try:
         if os.path.exists(CONVERSATION_SCRIPT_PATH):
             with open(CONVERSATION_SCRIPT_PATH, 'r', encoding='utf-8') as f:
                 script_content = f.read()
 
-            system_prompt = f"""You are Mousumi, a Senior Counselor at Freedom with AI. You help people guide their career path using AI skills and how they can make more money out of it.
+            system_prompt = f"""You are {{agent_name}}, a representative at {{company_name}}.
 
 CONVERSATION SCRIPT:
 {script_content}
@@ -109,20 +110,16 @@ INSTRUCTIONS:
 - Follow the conversation flow from the script above
 - Be warm, friendly, and professional
 - Ask questions naturally and wait for responses
-- Use Indian English accent naturally
-- Guide the conversation through connecting questions, situation questions, problem-aware questions, solution-aware questions, and consequence questions
-- Present the three pillars when appropriate
-- Handle objections professionally
 - Keep responses conversational and natural"""
 
             log(f"✅ Loaded conversation script from {CONVERSATION_SCRIPT_PATH}")
             return system_prompt
         else:
             log(f"⚠️  Conversation script not found: {CONVERSATION_SCRIPT_PATH}")
-            return "You are Mousumi, a Senior Counselor at Freedom with AI. Help people with AI skills and career guidance."
+            return "You are {agent_name} from {company_name}."
     except Exception as e:
         log(f"❌ Error loading conversation script: {e}")
-        return "You are Mousumi, a Senior Counselor at Freedom with AI."
+        return "You are {agent_name} from {company_name}."
 
 
 class WebSocketTransport(FrameProcessor):
@@ -258,7 +255,7 @@ async def create_gemini_live_pipeline(websocket, call_id, caller_name):
     
     # Trigger initial greeting (like in test_gemini_live.py)
     # This ensures the agent speaks immediately when call starts
-    greeting_text = f"Hello there! I'm Mousumi, a Senior Counselor at Freedom with AI. I'm thrilled to connect with you today to discuss how mastering AI skills can significantly elevate your career and income. You've already taken a great first step by attending our AI masterclass with Avinash. Now, let's explore how we can take your career to new heights together. This conversation is more for me to find out more about what you do and what you are doing in your career in terms of AI and see how we can help a little further after the masterclass. Is that fine?"
+    greeting_text = f"Hello! I'm here to connect with you today. How are you doing?"
     
     trigger_msg = {
         "role": "user",

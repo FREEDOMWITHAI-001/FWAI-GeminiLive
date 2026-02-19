@@ -45,18 +45,17 @@ class SendEmailTool(BaseTool):
         try:
             # Create message
             msg = MIMEMultipart()
-            msg['From'] = config.smtp_from_email or "noreply@freedomwithai.com"
+            msg['From'] = config.smtp_from_email or "noreply@example.com"
             msg['To'] = email_address
             msg['Subject'] = subject
             
             # Add body
-            body = f"""{message}
-
---
-Best regards,
-Vishnu
-Senior AI Counselor
-Freedom with AI
+            sender_name = kwargs.get("agent_name", "Your AI Assistant")
+            sender_company = kwargs.get("company_name", "")
+            signature = f"\n--\nBest regards,\n{sender_name}"
+            if sender_company:
+                signature += f"\n{sender_company}"
+            body = f"""{message}{signature}
 """
             msg.attach(MIMEText(body, 'plain'))
             

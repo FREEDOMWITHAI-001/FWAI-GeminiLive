@@ -46,7 +46,7 @@ Here's everything you need to know:
 Have questions? Just reply! 💬
 I'm here to help.
 
-_Sent with ❤️ from Freedom with AI_
+_Sent with ❤️ from {company_name}_
 """
     },
 
@@ -94,7 +94,7 @@ Great choice! Let's get you enrolled. 🚀
 
 Need help? Just reply here! 🙋
 
-_Sent with ❤️ from Freedom with AI_
+_Sent with ❤️ from {company_name}_
 """
     },
 
@@ -146,7 +146,7 @@ Don't worry, we've got you covered! 💪
 Just describe your issue and we'll
 sort it out together! 🙌
 
-_Sent with ❤️ from Freedom with AI_
+_Sent with ❤️ from {company_name}_
 """
     }
 }

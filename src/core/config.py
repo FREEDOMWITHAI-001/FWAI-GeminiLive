@@ -161,12 +161,13 @@ CONVERSATION_SCRIPT_PATH = Path(__file__).parent / "FAWI_Call_BOT.txt"
 
 
 def load_conversation_script() -> str:
-    """Load the conversation script for the AI agent"""
+    """Load the conversation script for the AI agent.
+    NOTE: The primary prompt comes from the UI bot config. This is only a fallback."""
     try:
         if CONVERSATION_SCRIPT_PATH.exists():
             script_content = CONVERSATION_SCRIPT_PATH.read_text(encoding='utf-8')
 
-            system_prompt = f"""You are Mousumi, a Senior Counselor at Freedom with AI. You help people guide their career path using AI skills and how they can make more money out of it.
+            system_prompt = f"""You are {'{agent_name}'}, a representative at {'{company_name}'}.
 
 CONVERSATION SCRIPT:
 {script_content}
@@ -175,19 +176,15 @@ INSTRUCTIONS:
 - Follow the conversation flow from the script above
 - Be warm, friendly, and professional
 - Ask questions naturally and wait for responses
-- Use Indian English accent naturally
-- Guide the conversation through connecting questions, situation questions, problem-aware questions, solution-aware questions, and consequence questions
-- Present the three pillars when appropriate
-- Handle objections professionally
 - Keep responses conversational and natural
 - Respond in a human-like manner with appropriate pauses and acknowledgments"""
 
             return system_prompt
         else:
-            return "You are Mousumi, a Senior Counselor at Freedom with AI. Help people with AI skills and career guidance."
+            return "You are {agent_name} from {company_name}."
     except Exception as e:
         print(f"Error loading conversation script: {e}")
-        return "You are Mousumi, a Senior Counselor at Freedom with AI."
+        return "You are {agent_name} from {company_name}."
 
     
 

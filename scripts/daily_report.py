@@ -153,7 +153,7 @@ def format_report(stats: dict, short: bool = False) -> str:
         # SMS version (shorter, no emojis for better compatibility)
         return f"""FWAI AI Calling Report - {stats['date']}
 Calls: {stats['total_calls']} | Duration: {stats['total_duration_mins']} mins | Avg: {stats['avg_duration_secs']} secs
-- Freedom with AI"""
+- AI Calling Platform"""
 
     # Full version for WhatsApp
     return f"""📈 FWAI Daily AI Calling Report
@@ -166,7 +166,7 @@ Date: {stats['date']}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 Status: Active ✅
 
-— Freedom with AI"""
+— AI Calling Platform"""
 
 
 def send_daily_report(use_sms: bool = True, use_whatsapp: bool = True):
