@@ -1039,8 +1039,8 @@ Rules:
                 self.log.warn(f"Active WS closed: {e.code}")
 
     async def _prewarm_standby_connection(self):
-        """Pre-warm ONLY the WS connection for standby (setup deferred to swap time).
-        This saves ~300ms at swap time while ensuring system_instruction is always current."""
+        """Pre-warm standby: connect + send setup immediately so it's fully ready at swap time.
+        This reduces hot-swap latency from ~150ms to near-zero (no setup round-trip needed)."""
         if self._standby_ws or self._swap_in_progress:
             return
         try:
@@ -1063,9 +1063,18 @@ Rules:
                 ws_kwargs["additional_headers"] = extra_headers
 
             ws = await websockets.connect(url, **ws_kwargs)
-            self._standby_ws = ws
             connect_ms = (time.time() - t0) * 1000
-            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms, setup deferred)")
+            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms), sending setup now...")
+
+            # Send setup immediately with current context so setupComplete arrives before swap
+            self._setup_sent_time = time.time()
+            await self._send_session_setup_on_ws(ws, is_standby=True)
+
+            self._standby_ws = ws
+            # Background receive loop: sets _standby_ready when setupComplete arrives
+            self._standby_task = asyncio.create_task(
+                self._ws_receive_loop(ws, is_standby=True)
+            )
         except Exception as e:
             self.log.error(f"Standby connection failed: {e}")
             self._standby_ws = None
@@ -1082,28 +1091,47 @@ Rules:
         swap_start = time.time()
         ws = self._standby_ws
         try:
-            # Step 1: Send setup with CURRENT conversation summary to standby WS
-            self._setup_sent_time = time.time()
-            try:
-                await self._send_session_setup_on_ws(ws, is_standby=False)
-            except Exception as e:
-                self.log.warn(f"Standby WS dead ({e}), falling back")
-                await self._close_ws_quietly(ws)
-                self._standby_ws = None
-                await self._fallback_session_split()
-                return
-
-            # Step 2: Wait for setupComplete (~90ms)
+            # Step 1+2: Check if standby is already set up (prewarm sent setup in background)
             setup_ok = False
-            try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                resp = json.loads(msg)
-                if "setupComplete" in resp:
+            if self._standby_ready.is_set():
+                # Best case: setup already done during prewarm — skip setup round-trip
+                setup_ok = True
+                prewarm_ms = (time.time() - self._setup_sent_time) * 1000 if self._setup_sent_time else 0
+                self.log.detail(f"Standby pre-warmed ({prewarm_ms:.0f}ms from prewarm), skipping setup")
+                # Cancel the standby receive task (we'll start a fresh active one after swap)
+                if self._standby_task:
+                    self._standby_task.cancel()
+                    self._standby_task = None
+            else:
+                # Standby connected but setup not complete — wait briefly, then inline fallback
+                try:
+                    await asyncio.wait_for(self._standby_ready.wait(), timeout=2.0)
                     setup_ok = True
-                    ready_ms = (time.time() - self._setup_sent_time) * 1000
-                    self.log.detail(f"Standby ready ({ready_ms:.0f}ms)")
-            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
-                self.log.warn(f"Standby setup failed: {e}")
+                    self.log.detail("Standby became ready in time")
+                    if self._standby_task:
+                        self._standby_task.cancel()
+                        self._standby_task = None
+                except asyncio.TimeoutError:
+                    # Not ready via prewarm — send setup inline (current context is fresher anyway)
+                    self.log.warn("Standby not pre-warmed, sending setup inline")
+                    self._setup_sent_time = time.time()
+                    try:
+                        await self._send_session_setup_on_ws(ws, is_standby=False)
+                    except Exception as e:
+                        self.log.warn(f"Standby WS dead ({e}), falling back")
+                        await self._close_ws_quietly(ws)
+                        self._standby_ws = None
+                        await self._fallback_session_split()
+                        return
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                        resp = json.loads(msg)
+                        if "setupComplete" in resp:
+                            setup_ok = True
+                            ready_ms = (time.time() - self._setup_sent_time) * 1000
+                            self.log.detail(f"Standby inline-ready ({ready_ms:.0f}ms)")
+                    except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
+                        self.log.warn(f"Standby inline setup failed: {e}")
 
             if not setup_ok:
                 self.log.warn("Standby setup not ready, falling back")
@@ -1112,7 +1140,7 @@ Rules:
                 await self._fallback_session_split()
                 return
 
-            # Step 3: Send anti-repetition context (silent, turn_complete=False)
+            # Step 3: Send anti-repetition context with CURRENT turn state (silent, turn_complete=False)
             await self._send_context_to_ws(ws)
 
             # Step 4: Atomic swap
@@ -1184,9 +1212,13 @@ Rules:
             return
         self._is_reconnecting = True
         self._turns_since_reconnect = 0
+        self._standby_ready = asyncio.Event()
         self.log.phase(f"SESSION SPLIT (fallback at turn #{self._turn_count})")
         self._save_transcript("SYSTEM", f"Fallback session split at turn #{self._turn_count}")
 
+        if self._standby_task:
+            self._standby_task.cancel()
+            self._standby_task = None
         if self._active_receive_task:
             self._active_receive_task.cancel()
             self._active_receive_task = None
@@ -1250,7 +1282,7 @@ Rules:
         if not self._turn_exchanges:
             return ""
         lines = []
-        exchanges = self._turn_exchanges[-5:]
+        exchanges = self._turn_exchanges[-8:]  # Last 8 turns to prevent AI re-asking early questions
         total = len(exchanges)
         for i, exchange in enumerate(exchanges):
             turn_num = self._turn_count - total + i + 1
@@ -1883,8 +1915,8 @@ Rules:
                         # Track turn exchanges for compact summary
                         if full_agent or full_user:
                             self._turn_exchanges.append({"agent": full_agent, "user": full_user})
-                            if len(self._turn_exchanges) > 5:
-                                self._turn_exchanges = self._turn_exchanges[-5:]
+                            if len(self._turn_exchanges) > 8:
+                                self._turn_exchanges = self._turn_exchanges[-8:]
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
