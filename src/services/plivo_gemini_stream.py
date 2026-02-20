@@ -821,6 +821,8 @@ Rules:
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio directly to plivo_send_queue"""
+        # Small delay so the caller has a moment to finish saying "hello" before AI speaks
+        await asyncio.sleep(0.5)
         count = len(self.preloaded_audio)
         for audio in self.preloaded_audio:
             chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
@@ -2448,6 +2450,31 @@ Rules:
             if not call_summary:
                 call_summary = transcript[:300] if transcript else ""
 
+            # Normalize transcript entries for the UI:
+            # - Filter out SYSTEM / TOOL / TOOL_RESULT lines
+            # - Lowercase role names (agent/user)
+            # - Accumulate consecutive AGENT chunks into a single bubble
+            normalized_entries = []
+            buf_role: str | None = None
+            buf_text: str = ""
+            buf_ts: str = ""
+            for entry in self._full_transcript:
+                role = entry.get("role", "")
+                text = entry.get("text", "").strip()
+                if role in ("SYSTEM", "TOOL", "TOOL_RESULT") or not text:
+                    continue
+                norm_role = "agent" if role == "AGENT" else "user"
+                if norm_role == buf_role:
+                    buf_text += " " + text
+                else:
+                    if buf_text.strip():
+                        normalized_entries.append({"role": buf_role, "text": buf_text.strip(), "timestamp": buf_ts})
+                    buf_role = norm_role
+                    buf_text = text
+                    buf_ts = entry.get("timestamp", "")
+            if buf_text.strip():
+                normalized_entries.append({"role": buf_role, "text": buf_text.strip(), "timestamp": buf_ts})
+
             payload = {
                 "event": "call_ended",
                 "call_uuid": self.call_uuid,
@@ -2458,7 +2485,7 @@ Rules:
                 "timestamp": datetime.now().isoformat(),
                 # Transcript
                 "transcript": transcript,
-                "transcript_entries": self._full_transcript,
+                "transcript_entries": normalized_entries,
                 # Question stats
                 "questions_completed": questions_completed,
                 "total_questions": total_questions,

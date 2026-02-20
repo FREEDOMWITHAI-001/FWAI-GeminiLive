@@ -485,9 +485,17 @@ def _extract_company(user_text: str) -> Optional[str]:
     }
 
     # Strategy 1: Exact substring match
+    # Short keys (≤3 chars) use word-boundary to avoid false positives
+    # e.g. "ey" must NOT match "hey", "they", "money", "key"
     for key, display in known_companies.items():
-        if key in text_lower or key in text_alpha:
-            return display
+        key_clean = key.replace(" ", "")
+        if len(key_clean) <= 3:
+            if re.search(r'\b' + re.escape(key) + r'\b', text_lower) or \
+               re.search(r'\b' + re.escape(key) + r'\b', text_alpha):
+                return display
+        else:
+            if key in text_lower or key in text_alpha:
+                return display
 
     # Strategy 2: Phonetic/spoken variants for abbreviations
     phonetic_variants = {
