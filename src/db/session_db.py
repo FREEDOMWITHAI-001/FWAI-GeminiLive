@@ -166,6 +166,29 @@ class SessionDB:
             self._put_read_conn(conn)
         return [dict(row) for row in rows]
 
+    def finalize_call(self, call_uuid: str, status: str = "completed", ended_at: datetime = None, duration_seconds: float = None):
+        """Finalize a call record with end time, duration, and status (non-blocking)."""
+        fields = {"status": status}
+        if ended_at:
+            fields["ended_at"] = ended_at.isoformat()
+        if duration_seconds is not None:
+            fields["duration_seconds"] = duration_seconds
+        
+        if not fields:
+            return
+        
+        sets = []
+        params = []
+        for key, value in fields.items():
+            sets.append(f"{key} = %s")
+            params.append(value)
+        params.append(call_uuid)
+        
+        self._write_queue.put((
+            f"UPDATE calls SET {', '.join(sets)} WHERE call_uuid = %s",
+            tuple(params)
+        ))
+
     # ==================================================================
     # Cross-Call Memory
     # ==================================================================
