@@ -2344,6 +2344,15 @@ Rules:
                         for t in self._full_transcript
                     ])
 
+                # Step 4.5: Generate AI call summary from transcript
+                ai_summary = ""
+                if transcript.strip():
+                    try:
+                        ai_summary = self._generate_call_summary_sync(transcript)
+                        logger.info(f"[{self.call_uuid[:8]}] AI summary generated ({len(ai_summary)} chars)")
+                    except Exception as e:
+                        logger.warning(f"Summary generation error: {e}")
+
                 # Step 5: Save cross-call memory (per phone number)
                 try:
                     from src.cross_call_memory import extract_and_save_memory
@@ -2380,7 +2389,7 @@ Rules:
                     loop = _asyncio.new_event_loop()
                     _asyncio.set_event_loop(loop)
                     try:
-                        loop.run_until_complete(self._call_webhook(duration, transcript))
+                        loop.run_until_complete(self._call_webhook(duration, transcript, ai_summary))
                     finally:
                         loop.close()
 
@@ -2392,7 +2401,32 @@ Rules:
         processing_thread = threading.Thread(target=process_in_background, daemon=True)
         processing_thread.start()
 
-    async def _call_webhook(self, duration: float, transcript: str = ""):
+    def _generate_call_summary_sync(self, transcript: str) -> str:
+        """Generate a concise AI summary from the call transcript using Gemini."""
+        if not transcript or not transcript.strip():
+            return ""
+        try:
+            from google import genai as _genai
+            client = _genai.Client(api_key=config.google_api_key)
+            contact = self.context.get("customer_name", "the contact")
+            prompt = (
+                f"You are a sales call analyst. Summarize this call transcript in 2-3 sentences.\n"
+                f"Focus on: what the contact said about their situation, interest level, "
+                f"any objections or concerns raised, and the outcome.\n"
+                f"Contact name: {contact}\n\n"
+                f"TRANSCRIPT:\n{transcript[:4000]}\n\n"
+                f"Respond with ONLY the summary text, no headers or labels."
+            )
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            return response.text.strip()
+        except Exception as e:
+            logger.warning(f"Call summary generation failed: {e}")
+            return transcript[:300] if transcript else ""
+
+    async def _call_webhook(self, duration: float, transcript: str = "", call_summary: str = ""):
         """Call webhook URL with call data (transcript + basic info)"""
         try:
             import httpx
@@ -2410,8 +2444,9 @@ Rules:
             else:
                 interest_level = "Low"
 
-            # Basic summary from transcript
-            call_summary = transcript[:200] if transcript else ""
+            # Use AI-generated summary if provided, otherwise fall back to truncated transcript
+            if not call_summary:
+                call_summary = transcript[:300] if transcript else ""
 
             payload = {
                 "event": "call_ended",
