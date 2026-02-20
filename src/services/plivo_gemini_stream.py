@@ -325,7 +325,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns
+        self._session_split_interval = 8  # Split every 8 turns (was 3)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -505,7 +505,7 @@ class PlivoGeminiSession:
             pass
 
     def _save_transcript(self, role, text):
-        """Save transcript to file and in-memory list"""
+        """Save transcript to file, in-memory list, and session DB"""
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Always add to in-memory list (for webhook backup)
@@ -514,6 +514,12 @@ class PlivoGeminiSession:
             "text": text,
             "timestamp": timestamp
         })
+        
+        # Add to session DB in-memory store (zero latency, batch written post-call)
+        try:
+            session_db.add_transcript_entry(self.call_uuid, role, text)
+        except Exception:
+            pass
 
         if not config.enable_transcripts:
             return
@@ -2291,13 +2297,12 @@ Rules:
                         for t in self._full_transcript
                     ])
 
-                # Step 4: Update session DB with final data
-                session_db.update_call(
+                # Step 4: Finalize call - moves all in-memory data to PostgreSQL
+                session_db.finalize_call(
                     self.call_uuid,
                     status="completed",
-                    ended_at=datetime.now().isoformat(),
+                    ended_at=datetime.now(),
                     duration_seconds=round(duration, 1),
-                    transcript=transcript,
                 )
 
                 # Step 5: Save cross-call memory (per phone number)
