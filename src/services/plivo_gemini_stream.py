@@ -944,12 +944,17 @@ Rules:
                     continue
 
                 try:
+                    # Plivo only supports 8kHz or 16kHz — resample 24kHz Gemini output
+                    audio_bytes = base64.b64decode(chunk.audio_b64)
+                    if chunk.sample_rate == 24000:
+                        audio_bytes = self._resample_24k_to_16k(audio_bytes)
+                    payload_b64 = base64.b64encode(audio_bytes).decode()
                     await self.plivo_ws.send_text(json.dumps({
                         "event": "playAudio",
                         "media": {
                             "contentType": "audio/x-l16",
-                            "sampleRate": chunk.sample_rate,
-                            "payload": chunk.audio_b64
+                            "sampleRate": 16000,
+                            "payload": payload_b64
                         }
                     }))
                 except Exception as e:
@@ -2306,11 +2311,21 @@ Rules:
                 # Step 1: Save recording
                 recording_info = self._save_recording()
 
-                # Step 2: Transcribe (Gemini 2.0 Flash or Whisper)
+                # Step 2: Finalize call immediately — do NOT wait for transcription
+                # This ensures /calls/{uuid}/status returns "completed" right away
+                # so the frontend stops polling and the webhook can be sent.
+                session_db.finalize_call(
+                    self.call_uuid,
+                    status="completed",
+                    ended_at=datetime.now(),
+                    duration_seconds=round(duration, 1),
+                )
+
+                # Step 3: Transcribe (Gemini 2.0 Flash or Whisper) — runs after status update
                 if recording_info and config.enable_whisper:
                     self._transcribe_recording_sync(recording_info, self.call_uuid)
 
-                # Step 3: Build transcript text
+                # Step 4: Build transcript text
                 transcript = ""
                 try:
                     transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
@@ -2328,14 +2343,6 @@ Rules:
                         f"[{t['timestamp']}] {t['role']}: {t['text']}"
                         for t in self._full_transcript
                     ])
-
-                # Step 4: Finalize call - moves all in-memory data to PostgreSQL
-                session_db.finalize_call(
-                    self.call_uuid,
-                    status="completed",
-                    ended_at=datetime.now(),
-                    duration_seconds=round(duration, 1),
-                )
 
                 # Step 5: Save cross-call memory (per phone number)
                 try:
