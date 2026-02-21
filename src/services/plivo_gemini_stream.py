@@ -42,7 +42,8 @@ def get_vertex_ai_token():
         return None
 
 # Latency threshold - only log if slower than this (ms)
-LATENCY_THRESHOLD_MS = 500
+# 300ms silence_duration_ms + ~200ms Gemini inference = ~500ms baseline; warn above 800ms
+LATENCY_THRESHOLD_MS = 800
 
 # Recording directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
@@ -628,21 +629,32 @@ class PlivoGeminiSession:
             pass  # Drop frame if queue is full (shouldn't happen)
 
     def _resample_24k_to_16k(self, audio_bytes: bytes) -> bytes:
-        """Resample 24kHz audio to 16kHz (simple linear interpolation)"""
-        # Convert bytes to samples (16-bit signed)
-        samples_24k = struct.unpack(f'<{len(audio_bytes)//2}h', audio_bytes)
-        # Resample 24kHz -> 16kHz (ratio 2:3)
-        samples_16k = []
-        for i in range(0, len(samples_24k) * 2 // 3):
-            idx = i * 3 / 2
-            idx_floor = int(idx)
-            if idx_floor + 1 < len(samples_24k):
-                frac = idx - idx_floor
-                sample = int(samples_24k[idx_floor] * (1 - frac) + samples_24k[idx_floor + 1] * frac)
-            else:
-                sample = samples_24k[idx_floor] if idx_floor < len(samples_24k) else 0
-            samples_16k.append(max(-32768, min(32767, sample)))
-        return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
+        """Resample 24kHz audio to 16kHz using numpy (fast linear interpolation)."""
+        try:
+            import numpy as np
+            samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+            n_in = len(samples_24k)
+            n_out = int(n_in * 2 / 3)
+            if n_out == 0:
+                return b''
+            x_new = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
+            samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
+            return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
+        except ImportError:
+            # Fallback: pure Python
+            samples_24k = struct.unpack(f'<{len(audio_bytes)//2}h', audio_bytes)
+            n_out = len(samples_24k) * 2 // 3
+            samples_16k = []
+            for i in range(n_out):
+                idx = i * 3 / 2
+                idx_floor = int(idx)
+                if idx_floor + 1 < len(samples_24k):
+                    frac = idx - idx_floor
+                    sample = int(samples_24k[idx_floor] * (1 - frac) + samples_24k[idx_floor + 1] * frac)
+                else:
+                    sample = samples_24k[idx_floor] if idx_floor < len(samples_24k) else 0
+                samples_16k.append(max(-32768, min(32767, sample)))
+            return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
 
     def _save_recording(self):
         """Save mixed MP3 file for Gemini transcription (10x smaller than WAV)"""
@@ -1532,7 +1544,7 @@ Rules:
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                         "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
                         "prefix_padding_ms": 20,
-                        "silence_duration_ms": 500,
+                        "silence_duration_ms": 300,
                     }
                 },
                 "input_audio_transcription": {},
