@@ -324,7 +324,7 @@ def _format_memory_for_prompt(memory: dict) -> str:
     if persona or role or company:
         skip_questions.append('"What do you do?" / "Tell me about yourself"')
     if company:
-        skip_questions.append(f'"Where do you work?" — you already know they work at {company}')
+        skip_questions.append(f'"Where do you work?" — they previously mentioned {company}, verify naturally if relevant')
     if objections:
         skip_questions.append("Don't wait for them to raise the same objections — address proactively")
 
@@ -348,11 +348,11 @@ def _format_memory_for_prompt(memory: dict) -> str:
     # Context referencing comes AFTER greeting, as a natural follow-up
     instruction += "AFTER GREETING: "
     if role and company:
-        instruction += f"Reference that they work as a {role} at {company}. "
+        instruction += f"They previously mentioned working as a {role} at {company} — verify naturally (e.g. 'You're still at {company}?') rather than asserting it. "
     elif role:
-        instruction += f"Reference that they're a {role}. "
+        instruction += f"They previously mentioned being a {role} — verify naturally. "
     elif company:
-        instruction += f"Reference that they work at {company}. "
+        instruction += f"They previously mentioned {company} — verify naturally (e.g. 'You're still at {company}?') rather than stating it as fact. "
     instruction += (
         "Then go straight into VALUE — skip discovery questions. "
         "Use PAIN POINTS and VALUE FRAMING from the persona module to build urgency, "
@@ -485,14 +485,24 @@ def _extract_company(user_text: str) -> Optional[str]:
     }
 
     # Strategy 1: Exact substring match
-    # Short keys (≤3 chars) use word-boundary to avoid false positives
-    # e.g. "ey" must NOT match "hey", "they", "money", "key"
+    # Short keys (≤3 chars) use word-boundary AND require nearby work context to
+    # avoid false positives — "ey" / "hcl" / "sbi" appear as fillers in Indian English
+    # e.g. "ey" must NOT match "hey", "they", "money", "okay ey", casual speech
+    _work_ctx = re.compile(
+        r'\b(?:work|job|employ|compan|office|join(?:ed)?|resign|quit|hired|'
+        r'colleague|team|corporate|firm|consultanc|consulting)\w*\b'
+    )
     for key, display in known_companies.items():
         key_clean = key.replace(" ", "")
         if len(key_clean) <= 3:
-            if re.search(r'\b' + re.escape(key) + r'\b', text_lower) or \
-               re.search(r'\b' + re.escape(key) + r'\b', text_alpha):
-                return display
+            key_pattern = r'\b' + re.escape(key) + r'\b'
+            m = re.search(key_pattern, text_lower) or re.search(key_pattern, text_alpha)
+            if m:
+                # Require at least one work-related word within 60 chars of the match
+                start = max(0, m.start() - 60)
+                end = min(len(text_lower), m.end() + 60)
+                if _work_ctx.search(text_lower[start:end]):
+                    return display
         else:
             if key in text_lower or key in text_alpha:
                 return display
