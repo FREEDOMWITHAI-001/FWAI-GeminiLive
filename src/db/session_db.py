@@ -7,6 +7,7 @@ Reads use a connection pool for fast concurrent access.
 import json
 import threading
 import queue
+import time
 from datetime import datetime
 
 import psycopg2
@@ -37,7 +38,26 @@ class SessionDB:
     # ------------------------------------------------------------------
 
     def _get_read_conn(self):
-        return self._pool.getconn()
+        conn = self._pool.getconn()
+        # Validate — discard and recreate if the connection went stale
+        try:
+            conn.cursor().execute("SELECT 1")
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            logger.warning("DB read pool: stale connection detected — replacing")
+            try:
+                self._pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            # Recreate the pool so minconn=1 spawns a fresh connection
+            try:
+                self._pool = psycopg2.pool.SimpleConnectionPool(
+                    minconn=1, maxconn=5, dsn=self._dsn
+                )
+            except Exception as exc:
+                logger.error(f"DB read pool: failed to recreate pool: {exc}")
+                raise
+            conn = self._pool.getconn()
+        return conn
 
     def _put_read_conn(self, conn):
         self._pool.putconn(conn)
@@ -59,29 +79,89 @@ class SessionDB:
             self._put_read_conn(conn)
         logger.info("SessionDB initialized (PostgreSQL)")
 
+    def _connect_writer(self) -> psycopg2.extensions.connection:
+        """Open a fresh writer connection with TCP keepalives enabled."""
+        conn = psycopg2.connect(
+            self._dsn,
+            keepalives=1,
+            keepalives_idle=30,       # send keepalive after 30s idle
+            keepalives_interval=10,   # retry every 10s
+            keepalives_count=5,       # give up after 5 retries
+        )
+        return conn
+
     def _start_writer(self):
-        """Start background writer thread — all writes go through here."""
+        """Start background writer thread with automatic reconnection.
+
+        A single persistent connection is reused for all writes (no per-write
+        overhead).  If the connection is lost (server restart, idle timeout,
+        firewall TCP RST), the thread reconnects and retries the failed item.
+        A periodic keep-alive ping is sent during idle periods so stale
+        connections are detected early.
+        """
         def writer():
-            conn = psycopg2.connect(self._dsn)
+            conn = None
+            item = None  # track the current item so we can re-queue it on error
+
+            def reconnect():
+                nonlocal conn
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+                delay = 1
+                while True:
+                    try:
+                        conn = self._connect_writer()
+                        logger.info("DB writer: (re)connected to PostgreSQL")
+                        return
+                    except Exception as exc:
+                        logger.error(f"DB writer: reconnect failed ({exc}), retrying in {delay}s")
+                        time.sleep(delay)
+                        delay = min(delay * 2, 30)
+
+            reconnect()  # initial connection
+
             while True:
                 try:
-                    item = self._write_queue.get(timeout=2.0)
+                    item = self._write_queue.get(timeout=5.0)
                     if item is None:
-                        break
+                        break  # shutdown signal
                     sql, params = item
                     cur = conn.cursor()
                     cur.execute(sql, params)
                     conn.commit()
                     cur.close()
+                    item = None  # successfully written — clear so we don't re-queue
+
                 except queue.Empty:
-                    continue
-                except Exception as e:
-                    logger.error(f"DB write error: {e}")
+                    # Idle — send a keep-alive ping to detect dead connections early
+                    try:
+                        conn.cursor().execute("SELECT 1")
+                    except Exception:
+                        logger.warning("DB writer: keep-alive failed — reconnecting")
+                        reconnect()
+
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                    logger.error(f"DB write error (connection lost): {exc} — reconnecting")
+                    if item is not None:
+                        # Re-queue the failed item so it's retried after reconnect
+                        self._write_queue.put(item)
+                        item = None
+                    reconnect()
+
+                except Exception as exc:
+                    logger.error(f"DB write error: {exc}")
+                    item = None
                     try:
                         conn.rollback()
                     except Exception:
-                        pass
-            conn.close()
+                        reconnect()
+
+            if conn is not None:
+                conn.close()
 
         self._writer_thread = threading.Thread(target=writer, daemon=True, name="session-db-writer")
         self._writer_thread.start()
