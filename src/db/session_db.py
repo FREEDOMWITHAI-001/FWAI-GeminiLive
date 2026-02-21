@@ -68,15 +68,17 @@ class SessionDB:
         schema_path = Path(__file__).parent / "scripts" / "init_schema.sql"
         schema_sql = schema_path.read_text()
 
-        conn = self._get_read_conn()
+        # Use a dedicated connection so we can freely set autocommit
+        # (pool connections may have an implicit transaction from the keepalive
+        # SELECT 1, which prevents changing session settings mid-transaction)
+        conn = psycopg2.connect(self._dsn)
         try:
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute(schema_sql)
             cur.close()
-            conn.autocommit = False
         finally:
-            self._put_read_conn(conn)
+            conn.close()
         logger.info("SessionDB initialized (PostgreSQL)")
 
     def _connect_writer(self) -> psycopg2.extensions.connection:
