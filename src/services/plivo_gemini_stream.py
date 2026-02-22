@@ -14,6 +14,7 @@ from loguru import logger
 from datetime import datetime
 from pathlib import Path
 import websockets
+import numpy as np
 from src.core.config import config
 from src.tools import execute_tool
 from src.conversational_prompts import render_prompt
@@ -42,7 +43,7 @@ def get_vertex_ai_token():
         return None
 
 # Latency threshold - only log if slower than this (ms)
-# 300ms silence_duration_ms + ~200ms Gemini inference = ~500ms baseline; warn above 800ms
+# 400ms silence_duration_ms + ~200ms Gemini inference = ~600ms baseline; warn above 800ms
 LATENCY_THRESHOLD_MS = 800
 
 # Recording directory
@@ -302,6 +303,11 @@ class PlivoGeminiSession:
         # Conversation history - saved to file in background thread (no latency impact)
         self._conversation_history = []  # In-memory cache for quick access
         self._max_history_size = 10  # Keep only last 10 messages
+
+        # Transcript file writer - background queue (non-blocking, no latency impact)
+        self._transcript_queue = queue.Queue()
+        self._transcript_thread = None
+        self._start_transcript_thread()
         self._is_first_connection = True  # Track if this is first connect or reconnect
         self._conversation_file = RECORDINGS_DIR / f"{call_uuid}_conversation.json"
         self._conversation_queue = queue.Queue()  # Queue for background file writes
@@ -326,7 +332,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 8  # Split every 8 turns (was 3)
+        self._session_split_interval = 4  # Split every 4 turns to keep Gemini audio KV cache small
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -505,8 +511,93 @@ class PlivoGeminiSession:
         except asyncio.CancelledError:
             pass
 
+    async def _run_detection_engines(self, full_user: str, accumulated_text: str, full_agent: str, turn_duration_ms: float):
+        """Run all detection engines in background task (non-blocking to audio path)"""
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Persona detection (one-time, locked after first detection)
+            if self._use_persona_engine:
+                if not self._detected_persona:
+                    from src.persona_engine import detect_persona
+                    detected = await loop.run_in_executor(None, detect_persona, accumulated_text)
+                    if detected:
+                        self._detected_persona = detected
+                        self.log.detail(f"Persona detected: {detected}")
+
+                # Situation detection (re-evaluated every turn)
+                from src.persona_engine import detect_situations, get_situation_hint
+                new_situations_list = await loop.run_in_executor(None, detect_situations, full_user)
+                self._active_situations = new_situations_list
+                if self._active_situations:
+                    self.log.detail(f"Situations active: {self._active_situations}")
+                new_situations = set(self._active_situations) - set(self._previous_situations)
+                if new_situations and self.goog_live_ws:
+                    hint = get_situation_hint(list(new_situations)[0])
+                    if hint:
+                        asyncio.create_task(self._inject_situation_hint(hint))
+                        self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
+                self._previous_situations = list(self._active_situations)
+
+            # Product section detection
+            from src.product_intelligence import detect_product_sections
+            self._active_product_sections = await loop.run_in_executor(
+                None, detect_product_sections, full_user, self._active_situations
+            )
+            if self._active_product_sections != self._previous_product_sections:
+                self.log.detail(f"Product sections: {self._active_product_sections}")
+            self._previous_product_sections = list(self._active_product_sections)
+
+            # Linguistic Mirror
+            if accumulated_text:
+                from src.linguistic_mirror import detect_linguistic_style, style_changed
+                new_style = await loop.run_in_executor(None, detect_linguistic_style, accumulated_text)
+                if new_style and style_changed(self._linguistic_style, new_style):
+                    self._previous_linguistic_style = dict(self._linguistic_style)
+                    self._linguistic_style = new_style
+                    self.log.detail(f"Linguistic style: {new_style}")
+
+            # Micro-Moment Detection
+            if self._micro_moment_detector:
+                response_time_ms = 0
+                if self._agent_turn_complete_time and self._user_response_start_time:
+                    response_time_ms = (self._user_response_start_time - self._agent_turn_complete_time) * 1000
+                mm_hint = await loop.run_in_executor(
+                    None, self._micro_moment_detector.record_turn,
+                    self._turn_count, full_user, full_agent, response_time_ms, turn_duration_ms
+                )
+                if mm_hint and self.goog_live_ws:
+                    asyncio.create_task(self._inject_situation_hint(mm_hint))
+                    self.log.detail(f"Micro-moment: {self._micro_moment_detector.current_strategy}")
+
+        except Exception as e:
+            self.log.warn(f"Detection engine error: {e}")
+
+    def _start_transcript_thread(self):
+        """Start background thread for writing transcript to file (no latency impact)"""
+        transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
+        transcript_dir.mkdir(exist_ok=True)
+        self._transcript_file = transcript_dir / f"{self.call_uuid}.txt"
+
+        def transcript_worker():
+            while True:
+                try:
+                    item = self._transcript_queue.get(timeout=1.0)
+                    if item is None:  # Shutdown signal
+                        break
+                    ts, role, text = item
+                    with open(self._transcript_file, "a") as f:
+                        f.write(f"[{ts}] {role}: {text}\n")
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"Transcript writer error: {e}")
+
+        self._transcript_thread = threading.Thread(target=transcript_worker, daemon=True)
+        self._transcript_thread.start()
+
     def _save_transcript(self, role, text):
-        """Save transcript to file, in-memory list, and session DB"""
+        """Save transcript to in-memory list, session DB, and queue file write (non-blocking)"""
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Always add to in-memory list (for webhook backup)
@@ -515,24 +606,19 @@ class PlivoGeminiSession:
             "text": text,
             "timestamp": timestamp
         })
-        
+
         # Add to session DB in-memory store (zero latency, batch written post-call)
         try:
             session_db.add_transcript_entry(self.call_uuid, role, text)
         except Exception:
             pass
 
-        if not config.enable_transcripts:
-            return
-        try:
-            transcript_dir = Path(__file__).parent.parent.parent / "transcripts"
-            transcript_dir.mkdir(exist_ok=True)
-            transcript_file = transcript_dir / f"{self.call_uuid}.txt"
-            with open(transcript_file, "a") as f:
-                f.write(f"[{timestamp}] {role}: {text}\n")
-            logger.debug(f"TRANSCRIPT [{role}]: {text}")
-        except Exception as e:
-            logger.error(f"Error saving transcript: {e}")
+        # Queue file write to background thread (non-blocking)
+        if config.enable_transcripts:
+            try:
+                self._transcript_queue.put_nowait((timestamp, role, text))
+            except queue.Full:
+                pass
 
     def _start_recording_thread(self):
         """Start background thread for recording audio"""
@@ -572,34 +658,25 @@ class PlivoGeminiSession:
         logger.debug("Conversation logger thread started")
 
     def _save_conversation_to_file(self, message: dict):
-        """Save conversation message to file (called from background thread)"""
+        """Append conversation message as JSONL line (called from background thread)"""
         try:
-            # Read existing
-            if self._conversation_file.exists():
-                with open(self._conversation_file, 'r') as f:
-                    history = json.load(f)
-            else:
-                history = []
-
-            # Append new message
-            history.append(message)
-
-            # Keep only last N messages
-            if len(history) > self._max_history_size:
-                history = history[-self._max_history_size:]
-
-            # Write back
-            with open(self._conversation_file, 'w') as f:
-                json.dump(history, f)
+            with open(self._conversation_file, 'a') as f:
+                f.write(json.dumps(message) + "\n")
         except Exception as e:
             logger.error(f"Error saving conversation to file: {e}")
 
     def _load_conversation_from_file(self) -> list:
-        """Load conversation history from file for reconnection"""
+        """Load conversation history from JSONL file for reconnection"""
         try:
             if self._conversation_file.exists():
+                history = []
                 with open(self._conversation_file, 'r') as f:
-                    return json.load(f)
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            history.append(json.loads(line))
+                # Return only last N messages
+                return history[-self._max_history_size:]
         except Exception as e:
             logger.error(f"Error loading conversation from file: {e}")
         return []
@@ -630,31 +707,14 @@ class PlivoGeminiSession:
 
     def _resample_24k_to_16k(self, audio_bytes: bytes) -> bytes:
         """Resample 24kHz audio to 16kHz using numpy (fast linear interpolation)."""
-        try:
-            import numpy as np
-            samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-            n_in = len(samples_24k)
-            n_out = int(n_in * 2 / 3)
-            if n_out == 0:
-                return b''
-            x_new = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
-            samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
-            return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
-        except ImportError:
-            # Fallback: pure Python
-            samples_24k = struct.unpack(f'<{len(audio_bytes)//2}h', audio_bytes)
-            n_out = len(samples_24k) * 2 // 3
-            samples_16k = []
-            for i in range(n_out):
-                idx = i * 3 / 2
-                idx_floor = int(idx)
-                if idx_floor + 1 < len(samples_24k):
-                    frac = idx - idx_floor
-                    sample = int(samples_24k[idx_floor] * (1 - frac) + samples_24k[idx_floor + 1] * frac)
-                else:
-                    sample = samples_24k[idx_floor] if idx_floor < len(samples_24k) else 0
-                samples_16k.append(max(-32768, min(32767, sample)))
-            return struct.pack(f'<{len(samples_16k)}h', *samples_16k)
+        samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        n_in = len(samples_24k)
+        n_out = int(n_in * 2 / 3)
+        if n_out == 0:
+            return b''
+        x_new = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
+        samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
+        return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
 
     def _save_recording(self):
         """Save mixed MP3 file for Gemini transcription (10x smaller than WAV)"""
@@ -1544,7 +1604,7 @@ Rules:
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                         "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
                         "prefix_padding_ms": 20,
-                        "silence_duration_ms": 300,
+                        "silence_duration_ms": 400,
                     }
                 },
                 "input_audio_transcription": {},
@@ -1941,63 +2001,11 @@ Rules:
                         if full_user:
                             self._accumulated_user_text += " " + full_user
 
-                        # Dynamic Persona Engine: detect persona + situations
-                        if self._use_persona_engine and full_user:
-                            # Persona detection (one-time, locked after first detection)
-                            if not self._detected_persona:
-                                from src.persona_engine import detect_persona
-                                detected = detect_persona(self._accumulated_user_text)
-                                if detected:
-                                    self._detected_persona = detected
-                                    self.log.detail(f"Persona detected: {detected}")
-                            # Situation detection (re-evaluated every turn)
-                            from src.persona_engine import detect_situations, get_situation_hint
-                            self._active_situations = detect_situations(full_user)
-                            if self._active_situations:
-                                self.log.detail(f"Situations active: {self._active_situations}")
-                            # Inject hint for NEW situations via client_content
-                            new_situations = set(self._active_situations) - set(self._previous_situations)
-                            if new_situations and self.goog_live_ws:
-                                hint = get_situation_hint(list(new_situations)[0])
-                                if hint:
-                                    asyncio.create_task(self._inject_situation_hint(hint))
-                                    self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
-                            self._previous_situations = list(self._active_situations)
-
-                        # Product section detection — runs for ALL calls, not just persona engine
+                        # Run detection engines in background (non-blocking)
                         if full_user:
-                            from src.product_intelligence import detect_product_sections
-                            self._active_product_sections = detect_product_sections(
-                                full_user, self._active_situations
-                            )
-                            if self._active_product_sections != self._previous_product_sections:
-                                self.log.detail(f"Product sections: {self._active_product_sections}")
-                            self._previous_product_sections = list(self._active_product_sections)
-
-                        # Linguistic Mirror: detect style from accumulated text
-                        if self._accumulated_user_text:
-                            from src.linguistic_mirror import detect_linguistic_style, style_changed
-                            new_style = detect_linguistic_style(self._accumulated_user_text)
-                            if new_style and style_changed(self._linguistic_style, new_style):
-                                self._previous_linguistic_style = dict(self._linguistic_style)
-                                self._linguistic_style = new_style
-                                self.log.detail(f"Linguistic style: {new_style}")
-
-                        # Micro-Moment Detection (behavioral, every turn)
-                        if self._micro_moment_detector and full_user:
-                            response_time_ms = 0
-                            if self._agent_turn_complete_time and self._user_response_start_time:
-                                response_time_ms = (self._user_response_start_time - self._agent_turn_complete_time) * 1000
-                            mm_hint = self._micro_moment_detector.record_turn(
-                                turn_number=self._turn_count,
-                                full_user=full_user,
-                                full_agent=full_agent,
-                                response_time_ms=response_time_ms,
-                                turn_duration_ms=turn_duration_ms,
-                            )
-                            if mm_hint and self.goog_live_ws:
-                                asyncio.create_task(self._inject_situation_hint(mm_hint))
-                                self.log.detail(f"Micro-moment: {self._micro_moment_detector.current_strategy}")
+                            asyncio.create_task(self._run_detection_engines(
+                                full_user, self._accumulated_user_text, full_agent, turn_duration_ms
+                            ))
 
                         # Update timing markers for next turn's response time measurement
                         self._agent_turn_complete_time = time.time()
@@ -2310,6 +2318,12 @@ Rules:
         if self._recording_thread:
             self._recording_thread.join(timeout=2.0)
 
+        # Stop transcript writer thread
+        if self._transcript_queue:
+            self._transcript_queue.put(None)  # Shutdown signal
+        if self._transcript_thread:
+            self._transcript_thread.join(timeout=2.0)
+
         # Stop conversation logger thread
         if self._conversation_queue:
             self._conversation_queue.put(None)  # Shutdown signal
@@ -2397,6 +2411,23 @@ Rules:
                     )
                 except Exception as e:
                     logger.error(f"Cross-call memory save error: {e}")
+
+                # Step 5.5: Update DB with transcript, summary, and detected data
+                try:
+                    update_fields = {}
+                    if transcript.strip():
+                        update_fields["transcript"] = transcript
+                    if ai_summary:
+                        update_fields["call_summary"] = ai_summary
+                    if self._active_product_sections:
+                        update_fields["collected_responses"] = json.dumps({
+                            "product_sections": list(set(self._active_product_sections)),
+                            "situations": list(set(self._previous_situations + self._active_situations)),
+                        })
+                    if update_fields:
+                        session_db.update_call(self.call_uuid, **update_fields)
+                except Exception as e:
+                    logger.error(f"Post-call DB update error: {e}")
 
                 # Step 6: Call webhook AFTER everything is saved
                 if self.webhook_url:
@@ -2519,7 +2550,7 @@ Rules:
                 },
                 "recording_url": f"/calls/{self.call_uuid}/recording",
                 "triggered_persona": self._detected_persona,
-                "triggered_situations": [s["name"] for s in self._active_situations] if self._active_situations else [],
+                "triggered_situations": list(self._active_situations or []),
                 "triggered_product_sections": list(set(self._active_product_sections or [])),
                 "social_proof_used": bool(self._social_proof_summary),
                 "micro_moments": {
