@@ -1262,15 +1262,22 @@ Rules:
         last_user = self._last_user_text[:200] if self._last_user_text else ""
         agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
 
+        # Build forbidden questions list from history
+        forbidden = ""
+        for ex in self._turn_exchanges:
+            if ex.get("agent") and "?" in ex["agent"]:
+                forbidden += f'  - "{ex["agent"][:150]}"\n'
+
         if agent_ref and last_user:
             trigger = (
-                f'[REMINDER: Your MOST RECENT question was: "{agent_ref}". '
+                f'[CRITICAL: Your last question was: "{agent_ref}". '
                 f'The customer replied: "{last_user}". '
-                f'DO NOT repeat this question. DO NOT speak until the customer speaks. '
-                f'When they speak, respond naturally and move to the NEXT topic.]'
+                f'ALL FORBIDDEN questions (already asked):\n{forbidden}'
+                f'You MUST NOT repeat any of these. Respond to what they said and move to the NEXT new topic. '
+                f'DO NOT speak until the customer speaks.]'
             )
         elif agent_ref:
-            trigger = f'[REMINDER: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.]'
+            trigger = f'[CRITICAL: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.]'
         else:
             trigger = "[Continue the conversation. Wait for the customer to speak.]"
 
@@ -1357,22 +1364,23 @@ Rules:
 
     def _build_compact_summary(self) -> str:
         """Build conversation summary for session split context.
-        Includes turn numbers for clarity and marks the last exchange explicitly."""
+        Includes turn numbers and clearly marks all covered topics as DONE."""
         if not self._turn_exchanges:
             return ""
         lines = []
-        exchanges = self._turn_exchanges[-8:]  # Last 8 turns to prevent AI re-asking early questions
+        exchanges = self._turn_exchanges[-8:]  # Last 8 turns
         total = len(exchanges)
         for i, exchange in enumerate(exchanges):
             turn_num = self._turn_count - total + i + 1
             is_last = (i == total - 1)
-            prefix = f"Turn {turn_num}"
+            prefix = f"Turn {turn_num} [DONE]"
             if is_last:
-                prefix += " (MOST RECENT — do NOT repeat)"
+                prefix = f"Turn {turn_num} [MOST RECENT — DONE, move FORWARD]"
             if exchange.get("agent"):
                 lines.append(f"{prefix} — You asked: {exchange['agent'][:300]}")
             if exchange.get("user"):
-                lines.append(f"{prefix} — Customer replied: {exchange['user'][:300]}")
+                lines.append(f"  Customer replied: {exchange['user'][:300]}")
+        lines.append("\nALL topics above are DONE. Your NEXT response must advance to a NEW topic.")
         return "\n".join(lines)
 
     async def _run_google_live_session(self):
@@ -1554,13 +1562,20 @@ Rules:
                 agent_ref = self._last_agent_question or self._last_agent_text
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
-                    full_prompt += f'\n\n[CRITICAL — YOUR LAST QUESTION was: "{agent_ref[:300]}"'
+                    full_prompt += f'\n\n[CRITICAL ANTI-REPETITION — YOUR LAST QUESTION was: "{agent_ref[:300]}"'
                     full_prompt += f' Customer responded: "{last_user[:200]}".'
                     full_prompt += (
-                        ' DO NOT repeat, rephrase, or re-ask this question or any question the customer already answered above.'
-                        ' The customer has already told you their situation — acknowledge what they said and move FORWARD in the flow.'
-                        ' If they mentioned their job/studies, do NOT ask "what do you do" again.'
-                        ' If they raised a concern, address it directly.]'
+                        '\n\nQUESTIONS ALREADY ASKED AND ANSWERED (FORBIDDEN to repeat in any form):\n'
+                    )
+                    # List ALL questions from turn history so Gemini knows what's been covered
+                    for ex in self._turn_exchanges:
+                        if ex.get("agent") and "?" in ex["agent"]:
+                            full_prompt += f'  - "{ex["agent"][:200]}"\n'
+                    full_prompt += (
+                        '\nYou MUST pick up EXACTLY where the conversation left off.'
+                        ' Respond to what the customer just said, then advance to the NEXT NEW topic.'
+                        ' If you repeat ANY of the above questions (even rephrased), the call will fail.'
+                        ' NEVER re-ask about their job, challenges, or anything already discussed above.]'
                     )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
