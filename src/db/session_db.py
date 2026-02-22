@@ -63,7 +63,7 @@ class SessionDB:
         self._pool.putconn(conn)
 
     def _init_db(self):
-        """Create tables if they don't exist (idempotent)."""
+        """Create tables if they don't exist, then apply schema fixes (idempotent)."""
         from pathlib import Path
         schema_path = Path(__file__).parent / "scripts" / "init_schema.sql"
         schema_sql = schema_path.read_text()
@@ -76,6 +76,13 @@ class SessionDB:
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute(schema_sql)
+
+            # Apply schema fixes (adds missing columns to existing tables)
+            fix_path = Path(__file__).parent / "scripts" / "fix_schema.sql"
+            if fix_path.exists():
+                cur.execute(fix_path.read_text())
+                logger.info("Schema fixes applied")
+
             cur.close()
         finally:
             conn.close()
@@ -506,12 +513,19 @@ class SessionDB:
     # ==================================================================
 
     def cleanup_stale(self, max_age_minutes: int = 10):
-        """Clean up stale pending calls older than max_age_minutes."""
+        """Clean up stale pending calls and mark stuck active calls as completed."""
         cutoff = datetime.now().timestamp() - (max_age_minutes * 60)
         cutoff_iso = datetime.fromtimestamp(cutoff).isoformat()
         self._write_queue.put((
             "DELETE FROM calls WHERE status = 'pending' AND created_at < %s",
             (cutoff_iso,)
+        ))
+        # Mark stale active calls as completed (max call ~8min, 15min = definitely stale)
+        cutoff_15min = datetime.now().timestamp() - (15 * 60)
+        cutoff_15min_iso = datetime.fromtimestamp(cutoff_15min).isoformat()
+        self._write_queue.put((
+            "UPDATE calls SET status = 'completed' WHERE status = 'active' AND created_at < %s",
+            (cutoff_15min_iso,)
         ))
 
     def shutdown(self):

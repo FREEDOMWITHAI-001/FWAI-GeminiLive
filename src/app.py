@@ -824,6 +824,8 @@ async def get_call_status(call_id: str):
     # Map persona to triggered_persona for frontend compatibility
     if call.get("persona") and not call.get("triggered_persona"):
         call["triggered_persona"] = call["persona"]
+    # Unpack collected_responses into top-level fields for frontend
+    _unpack_collected_responses(call)
     return call
 
 
@@ -988,6 +990,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
                 # Pre-load linguistic style for Linguistic Mirror
                 if memory_data.get("linguistic_style"):
                     context["_memory_linguistic_style"] = memory_data["linguistic_style"]
+                # Feed memory company/role into context for pre-research
+                memory_raw = session_db.get_contact_memory(request.phoneNumber.replace(" ", "+"))
+                if memory_raw:
+                    if memory_raw.get("company") and not context.get("company_name"):
+                        context["company_name"] = memory_raw["company"]
+                    if memory_raw.get("role") and not context.get("role"):
+                        context["role"] = memory_raw["role"]
                 logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
             # Also inject bot notes from UI if available
             if request.botNotes:
@@ -1301,6 +1310,14 @@ async def hangup_call_by_uuid(call_uuid: str):
     return JSONResponse(content={"success": True, "message": f"Call {call_uuid} not found (may have already ended)"})
 
 
+def _unpack_collected_responses(call: dict):
+    """Unpack collected_responses JSON into top-level fields for frontend compatibility."""
+    cr = call.get("collected_responses")
+    if cr and isinstance(cr, dict):
+        call.setdefault("triggered_product_sections", cr.get("product_sections", []))
+        call.setdefault("triggered_situations", cr.get("situations", []))
+
+
 @app.get("/call/history")
 async def get_call_history(limit: int = Query(default=50, le=200)):
     """Get call history with statistics from session DB"""
@@ -1316,6 +1333,8 @@ async def get_call_details(call_id: str):
         # Map persona to triggered_persona for frontend compatibility
         if call.get("persona") and not call.get("triggered_persona"):
             call["triggered_persona"] = call["persona"]
+        # Unpack collected_responses into top-level fields for frontend
+        _unpack_collected_responses(call)
         return JSONResponse(content=call)
     raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
 

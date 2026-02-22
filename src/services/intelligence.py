@@ -40,9 +40,15 @@ async def gather_intelligence(contact_name: str, context: dict, timeout: float =
         logger.debug("No company/industry in context - skipping pre-call intelligence")
         return ""
 
-    # Short, focused query — faster response from Gemini Flash
-    subject = company or industry
-    query = f"{subject} latest news 2024 2025. 3 bullet points, one sentence each."
+    # Build a richer query from available context
+    parts = []
+    if company:
+        parts.append(f"{company} company overview, employee count, recent news 2025 2026")
+    elif industry:
+        parts.append(f"{industry} industry trends 2025 2026")
+    if role:
+        parts.append(f"key challenges for {role} in {industry or 'their industry'}")
+    query = ". ".join(parts) + ". 4 bullet points, one sentence each, focus on facts."
 
     try:
         start = time.time()
