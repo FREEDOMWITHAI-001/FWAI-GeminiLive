@@ -821,6 +821,9 @@ async def get_call_status(call_id: str):
     call = session_db.get_call(call_id)
     if not call:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
+    # Map persona to triggered_persona for frontend compatibility
+    if call.get("persona") and not call.get("triggered_persona"):
+        call["triggered_persona"] = call["persona"]
     return call
 
 
@@ -1310,6 +1313,9 @@ async def get_call_details(call_id: str):
     """Get full call details including responses and statistics"""
     call = session_db.get_call(call_id)
     if call:
+        # Map persona to triggered_persona for frontend compatibility
+        if call.get("persona") and not call.get("triggered_persona"):
+            call["triggered_persona"] = call["persona"]
         return JSONResponse(content=call)
     raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
 
