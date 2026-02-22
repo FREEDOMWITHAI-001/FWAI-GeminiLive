@@ -36,6 +36,10 @@ ALTER TABLE calls
 ALTER TABLE calls 
     ADD COLUMN IF NOT EXISTS recording_url TEXT;
 
+-- Add persona column for detected persona per call
+ALTER TABLE calls 
+    ADD COLUMN IF NOT EXISTS persona TEXT;
+
 -- Update indexes
 DROP INDEX IF EXISTS idx_contact_memory_updated;
 CREATE INDEX IF NOT EXISTS idx_contact_memory_updated ON contact_memory(updated_at DESC);

@@ -239,7 +239,7 @@ class SessionDB:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute(
                 "SELECT call_uuid, phone, contact_name, client_name, status, duration_seconds, "
-                "questions_completed, total_questions, interest_level, call_summary, created_at "
+                "questions_completed, total_questions, interest_level, call_summary, persona, created_at "
                 "FROM calls ORDER BY created_at DESC LIMIT %s", (limit,)
             )
             rows = cur.fetchall()
@@ -248,13 +248,15 @@ class SessionDB:
             self._put_read_conn(conn)
         return [dict(row) for row in rows]
 
-    def finalize_call(self, call_uuid: str, status: str = "completed", ended_at: datetime = None, duration_seconds: float = None):
-        """Finalize a call record with end time, duration, and status (non-blocking)."""
+    def finalize_call(self, call_uuid: str, status: str = "completed", ended_at: datetime = None, duration_seconds: float = None, persona: str = None):
+        """Finalize a call record with end time, duration, status, and persona (non-blocking)."""
         fields = {"status": status}
         if ended_at:
             fields["ended_at"] = ended_at.isoformat()
         if duration_seconds is not None:
             fields["duration_seconds"] = duration_seconds
+        if persona is not None:
+            fields["persona"] = persona
         
         if not fields:
             return

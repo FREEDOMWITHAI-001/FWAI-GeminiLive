@@ -2333,6 +2333,7 @@ Rules:
                     status="completed",
                     ended_at=datetime.now(),
                     duration_seconds=round(duration, 1),
+                    persona=self._detected_persona,
                 )
 
                 # Step 3: Transcribe (Gemini 2.0 Flash or Whisper) — runs after status update

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS calls (
     collected_responses TEXT,
     objections_raised TEXT,
     webhook_url TEXT,
+    persona TEXT,
     created_at TEXT DEFAULT ''
 );
 
