@@ -942,6 +942,9 @@ class PlivoMakeCallRequest(BaseModel):
     contactName: Optional[str] = "Customer"
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
+    questions: Optional[list] = None  # Bot config questions (from UI) — reserved for future use
+    objections: Optional[dict] = None  # Bot config objections (from UI) — reserved for future use
+    objectionKeywords: Optional[dict] = None  # Objection keyword mappings (from UI)
     webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
     callEndWebhookUrl: Optional[str] = None  # Alias used by Wavelength UI
     n8nWebhookUrl: Optional[str] = None  # n8n transcript webhook URL
@@ -951,6 +954,8 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
+    clientName: Optional[str] = None  # Client identifier (from UI)
+    orgId: Optional[str] = None  # Organization ID (from UI)
     voice: Optional[str] = None  # Voice override: "Puck", "Kore", etc. (None = auto-detect from prompt)
 
 
@@ -989,8 +994,8 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
             if default_prompt_file.exists():
                 request.prompt = default_prompt_file.read_text(encoding="utf-8")
-                context["_persona_engine"] = True
-                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars) + persona engine ON")
+                # context["_persona_engine"] = True  # DISABLED — enable when per-org persona is ready
+                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars)")
 
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
@@ -1036,28 +1041,26 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
 
-        # Step 1: Load cross-call memory (instant, local DB lookup)
-        memory_data = load_memory_context(request.phoneNumber)
-        if memory_data:
-            context["_memory_context"] = memory_data.get("prompt", "")
-            # If memory has a persona, pre-set it so AI skips discovery
-            if memory_data.get("persona"):
-                context["_memory_persona"] = memory_data["persona"]
-            # Pre-load linguistic style for Linguistic Mirror
-            if memory_data.get("linguistic_style"):
-                context["_memory_linguistic_style"] = memory_data["linguistic_style"]
-            logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+        # Step 1: Cross-call memory + persona (DISABLED — enable when per-org memory is ready)
+        # memory_data = load_memory_context(request.phoneNumber, context=context)
+        # if memory_data:
+        #     context["_memory_context"] = memory_data.get("prompt", "")
+        #     if memory_data.get("persona"):
+        #         context["_memory_persona"] = memory_data["persona"]
+        #     if memory_data.get("linguistic_style"):
+        #         context["_memory_linguistic_style"] = memory_data["linguistic_style"]
+        #     logger.info(f"Cross-call memory loaded for {request.phoneNumber}")
+        logger.info(f"Cross-call memory + persona DISABLED for {call_uuid}")
 
         # Step 2: Gather intelligence (runs before preload so it's in the system prompt)
         intelligence_brief = await gather_intelligence(request.contactName, context)
         if intelligence_brief:
             logger.info(f"Intelligence ready for {call_uuid} ({len(intelligence_brief)} chars)")
 
-        # Step 2.5: Load social proof summary (instant, local DB lookup)
-        from src.social_proof import load_social_proof_summary
-        social_proof_summary = load_social_proof_summary()
-        if social_proof_summary:
-            logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
+        # Step 2.5: Social proof (DISABLED — enrollment data is FWAI-specific)
+        # from src.social_proof import load_social_proof_summary
+        # social_proof_summary = load_social_proof_summary()
+        social_proof_summary = ""
 
         # Step 3: Preload Gemini session (intelligence + memory + social proof will be in system prompt)
         await preload_session(

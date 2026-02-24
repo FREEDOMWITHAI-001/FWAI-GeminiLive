@@ -227,10 +227,11 @@ def save_from_tool_call(
 # Pre-Call: Load & Format Memory for Prompt Injection
 # =============================================================================
 
-def load_memory_context(phone: str) -> dict:
+def load_memory_context(phone: str, context: dict = None) -> dict:
     """
     Load contact memory and return a dict with prompt text + metadata.
     Returns {"prompt": str, "persona": str|None} or empty dict if no memory.
+    context is passed through so greetings use the correct agent/company name.
     """
     if not phone:
         return {}
@@ -252,14 +253,17 @@ def load_memory_context(phone: str) -> dict:
             style = {}
 
     return {
-        "prompt": _format_memory_for_prompt(memory),
+        "prompt": _format_memory_for_prompt(memory, context or {}),
         "persona": memory.get("persona"),
         "linguistic_style": style,
     }
 
 
-def _format_memory_for_prompt(memory: dict) -> str:
+def _format_memory_for_prompt(memory: dict, context: dict = None) -> str:
     """Build a natural-language context string from stored memory."""
+    context = context or {}
+    agent_name = context.get("agent_name", "")
+    company_name = context.get("company_name", "")
     parts = []
     name = memory.get("name") or "this customer"
     call_count = memory.get("call_count", 0)
@@ -339,10 +343,12 @@ def _format_memory_for_prompt(memory: dict) -> str:
     instruction = "CRITICAL INSTRUCTIONS FOR THIS REPEAT CALLER:\n"
 
     # Short greeting — keep it to ONE sentence so it's interruptible
+    greeting_intro = f"{agent_name} here" if agent_name else "calling back"
+    greeting_from = f" from {company_name}" if company_name else ""
     if objections and "price" in objections:
-        instruction += f"GREETING: \"Hey {name}! Rahul here. I had some thoughts about the pricing since we last spoke.\"\n"
+        instruction += f"GREETING: \"Hey {name}! {greeting_intro}. I had some thoughts about the pricing since we last spoke.\"\n"
     else:
-        instruction += f"GREETING: \"Hey {name}! Rahul from Freedom with AI, good to talk again!\"\n"
+        instruction += f"GREETING: \"Hey {name}! {greeting_intro}{greeting_from}, good to talk again!\"\n"
 
     # Context referencing comes AFTER greeting, as a natural follow-up
     instruction += "AFTER GREETING: "
@@ -470,7 +476,7 @@ def _extract_company(user_text: str) -> Optional[str]:
         "cognizant": "Cognizant", "accenture": "Accenture", "hcl": "HCL",
         "tech mahindra": "Tech Mahindra", "techm": "Tech Mahindra",
         "capgemini": "Capgemini", "deloitte": "Deloitte", "kpmg": "KPMG",
-        "ey": "EY", "pwc": "PwC", "ibm": "IBM", "google": "Google",
+        "pwc": "PwC", "ibm": "IBM", "google": "Google",
         "microsoft": "Microsoft", "amazon": "Amazon", "flipkart": "Flipkart",
         "swiggy": "Swiggy", "zomato": "Zomato", "paytm": "Paytm",
         "razorpay": "Razorpay", "byju": "Byju's", "unacademy": "Unacademy",

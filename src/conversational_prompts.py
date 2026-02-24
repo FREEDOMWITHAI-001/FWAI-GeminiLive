@@ -2,16 +2,17 @@
 # Uses {{variable}} placeholders filled from API context
 
 # Default context values (used if not provided in API call)
+# These are generic fallbacks — org-specific values come from the UI's bot config context
 DEFAULT_CONTEXT = {
-    "agent_name": "Rahul Kumar",
-    "company_name": "Freedom with AI",
-    "location": "Hyderabad",
+    "agent_name": "Agent",
+    "company_name": "",
+    "location": "",
     "customer_name": "there",
-    "event_name": "AI Masterclass",
-    "event_host": "Avinash Mada",
-    "product_name": "Gold Membership",
-    "product_description": "500+ AI tools, prompt engineering, Python & LangChain, mentorship, AI Expert Certification",
-    "price": "40,000 rupees",
+    "event_name": "",
+    "event_host": "",
+    "product_name": "",
+    "product_description": "",
+    "price": "",
     "intelligence_brief": "",
 }
 
