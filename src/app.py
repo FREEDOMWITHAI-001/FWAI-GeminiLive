@@ -943,6 +943,8 @@ class PlivoMakeCallRequest(BaseModel):
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
     webhookUrl: Optional[str] = None  # URL to call when call ends (for n8n integration)
+    callEndWebhookUrl: Optional[str] = None  # Alias used by Wavelength UI
+    n8nWebhookUrl: Optional[str] = None  # n8n transcript webhook URL
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
     ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
@@ -967,6 +969,11 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
     6. AI speaks immediately (already preloaded)
     """
     logger.info(f"Plivo make call request: {request.phoneNumber}")
+
+    # Resolve webhook URL: callEndWebhookUrl (from Wavelength UI) takes priority over webhookUrl
+    effective_webhook_url = request.callEndWebhookUrl or request.webhookUrl
+    if effective_webhook_url:
+        logger.info(f"Webhook URL resolved: {effective_webhook_url[:80]}...")
 
     try:
         import uuid
@@ -1013,13 +1020,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
                 "phone": request.phoneNumber,
                 "prompt": request.prompt,
                 "context": context,
-                "webhookUrl": request.webhookUrl
+                "webhookUrl": effective_webhook_url
             }
 
         # Record call in DB (non-blocking)
         session_db.create_call(
             call_uuid=call_uuid, phone=request.phoneNumber,
-            contact_name=request.contactName, webhook_url=request.webhookUrl
+            contact_name=request.contactName, webhook_url=effective_webhook_url
         )
 
         # Gather intelligence + cross-call memory FIRST, then preload
@@ -1058,7 +1065,7 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             request.phoneNumber,
             prompt=request.prompt,
             context=context,
-            webhook_url=request.webhookUrl,
+            webhook_url=effective_webhook_url,
             intelligence_brief=intelligence_brief,
             social_proof_summary=social_proof_summary,
         )
