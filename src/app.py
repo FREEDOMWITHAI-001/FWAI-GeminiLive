@@ -5,6 +5,7 @@ Python-based implementation using aiortc for full audio access
 """
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 from pathlib import Path
@@ -824,6 +825,74 @@ async def get_call_status(call_id: str):
     return call
 
 
+@app.post("/calls/{call_id}/hangup")
+async def hangup_call(call_id: str):
+    """Hang up an active call by internal call_uuid.
+
+    Looks up the session and triggers Plivo hangup via the session's
+    _hangup_call_delayed method. Best-effort: returns success even if
+    the session is already ending.
+    """
+    from src.services.plivo_gemini_stream import _sessions, _preloading_sessions
+
+    session = _sessions.get(call_id) or _preloading_sessions.get(call_id)
+    if not session:
+        # Session may have already ended — check _internal_to_plivo_uuid for Plivo hangup
+        async with _call_data_lock:
+            plivo_uuid = _internal_to_plivo_uuid.get(call_id)
+
+        if plivo_uuid:
+            # Try direct Plivo API hangup
+            try:
+                import httpx, base64
+                auth_id = os.environ.get("PLIVO_AUTH_ID", "")
+                auth_token = os.environ.get("PLIVO_AUTH_TOKEN", "")
+                if auth_id and auth_token:
+                    auth_b64 = base64.b64encode(f"{auth_id}:{auth_token}".encode()).decode()
+                    url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{plivo_uuid}/"
+                    async with httpx.AsyncClient() as client:
+                        await client.delete(url, headers={"Authorization": f"Basic {auth_b64}"})
+                    return {"success": True, "message": f"Hangup sent for {call_id} via Plivo"}
+            except Exception as e:
+                logger.error(f"Direct Plivo hangup failed: {e}")
+
+        return {"success": True, "message": f"No active session found for {call_id} (may have already ended)"}
+
+    # Trigger graceful hangup through the session
+    if not session._closing_call:
+        session._closing_call = True
+        asyncio.create_task(session._hangup_call_delayed(0.5))
+        return {"success": True, "message": f"Hangup initiated for {call_id}"}
+    else:
+        return {"success": True, "message": f"Call {call_id} is already ending"}
+
+
+class CallHangupRequest(BaseModel):
+    call_uuid: Optional[str] = None
+    plivo_uuid: Optional[str] = None
+
+
+@app.post("/api/call-hangup")
+async def api_call_hangup(request: CallHangupRequest):
+    """Hang up a call by internal call_uuid OR plivo_uuid.
+
+    Resolves the internal UUID from plivo_uuid if needed, then
+    delegates to the existing /calls/{call_id}/hangup logic.
+    """
+    internal_uuid = request.call_uuid
+
+    if not internal_uuid and request.plivo_uuid:
+        async with _call_data_lock:
+            internal_uuid = _plivo_to_internal_uuid.get(request.plivo_uuid)
+        if not internal_uuid:
+            return JSONResponse(status_code=404, content={"success": False, "error": "plivo_uuid not found in active mappings"})
+
+    if not internal_uuid:
+        return JSONResponse(status_code=400, content={"success": False, "error": "Provide call_uuid or plivo_uuid"})
+
+    return await hangup_call(internal_uuid)
+
+
 @app.get("/calls/{call_id}/recording")
 async def get_call_recording(call_id: str):
     """Download the recording for a call by call_uuid"""
@@ -880,6 +949,7 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
+    voice: Optional[str] = None  # Voice override: "Puck", "Kore", etc. (None = auto-detect from prompt)
 
 
 @app.post("/plivo/make-call")
@@ -932,6 +1002,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             context["plivo_auth_id"] = request.plivoAuthId
         if request.plivoAuthToken:
             context["plivo_auth_token"] = request.plivoAuthToken
+
+        # Voice override (Puck, Kore, etc.)
+        if request.voice:
+            context["_voice_override"] = request.voice
 
         # Store all call data
         async with _call_data_lock:
@@ -1205,6 +1279,111 @@ async def get_call_details(call_id: str):
         return JSONResponse(content=call)
     raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
 
+
+
+# ============================================================================
+# GHL Contacts API
+# ============================================================================
+
+@app.get("/api/ghl/contacts")
+async def ghl_contacts_search(
+    q: str = Query(..., description="Search query (name, phone, or email)"),
+    api_key: str = Query(..., description="GHL API key"),
+    location_id: str = Query(..., description="GHL location ID"),
+    limit: int = Query(default=20, le=100),
+):
+    """Search GHL contacts by name, phone, or email"""
+    from src.services.ghl_whatsapp import search_ghl_contacts
+    result = await search_ghl_contacts(q, api_key, location_id, limit=limit)
+    if result.get("success"):
+        return result
+    return JSONResponse(status_code=400, content=result)
+
+
+@app.post("/api/ghl/contacts/sync")
+async def ghl_contacts_sync(request: Request):
+    """Sync a call record to a GHL contact (add note + tag)"""
+    body = await request.json()
+    contact_id = body.get("contact_id")
+    call_uuid = body.get("call_uuid", "")
+    api_key = body.get("api_key", "")
+    location_id = body.get("location_id", "")
+
+    if not contact_id or not api_key or not location_id:
+        return JSONResponse(status_code=400, content={
+            "success": False, "error": "contact_id, api_key, and location_id are required"
+        })
+
+    # Look up call summary from DB
+    call = session_db.get_call(call_uuid) if call_uuid else None
+    summary = call.get("call_summary", "") if call else body.get("summary", "")
+    outcome = call.get("outcome", "") if call else body.get("outcome", "completed")
+
+    from src.services.ghl_whatsapp import sync_call_to_ghl_contact
+    result = await sync_call_to_ghl_contact(
+        contact_id=contact_id,
+        call_uuid=call_uuid,
+        call_summary=summary or "No summary available",
+        outcome=outcome or "completed",
+        api_key=api_key,
+        location_id=location_id,
+    )
+    if result.get("success"):
+        return result
+    return JSONResponse(status_code=400, content=result)
+
+
+# ============================================================================
+# Email Invitations
+# ============================================================================
+
+class EmailInviteRequest(BaseModel):
+    to_email: str
+    to_name: Optional[str] = ""
+    subject: Optional[str] = "You're invited to FWAI Voice AI"
+    message: Optional[str] = ""
+
+
+@app.post("/api/email/invite")
+async def send_email_invite(request: EmailInviteRequest):
+    """Send a team invitation email via SMTP.
+
+    Requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS env vars.
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    from_email = os.environ.get("SMTP_FROM", smtp_user)
+
+    if not smtp_host or not smtp_user:
+        return JSONResponse(status_code=500, content={
+            "success": False,
+            "error": "SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars."
+        })
+
+    body = request.message or f"Hi {request.to_name or 'there'},\n\nYou've been invited to join the FWAI Voice AI platform.\n\nBest regards,\nFWAI Team"
+
+    msg = MIMEMultipart()
+    msg["From"] = from_email
+    msg["To"] = request.to_email
+    msg["Subject"] = request.subject
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        logger.info(f"Invite email sent to {request.to_email}")
+        return {"success": True, "message": f"Invitation sent to {request.to_email}"}
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 
 # ============= CALL METRICS ENDPOINT =============

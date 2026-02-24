@@ -98,6 +98,109 @@ async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: s
     return None
 
 
+async def search_ghl_contacts(
+    query: str,
+    api_key: str,
+    location_id: str,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """
+    Search GHL contacts by name, phone, or email.
+    Returns a list of matching contacts.
+    """
+    if not api_key or not location_id:
+        return {"success": False, "error": "GHL API key or location ID not configured"}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Version": "2021-07-28",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{GHL_API_BASE}/contacts/",
+                headers=headers,
+                params={"locationId": location_id, "query": query, "limit": limit},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                contacts = data.get("contacts", [])
+                return {
+                    "success": True,
+                    "contacts": [
+                        {
+                            "id": c.get("id"),
+                            "name": f'{c.get("firstName", "")} {c.get("lastName", "")}'.strip(),
+                            "email": c.get("email", ""),
+                            "phone": c.get("phone", ""),
+                            "tags": c.get("tags", []),
+                        }
+                        for c in contacts
+                    ],
+                    "total": len(contacts),
+                }
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        logger.error(f"GHL contact search error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def sync_call_to_ghl_contact(
+    contact_id: str,
+    call_uuid: str,
+    call_summary: str,
+    outcome: str,
+    api_key: str,
+    location_id: str,
+) -> Dict[str, Any]:
+    """
+    Add a note to a GHL contact with call summary and tag with outcome.
+    """
+    if not api_key or not location_id:
+        return {"success": False, "error": "GHL API key or location ID not configured"}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Version": "2021-07-28",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Add note with call summary
+            note_resp = await client.post(
+                f"{GHL_API_BASE}/contacts/{contact_id}/notes",
+                headers=headers,
+                json={"body": f"AI Call ({call_uuid[:8]}): {call_summary}"},
+            )
+            note_ok = note_resp.status_code in (200, 201)
+
+            # Tag with outcome
+            tag = f"ai-call-{outcome.lower()}" if outcome else "ai-call-completed"
+            tag_resp = await client.post(
+                f"{GHL_API_BASE}/contacts/{contact_id}/tags",
+                headers=headers,
+                json={"tags": [tag]},
+            )
+            tag_ok = tag_resp.status_code in (200, 201)
+
+        if note_ok and tag_ok:
+            logger.info(f"GHL sync OK: contact {contact_id}, tag={tag}")
+            return {"success": True, "contact_id": contact_id, "note_added": note_ok, "tag_added": tag}
+        else:
+            errors = []
+            if not note_ok:
+                errors.append(f"note HTTP {note_resp.status_code}")
+            if not tag_ok:
+                errors.append(f"tag HTTP {tag_resp.status_code}")
+            return {"success": False, "error": "; ".join(errors)}
+    except Exception as e:
+        logger.error(f"GHL sync error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def tag_ghl_contact(
     phone: str,
     email: str,

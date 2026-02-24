@@ -531,6 +531,8 @@
                     <button class="tab-btn" onclick="switchTab('products')">Products</button>
                     <button class="tab-btn" onclick="switchTab('prompts')">Prompts</button>
                     <button class="tab-btn" onclick="switchTab('socialproof')">Social Proof</button>
+                    <button class="tab-btn" onclick="switchTab('contacts')">Contacts</button>
+                    <button class="tab-btn" onclick="switchTab('team')">Team</button>
                     <button class="tab-btn" onclick="switchTab('metrics')">Live Metrics</button>
                 </div>
             </div>
@@ -601,6 +603,17 @@
                         <div class="form-group">
                             <label for="price">Price (₹)</label>
                             <input type="text" id="price" placeholder="40000" value="40000">
+                        </div>
+                        <div class="form-group">
+                            <label for="voiceSelect">AI Voice</label>
+                            <select id="voiceSelect" style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+                                <option value="">Auto (detect from prompt)</option>
+                                <option value="Puck">Puck (Male)</option>
+                                <option value="Kore">Kore (Female)</option>
+                                <option value="Charon">Charon (Male)</option>
+                                <option value="Fenrir">Fenrir (Male)</option>
+                                <option value="Aoede">Aoede (Female)</option>
+                            </select>
                         </div>
                         <div class="checkbox-group">
                             <input type="checkbox" id="useCustomPrompt">
@@ -1111,6 +1124,82 @@
             </div>
         </div>
 
+        <!-- CONTACTS TAB (GHL) -->
+        <div id="contactsTab" class="tab-content">
+            <div class="card full-width">
+                <h2>📇 GHL Contacts</h2>
+                <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Search your GoHighLevel contacts and sync call records.</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; margin-bottom: 15px;">
+                    <input type="text" id="ghlApiKey" placeholder="GHL API Key" style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                    <input type="text" id="ghlLocationId" placeholder="GHL Location ID" style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                    <input type="text" id="ghlSearchQuery" placeholder="Search by name, phone, or email..." style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                    <button class="btn" onclick="searchGHLContacts()" style="white-space: nowrap;">Search</button>
+                </div>
+
+                <div id="ghlContactsStatus"></div>
+                <div id="ghlContactsList" style="margin-top: 10px;">
+                    <div class="empty-state" style="padding: 30px;">
+                        <div class="empty-state-icon">📇</div>
+                        <div>Enter your GHL credentials and search to find contacts</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card full-width" style="margin-top: 20px;">
+                <h2>🔄 Sync Call to Contact</h2>
+                <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Sync a completed call record (note + tag) to a GHL contact.</p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="syncContactId" placeholder="GHL Contact ID" style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                    <input type="text" id="syncCallUuid" placeholder="Call UUID" style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                </div>
+                <button class="btn" onclick="syncCallToGHL()" style="margin-top: 5px;">Sync to GHL</button>
+                <div id="ghlSyncStatus" style="margin-top: 10px;"></div>
+            </div>
+        </div>
+
+        <!-- TEAM TAB -->
+        <div id="teamTab" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>📧 Send Team Invitation</h2>
+                    <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Invite a team member to the FWAI Voice AI platform via email.</p>
+                    <form id="inviteForm" onsubmit="sendEmailInvite(event)">
+                        <div class="form-group">
+                            <label for="inviteEmail">Email Address *</label>
+                            <input type="email" id="inviteEmail" placeholder="colleague@company.com" required style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="inviteName">Name</label>
+                            <input type="text" id="inviteName" placeholder="Jane Doe" style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="inviteSubject">Subject</label>
+                            <input type="text" id="inviteSubject" placeholder="You're invited to FWAI Voice AI" value="You're invited to FWAI Voice AI" style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="inviteMessage">Message (optional)</label>
+                            <textarea id="inviteMessage" rows="4" placeholder="Custom message... (leave blank for default)" style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; resize: vertical;"></textarea>
+                        </div>
+                        <button type="submit" class="btn" id="inviteBtn">📧 Send Invitation</button>
+                    </form>
+                    <div id="inviteStatus" style="margin-top: 10px;"></div>
+                </div>
+                <div class="card">
+                    <h2>ℹ️ SMTP Configuration</h2>
+                    <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Email invitations require SMTP environment variables to be set on the server:</p>
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-family: monospace; font-size: 13px; line-height: 1.8;">
+                        SMTP_HOST=smtp.gmail.com<br>
+                        SMTP_PORT=587<br>
+                        SMTP_USER=your-email@gmail.com<br>
+                        SMTP_PASS=your-app-password<br>
+                        SMTP_FROM=noreply@yourcompany.com
+                    </div>
+                    <p style="color: #999; font-size: 12px; margin-top: 10px;">For Gmail, use an App Password (not your regular password). Enable 2FA first, then generate an app password at myaccount.google.com.</p>
+                </div>
+            </div>
+        </div>
+
         <!-- METRICS TAB -->
         <div id="metricsTab" class="tab-content">
             <div class="card full-width">
@@ -1242,6 +1331,12 @@
                 document.getElementById('socialproofTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'socialproof\')"]').classList.add('active');
                 loadSocialProof();
+            } else if (tabName === 'contacts') {
+                document.getElementById('contactsTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'contacts\')"]').classList.add('active');
+            } else if (tabName === 'team') {
+                document.getElementById('teamTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'team\')"]').classList.add('active');
             } else if (tabName === 'metrics') {
                 document.getElementById('metricsTab').classList.add('active');
                 document.querySelector('[onclick="switchTab(\'metrics\')"]').classList.add('active');
@@ -1521,7 +1616,10 @@
                                     📱 ${call.caller_phone || 'Unknown'} |
                                     👤 ${call.contact_name || 'Unknown'}
                                 </div>
-                                <button class="btn btn-secondary" style="margin-top: 8px; font-size: 12px; padding: 5px 10px;" onclick="viewCallMetrics('${call.call_uuid}')">📊 View Metrics</button>
+                                <div style="display: flex; gap: 6px; margin-top: 8px;">
+                                    <button class="btn btn-secondary" style="font-size: 12px; padding: 5px 10px;" onclick="viewCallMetrics('${call.call_uuid}')">📊 Metrics</button>
+                                    <button class="btn" style="font-size: 12px; padding: 5px 10px; background: #ef4444;" onclick="hangupCall('${call.call_uuid}')">📕 Hang Up</button>
+                                </div>
                             </div>
                         `).join('');
                     }
@@ -1563,6 +1661,12 @@
                 contactName: document.getElementById('contactName').value,
                 context: context
             };
+
+            // Voice override
+            const voiceSelect = document.getElementById('voiceSelect').value;
+            if (voiceSelect) {
+                payload.voice = voiceSelect;
+            }
 
             // Add custom prompt if checkbox is checked
             if (useCustomPrompt && currentPrompt) {
@@ -2621,6 +2725,157 @@
                 await fetch(API_BASE + '/social-proof/stats/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' });
                 loadSocialProof();
             } catch (e) { alert('Delete failed: ' + e.message); }
+        }
+
+        // =========================================================================
+        // Call Hangup
+        // =========================================================================
+
+        async function hangupCall(callUuid) {
+            if (!confirm('Hang up this call?')) return;
+            try {
+                const resp = await fetch(`${API_BASE}/api/call-hangup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ call_uuid: callUuid })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    addLog(`📕 Hangup sent for ${callUuid.substring(0, 8)}: ${data.message}`, 'success');
+                    showAlert('Call hangup initiated', 'success');
+                    setTimeout(updateMetrics, 1000);
+                } else {
+                    addLog(`❌ Hangup failed: ${data.error}`, 'error');
+                    showAlert('Hangup failed: ' + data.error, 'error');
+                }
+            } catch (e) {
+                addLog(`❌ Hangup error: ${e.message}`, 'error');
+            }
+        }
+
+        // =========================================================================
+        // GHL Contacts Functions
+        // =========================================================================
+
+        async function searchGHLContacts() {
+            const apiKey = document.getElementById('ghlApiKey').value.trim();
+            const locationId = document.getElementById('ghlLocationId').value.trim();
+            const query = document.getElementById('ghlSearchQuery').value.trim();
+            const statusDiv = document.getElementById('ghlContactsStatus');
+            const listDiv = document.getElementById('ghlContactsList');
+
+            if (!apiKey || !locationId) {
+                statusDiv.innerHTML = '<div class="alert alert-error">API Key and Location ID are required</div>';
+                return;
+            }
+            if (!query) {
+                statusDiv.innerHTML = '<div class="alert alert-error">Enter a search query</div>';
+                return;
+            }
+
+            statusDiv.innerHTML = '<div class="alert alert-success">Searching...</div>';
+
+            try {
+                const params = new URLSearchParams({ q: query, api_key: apiKey, location_id: locationId });
+                const resp = await fetch(`${API_BASE}/api/ghl/contacts?${params}`);
+                const data = await resp.json();
+
+                if (data.success) {
+                    statusDiv.innerHTML = `<div class="alert alert-success">Found ${data.total} contact(s)</div>`;
+                    if (data.contacts.length === 0) {
+                        listDiv.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;">No contacts found</div>';
+                    } else {
+                        listDiv.innerHTML = '<div style="display: grid; gap: 8px;">' + data.contacts.map(c => `
+                            <div style="display: flex; justify-content: space-between; align-items: center; background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px;">
+                                <div>
+                                    <strong>${c.name || 'No Name'}</strong>
+                                    <span style="color: #999; margin-left: 8px; font-size: 13px;">${c.phone || ''}</span>
+                                    <span style="color: #667eea; margin-left: 8px; font-size: 13px;">${c.email || ''}</span>
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center;">
+                                    ${c.tags.slice(0, 3).map(t => `<span style="background: #eef2ff; color: #667eea; padding: 2px 8px; border-radius: 12px; font-size: 11px;">${t}</span>`).join('')}
+                                    <button class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="document.getElementById('syncContactId').value='${c.id}'; switchTab('contacts');">Use for Sync</button>
+                                </div>
+                            </div>
+                        `).join('') + '</div>';
+                    }
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+                }
+            } catch (e) {
+                statusDiv.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+            }
+        }
+
+        async function syncCallToGHL() {
+            const contactId = document.getElementById('syncContactId').value.trim();
+            const callUuid = document.getElementById('syncCallUuid').value.trim();
+            const apiKey = document.getElementById('ghlApiKey').value.trim();
+            const locationId = document.getElementById('ghlLocationId').value.trim();
+            const statusDiv = document.getElementById('ghlSyncStatus');
+
+            if (!contactId || !apiKey || !locationId) {
+                statusDiv.innerHTML = '<div class="alert alert-error">Contact ID, API Key, and Location ID are required</div>';
+                return;
+            }
+
+            statusDiv.innerHTML = '<div class="alert alert-success">Syncing...</div>';
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/ghl/contacts/sync`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contact_id: contactId, call_uuid: callUuid, api_key: apiKey, location_id: locationId })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    statusDiv.innerHTML = `<div class="alert alert-success">Synced! Tag: ${data.tag_added}</div>`;
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+                }
+            } catch (e) {
+                statusDiv.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+            }
+        }
+
+        // =========================================================================
+        // Email Invite Functions
+        // =========================================================================
+
+        async function sendEmailInvite(event) {
+            event.preventDefault();
+            const btn = document.getElementById('inviteBtn');
+            const statusDiv = document.getElementById('inviteStatus');
+            btn.disabled = true;
+            btn.textContent = '⏳ Sending...';
+
+            const payload = {
+                to_email: document.getElementById('inviteEmail').value.trim(),
+                to_name: document.getElementById('inviteName').value.trim(),
+                subject: document.getElementById('inviteSubject').value.trim(),
+                message: document.getElementById('inviteMessage').value.trim()
+            };
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/email/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    statusDiv.innerHTML = `<div class="alert alert-success">${data.message}</div>`;
+                    document.getElementById('inviteForm').reset();
+                    document.getElementById('inviteSubject').value = "You're invited to FWAI Voice AI";
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+                }
+            } catch (e) {
+                statusDiv.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📧 Send Invitation';
+            }
         }
 
         // Initialize
