@@ -331,7 +331,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns
+        self._session_split_interval = 5  # Split every 5 turns (fewer swaps = more consistent voice)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -1249,9 +1249,9 @@ Rules:
         if not self._completed_steps and not self._turn_exchanges:
             return ""
         lines = []
-        # Language lock — ensure new session continues in the same language
+        # Language + voice lock — ensure new session continues with same language and voice
         if self._detected_language:
-            lines.append(f"[LANGUAGE: Customer chose {self._detected_language}. You MUST continue the ENTIRE call in {self._detected_language} only. Do NOT switch languages.]")
+            lines.append(f"[LANGUAGE: Customer chose {self._detected_language}. You MUST continue the ENTIRE call in {self._detected_language} only. Do NOT switch languages. Maintain the EXACT same voice, accent, tone, and pace you were using before.]")
         # Step list from full history (never capped)
         if self._completed_steps:
             step_count = len(self._completed_steps)
@@ -1886,7 +1886,7 @@ Rules:
                 if self._is_first_connection:
                     self._is_first_connection = False
                     # Brief delay so the user has time to bring the phone to their ear
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(2.0)
                     self._greeting_trigger_time = time.time()
                     await self._send_initial_greeting()
                 elif self._is_reconnecting:
