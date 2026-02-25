@@ -10,6 +10,7 @@ import threading
 import queue
 import time
 from typing import Dict, Optional
+from collections import deque
 from dataclasses import dataclass
 from loguru import logger
 from datetime import datetime
@@ -263,9 +264,9 @@ class PlivoGeminiSession:
         # Flag to prevent double greeting
         self.greeting_audio_complete = False
 
-        # Call duration management (8 minute max)
+        # Call duration management (15 minute max)
         self.call_start_time = None
-        self.max_call_duration = 8 * 60  # 8 minutes in seconds
+        self.max_call_duration = 15 * 60  # 15 minutes in seconds
         self._timeout_task = None
         self._closing_call = False  # Flag to indicate we're closing the call
 
@@ -334,6 +335,8 @@ class PlivoGeminiSession:
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
+        self._recent_agent_questions = deque(maxlen=10)  # Recent questions for duplicate detection
+        self._detected_language = ""  # User's chosen language (detected from early turns)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
         self._completed_steps = []  # Compact label per agent utterance (never capped)
 
@@ -834,7 +837,7 @@ Rules:
         self.preloaded_audio = []
 
     async def _monitor_call_duration(self):
-        """Monitor call duration with periodic heartbeat and trigger wrap-up at 8 minutes"""
+        """Monitor call duration with periodic heartbeat and trigger wrap-up at 15 minutes"""
         try:
             logger.debug(f"[{self.call_uuid[:8]}] Call monitor started")
 
@@ -851,7 +854,7 @@ Rules:
                     return  # Call ended, stop monitoring
 
             if self.is_active and not self._closing_call:
-                logger.info(f"Call {self.call_uuid[:8]} reaching 8 min limit - triggering wrap-up")
+                logger.info(f"Call {self.call_uuid[:8]} reaching 15 min limit - triggering wrap-up")
                 self._closing_call = True
                 await self._send_wrap_up_message()
 
@@ -1246,6 +1249,9 @@ Rules:
         if not self._completed_steps and not self._turn_exchanges:
             return ""
         lines = []
+        # Language lock — ensure new session continues in the same language
+        if self._detected_language:
+            lines.append(f"[LANGUAGE: Customer chose {self._detected_language}. You MUST continue the ENTIRE call in {self._detected_language} only. Do NOT switch languages.]")
         # Step list from full history (never capped)
         if self._completed_steps:
             step_count = len(self._completed_steps)
@@ -1253,7 +1259,7 @@ Rules:
                 f"{i+1}.{s}" for i, s in enumerate(self._completed_steps)
             )
             lines.append(f"[COMPLETED {step_count} steps: {step_list}]")
-            lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat steps 1-{step_count}.]")
+            lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat steps 1-{step_count}. Say ONE thing, then WAIT for customer response.]")
         # Last 2 exchanges for immediate context
         recent = self._turn_exchanges[-2:]
         offset = self._turn_count - len(recent)
@@ -1291,6 +1297,44 @@ Rules:
             else:
                 cleaned = cleaned[:50]
         return cleaned.strip()
+
+    def _extract_question(self, text: str) -> str:
+        """Extract the last question sentence (ending with ?) from agent text."""
+        if not text or "?" not in text:
+            return ""
+        sentences = re.split(r'(?<=[.?!])\s+', text)
+        for s in reversed(sentences):
+            if "?" in s:
+                return s.strip()
+        return ""
+
+    def _is_duplicate_question(self, new_text: str) -> bool:
+        """Check if new_text is similar to a recently asked question (>70% word overlap)."""
+        new_words = set(new_text.lower().split())
+        if len(new_words) < 4:
+            return False
+        for prev in self._recent_agent_questions:
+            prev_words = set(prev.lower().split())
+            if not prev_words:
+                continue
+            overlap = len(new_words & prev_words) / max(len(new_words), len(prev_words))
+            if overlap > 0.7:
+                return True
+        return False
+
+    async def _send_duplicate_nudge(self):
+        """Send a client_content nudge telling AI to move to the next topic."""
+        if not self.goog_live_ws or self._closing_call:
+            return
+        msg = {"client_content": {"turns": [{
+            "role": "user",
+            "parts": [{"text": "[You just repeated a question you already asked. Move to the NEXT topic immediately.]"}]
+        }], "turn_complete": True}}
+        try:
+            await self.goog_live_ws.send(json.dumps(msg))
+            self.log.detail("Sent duplicate-question nudge")
+        except Exception:
+            pass
 
     async def _run_google_live_session(self):
         """Main session loop. Hot-swap handles planned transitions; this handles error recovery."""
@@ -1410,6 +1454,13 @@ Rules:
             "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
         )
 
+        # Anti-repetition rule (applies to all clients)
+        full_prompt += (
+            "\n\n[CONVERSATION RULE: NEVER repeat a question the customer already answered. "
+            "If you catch yourself about to re-ask something, skip it and move to the next topic. "
+            "Each question should be asked exactly ONCE.]"
+        )
+
         # Inject pre-call intelligence into system prompt (not as user message)
         if self._intelligence_brief:
             full_prompt += (
@@ -1487,7 +1538,7 @@ Rules:
                         }
                     },
                     "thinking_config": {
-                        "thinking_budget": 0  # Disable reasoning for fastest responses
+                        "thinking_budget": 128  # Minimal reasoning for conversational coherence
                     }
                 },
                 "realtime_input_config": {
@@ -1835,7 +1886,7 @@ Rules:
                 if self._is_first_connection:
                     self._is_first_connection = False
                     # Brief delay so the user has time to bring the phone to their ear
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.5)
                     self._greeting_trigger_time = time.time()
                     await self._send_initial_greeting()
                 elif self._is_reconnecting:
@@ -1877,6 +1928,13 @@ Rules:
                             self._last_agent_text = full_agent
                             if "?" in full_agent:
                                 self._last_agent_question = full_agent
+                                # Anti-repetition: detect and nudge if duplicate question
+                                question = self._extract_question(full_agent)
+                                if question:
+                                    if self._is_duplicate_question(question):
+                                        self.log.warn(f"Duplicate question detected: '{question[:50]}'")
+                                        asyncio.create_task(self._send_duplicate_nudge())
+                                    self._recent_agent_questions.append(question)
                             self._current_turn_agent_text = []
                         if self._current_turn_user_text:
                             full_user = " ".join(self._current_turn_user_text)
@@ -1892,6 +1950,21 @@ Rules:
                             step_label = self._extract_step_label(full_agent)
                             if step_label:
                                 self._completed_steps.append(step_label)
+
+                        # Language detection (one-time, from early turns)
+                        if not self._detected_language and full_user and self._turn_count <= 5:
+                            lower = full_user.lower()
+                            if any(w in lower for w in ["english", "inglish", "angrezi"]):
+                                self._detected_language = "English"
+                                self.log.detail("Language detected: English")
+                            elif any(w in lower for w in ["hindi", "हिंदी", "हिन्दी"]):
+                                self._detected_language = "Hindi"
+                                self.log.detail("Language detected: Hindi")
+                            elif full_agent and self._turn_count >= 2:
+                                # Infer from agent's response language (if user didn't say explicitly)
+                                if re.search(r'[a-zA-Z]{4,}', full_agent) and not re.search(r'[अ-ह]', full_agent):
+                                    self._detected_language = "English"
+                                    self.log.detail("Language inferred: English (from agent response)")
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
