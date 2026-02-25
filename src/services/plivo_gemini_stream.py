@@ -3,6 +3,7 @@ import asyncio
 import json
 import base64
 import os
+import re
 import wave
 import struct
 import threading
@@ -334,6 +335,7 @@ class PlivoGeminiSession:
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
+        self._completed_steps = []  # Compact label per agent utterance (never capped)
 
         # Hot-swap session management
         self._standby_ws = None
@@ -1146,31 +1148,23 @@ Rules:
             self._swap_in_progress = False
 
     async def _send_context_to_ws(self, ws):
-        """Send anti-repetition reinforcement to WS before hot-swap.
-        The system_instruction already has the full summary; this adds a
-        strong reminder via client_content with turn_complete=False
-        so Gemini absorbs it silently and waits for user audio."""
-        last_user = self._last_user_text[:200] if self._last_user_text else ""
-        agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
-
-        # Note WhatsApp status so new session doesn't re-trigger it
+        """Send compact continuation prompt to WS at hot-swap time.
+        The system_instruction already has the full step list + recent turns;
+        this just nudges Gemini to wait and continue forward."""
+        step_count = len(self._completed_steps)
         whatsapp_note = " WhatsApp was ALREADY SENT — do NOT send it again or mention sending it." if self._whatsapp_sent else ""
 
-        if agent_ref and last_user:
+        if step_count > 0:
             trigger = (
-                f'[REMINDER: Your MOST RECENT question was: "{agent_ref}". '
-                f'The customer replied: "{last_user}". '
-                f'DO NOT repeat this question. DO NOT speak until the customer speaks. '
-                f'When they speak, respond naturally and move to the NEXT topic.{whatsapp_note}]'
+                f'[You completed {step_count} steps. CONTINUE from step {step_count + 1}. '
+                f'Wait for customer to speak, then move FORWARD.{whatsapp_note}]'
             )
-        elif agent_ref:
-            trigger = f'[REMINDER: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.{whatsapp_note}]'
         else:
             trigger = f"[Continue the conversation. Wait for the customer to speak.{whatsapp_note}]"
 
         msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Anti-repetition sent: last_q='{agent_ref[:50]}'")
+        self.log.detail(f"Context sent: {step_count} steps completed")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""
@@ -1247,23 +1241,56 @@ Rules:
 
     def _build_compact_summary(self) -> str:
         """Build conversation summary for session split context.
-        Includes turn numbers for clarity and marks the last exchange explicitly."""
-        if not self._turn_exchanges:
+        Uses _completed_steps (full history) for step list and
+        _turn_exchanges[-2:] for immediate context."""
+        if not self._completed_steps and not self._turn_exchanges:
             return ""
         lines = []
-        exchanges = self._turn_exchanges[-5:]
-        total = len(exchanges)
-        for i, exchange in enumerate(exchanges):
-            turn_num = self._turn_count - total + i + 1
-            is_last = (i == total - 1)
-            prefix = f"Turn {turn_num}"
-            if is_last:
-                prefix += " (MOST RECENT — do NOT repeat)"
+        # Step list from full history (never capped)
+        if self._completed_steps:
+            step_count = len(self._completed_steps)
+            step_list = " | ".join(
+                f"{i+1}.{s}" for i, s in enumerate(self._completed_steps)
+            )
+            lines.append(f"[COMPLETED {step_count} steps: {step_list}]")
+            lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat steps 1-{step_count}.]")
+        # Last 2 exchanges for immediate context
+        recent = self._turn_exchanges[-2:]
+        offset = self._turn_count - len(recent)
+        for i, exchange in enumerate(recent):
+            turn_num = offset + i + 1
+            parts = []
             if exchange.get("agent"):
-                lines.append(f"{prefix} — You asked: {exchange['agent'][:300]}")
+                parts.append(f"You: {exchange['agent'][:150]}")
             if exchange.get("user"):
-                lines.append(f"{prefix} — Customer replied: {exchange['user'][:300]}")
+                parts.append(f"Customer: {exchange['user'][:150]}")
+            if parts:
+                lines.append(f"Turn {turn_num} — {' | '.join(parts)}")
         return "\n".join(lines)
+
+    def _extract_step_label(self, text: str) -> str:
+        """Extract a ~40 char label from agent text for _completed_steps.
+        Takes first sentence, strips fillers, truncates on word boundary."""
+        if not text:
+            return ""
+        # Strip conversational fillers from start
+        fillers = r'^(?:Great|Okay|Perfect|Sure|Absolutely|Right|Alright|Wonderful|Excellent|Fantastic|Of course|No worries|No problem|Got it|I see|I understand)[,!.\s]*'
+        cleaned = re.sub(fillers, '', text, flags=re.IGNORECASE).strip()
+        if not cleaned:
+            cleaned = text.strip()
+        # Find first sentence end after 10 chars
+        for i, ch in enumerate(cleaned):
+            if i >= 10 and ch in '.?!':
+                cleaned = cleaned[:i+1]
+                break
+        # Truncate at 50 chars on word boundary
+        if len(cleaned) > 50:
+            cut = cleaned[:50].rfind(' ')
+            if cut > 20:
+                cleaned = cleaned[:cut]
+            else:
+                cleaned = cleaned[:50]
+        return cleaned.strip()
 
     async def _run_google_live_session(self):
         """Main session loop. Hot-swap handles planned transitions; this handles error recovery."""
@@ -1427,18 +1454,6 @@ Rules:
             summary = self._build_compact_summary()
             if summary:
                 full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
-                # Anti-repetition marker with last question
-                agent_ref = self._last_agent_question or self._last_agent_text
-                if agent_ref:
-                    last_user = self._last_user_text or "(customer is about to respond)"
-                    full_prompt += f'\n\n[CRITICAL — YOUR LAST QUESTION was: "{agent_ref[:300]}"'
-                    full_prompt += f' Customer responded: "{last_user[:200]}".'
-                    full_prompt += (
-                        ' DO NOT repeat, rephrase, or re-ask this question or any question the customer already answered above.'
-                        ' The customer has already told you their situation — acknowledge what they said and move FORWARD in the flow.'
-                        ' If they mentioned their job/studies, do NOT ask "what do you do" again.'
-                        ' If they raised a concern, address it directly.]'
-                    )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
                 file_history = self._load_conversation_from_file()
@@ -1875,6 +1890,11 @@ Rules:
                             self._turn_exchanges.append({"agent": full_agent, "user": full_user})
                             if len(self._turn_exchanges) > 5:
                                 self._turn_exchanges = self._turn_exchanges[-5:]
+                        # Track completed steps (never capped - survives hot-swaps)
+                        if full_agent:
+                            step_label = self._extract_step_label(full_agent)
+                            if step_label:
+                                self._completed_steps.append(step_label)
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
