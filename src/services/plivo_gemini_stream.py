@@ -1169,7 +1169,7 @@ Rules:
 
         msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Context sent: {step_count} steps, voice={self._cached_voice}")
+        self.log.detail(f"Context nudge: {trigger}")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""
@@ -1512,6 +1512,7 @@ Rules:
             if summary:
                 full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
+                self.log.detail(f"Summary content:\n{summary}")
             else:
                 file_history = self._load_conversation_from_file()
                 if file_history:
@@ -1567,7 +1568,7 @@ Rules:
         }
         await ws.send(json.dumps(msg))
         label = "standby" if is_standby else ("first" if self._is_first_connection else "reconnect")
-        self.log.detail(f"Setup sent ({label}), voice: {voice_name}")
+        self.log.detail(f"Setup sent ({label}), voice: {voice_name}, lang: {self._detected_language or 'not yet'}")
 
     async def _send_initial_greeting(self):
         """Send initial trigger to make AI start the conversation"""
