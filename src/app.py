@@ -1267,6 +1267,19 @@ async def plivo_hangup(request: Request):
         _internal_to_plivo_uuid.pop(internal_uuid, None)
 
     logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s")
+
+    # Immediately mark call as completed so status is visible to UI/webhooks
+    # (post-call processing in background thread will update transcript later)
+    try:
+        session_db.update_call(
+            internal_uuid,
+            status="completed",
+            ended_at=datetime.now().isoformat(),
+            duration_seconds=float(duration),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update call status on hangup: {e}")
+
     clear_conversation(internal_uuid)
 
     return JSONResponse(content={"status": "ok"})
