@@ -1818,6 +1818,8 @@ Rules:
                 self._save_transcript("SYSTEM", f"AI ready ({setup_ms:.0f}ms)")
                 if self._is_first_connection:
                     self._is_first_connection = False
+                    # Brief delay so the user has time to bring the phone to their ear
+                    await asyncio.sleep(1.0)
                     self._greeting_trigger_time = time.time()
                     await self._send_initial_greeting()
                 elif self._is_reconnecting:
