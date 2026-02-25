@@ -150,7 +150,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the phone call. ONLY call this AFTER the conversation is complete AND you have said goodbye. NEVER call this just because the user paused or was quiet.",
+        "description": "End the phone call. Call this AFTER you have said your final goodbye. Once called, the call disconnects immediately — do NOT speak after calling this. NEVER call this just because the user paused or was quiet.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -1583,15 +1583,16 @@ Rules:
 
                 # Mark agent as having said goodbye
                 self.agent_said_goodbye = True
+                self._closing_call = True  # Stop audio output immediately
 
-                # Send success response
+                # Send response that tells Gemini the call is done — do NOT say "waiting"
                 try:
                     tool_response = {
                         "tool_response": {
                             "function_responses": [{
                                 "id": call_id,
                                 "name": tool_name,
-                                "response": {"success": True, "message": "Waiting for mutual goodbye before ending"}
+                                "response": {"success": True, "message": "Call ended. Stop speaking."}
                             }]
                         }
                     }
@@ -1599,12 +1600,8 @@ Rules:
                 except Exception:
                     pass
 
-                # Check if user already said goodbye
-                self._check_mutual_goodbye()
-
-                # Fallback: if user doesn't respond within 5 seconds, end anyway
-                if not self._closing_call:
-                    asyncio.create_task(self._fallback_hangup(5.0))
+                # Hang up after short delay for final audio to flush
+                asyncio.create_task(self._hangup_call_delayed(1.5))
                 return
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding
@@ -2115,6 +2112,8 @@ Rules:
                             # During preload (no plivo_ws yet), always store audio
                             if not self.plivo_ws:
                                 self.preloaded_audio.append(audio)
+                            elif self._closing_call:
+                                pass  # Drop audio after end_call — call is ending
                             elif self.plivo_ws:
                                 # Send directly to plivo_send_queue
                                 chunk = AudioChunk(
