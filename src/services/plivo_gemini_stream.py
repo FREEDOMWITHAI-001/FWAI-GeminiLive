@@ -431,7 +431,8 @@ class PlivoGeminiSession:
     def _get_tool_declarations(self):
         """Build tool declarations dynamically based on session capabilities."""
         tools = list(TOOL_DECLARATIONS)  # Always include end_call
-        if self.ghl_api_key and self.ghl_location_id:
+        # Only offer send_whatsapp if GHL is configured AND not yet sent this call
+        if self.ghl_api_key and self.ghl_location_id and not self._whatsapp_sent:
             tools.append({
                 "name": "send_whatsapp",
                 "description": "Send a WhatsApp message to the caller via the configured workflow. Use this when your prompt instructs you to send a WhatsApp message. Can only be sent once per call.",
@@ -1152,17 +1153,20 @@ Rules:
         last_user = self._last_user_text[:200] if self._last_user_text else ""
         agent_ref = (self._last_agent_question or self._last_agent_text)[:200]
 
+        # Note WhatsApp status so new session doesn't re-trigger it
+        whatsapp_note = " WhatsApp was ALREADY SENT — do NOT send it again or mention sending it." if self._whatsapp_sent else ""
+
         if agent_ref and last_user:
             trigger = (
                 f'[REMINDER: Your MOST RECENT question was: "{agent_ref}". '
                 f'The customer replied: "{last_user}". '
                 f'DO NOT repeat this question. DO NOT speak until the customer speaks. '
-                f'When they speak, respond naturally and move to the NEXT topic.]'
+                f'When they speak, respond naturally and move to the NEXT topic.{whatsapp_note}]'
             )
         elif agent_ref:
-            trigger = f'[REMINDER: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.]'
+            trigger = f'[REMINDER: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.{whatsapp_note}]'
         else:
-            trigger = "[Continue the conversation. Wait for the customer to speak.]"
+            trigger = f"[Continue the conversation. Wait for the customer to speak.{whatsapp_note}]"
 
         msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
