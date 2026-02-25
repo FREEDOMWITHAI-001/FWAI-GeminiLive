@@ -133,7 +133,8 @@ def detect_voice_from_prompt(prompt: str) -> str:
 
     male_names = [
         "rahul", "vishnu", "avinash", "arjun", "raj", "amit", "vijay", "suresh",
-        "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar"
+        "mahesh", "ramesh", "ganesh", "kiran", "sanjay", "ajay", "ravi", "kumar",
+        "sai", "rohan", "nikhil", "deepak", "prakash", "mohan", "harsh"
     ]
     for name in male_names:
         if name in identity_line:
@@ -224,6 +225,10 @@ class PlivoGeminiSession:
         # Prompt: API-provided prompt is the single source of truth
         self.prompt = render_prompt(prompt or "", self.context)
         logger.info(f"[{call_uuid[:8]}] Direct prompt mode for client: {client_name or 'default'}")
+
+        # Cache voice at init — never re-evaluate mid-call (hot-swaps must keep same voice)
+        self._cached_voice = self.context.get("_voice_override") or detect_voice_from_prompt(self.prompt)
+        logger.info(f"[{call_uuid[:8]}] Voice locked: {self._cached_voice}")
 
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
@@ -1442,7 +1447,8 @@ Rules:
                     full_prompt += history_text
                     self._is_reconnecting = False
 
-        voice_name = self.context.get("_voice_override") or detect_voice_from_prompt(self.prompt)
+        # Use cached voice — never re-evaluate mid-call to prevent voice changes during hot-swaps
+        voice_name = self._cached_voice
 
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
