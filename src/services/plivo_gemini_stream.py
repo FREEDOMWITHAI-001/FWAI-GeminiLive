@@ -331,7 +331,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 5  # Split every 5 turns (fewer swaps = more consistent voice)
+        self._session_split_interval = 3  # Split every 3 turns to keep latency low
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -1156,18 +1156,20 @@ Rules:
         this just nudges Gemini to wait and continue forward."""
         step_count = len(self._completed_steps)
         whatsapp_note = " WhatsApp was ALREADY SENT — do NOT send it again or mention sending it." if self._whatsapp_sent else ""
+        lang_note = f" Speak {self._detected_language} only." if self._detected_language else ""
 
         if step_count > 0:
             trigger = (
                 f'[You completed {step_count} steps. CONTINUE from step {step_count + 1}. '
-                f'Wait for customer to speak, then move FORWARD.{whatsapp_note}]'
+                f'Same voice ({self._cached_voice}), same accent.{lang_note}'
+                f' Wait for customer to speak, then move FORWARD.{whatsapp_note}]'
             )
         else:
-            trigger = f"[Continue the conversation. Wait for the customer to speak.{whatsapp_note}]"
+            trigger = f"[Continue the conversation. Same voice ({self._cached_voice}), same accent.{lang_note} Wait for the customer to speak.{whatsapp_note}]"
 
         msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Context sent: {step_count} steps completed")
+        self.log.detail(f"Context sent: {step_count} steps, voice={self._cached_voice}")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""
@@ -1244,34 +1246,38 @@ Rules:
 
     def _build_compact_summary(self) -> str:
         """Build conversation summary for session split context.
-        Uses _completed_steps (full history) for step list and
-        _turn_exchanges[-2:] for immediate context."""
+        Kept minimal to reduce latency — only essentials for continuity."""
         if not self._completed_steps and not self._turn_exchanges:
             return ""
         lines = []
-        # Language + voice lock — ensure new session continues with same language and voice
+        # Voice + language lock
+        voice_note = f"Voice: {self._cached_voice}."
         if self._detected_language:
-            lines.append(f"[LANGUAGE: Customer chose {self._detected_language}. You MUST continue the ENTIRE call in {self._detected_language} only. Do NOT switch languages. Maintain the EXACT same voice, accent, tone, and pace you were using before.]")
-        # Step list from full history (never capped)
+            voice_note += f" Language: {self._detected_language} ONLY."
+        lines.append(f"[{voice_note} Maintain SAME voice, accent, tone throughout.]")
+        # Step count + only last 5 steps (keeps summary short even at step 30)
         if self._completed_steps:
             step_count = len(self._completed_steps)
+            recent_steps = self._completed_steps[-5:]
+            start_idx = step_count - len(recent_steps)
             step_list = " | ".join(
-                f"{i+1}.{s}" for i, s in enumerate(self._completed_steps)
+                f"{start_idx+i+1}.{s}" for i, s in enumerate(recent_steps)
             )
-            lines.append(f"[COMPLETED {step_count} steps: {step_list}]")
-            lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat steps 1-{step_count}. Say ONE thing, then WAIT for customer response.]")
-        # Last 2 exchanges for immediate context
-        recent = self._turn_exchanges[-2:]
-        offset = self._turn_count - len(recent)
-        for i, exchange in enumerate(recent):
-            turn_num = offset + i + 1
+            if step_count > 5:
+                lines.append(f"[COMPLETED {step_count} steps. Recent: {step_list}]")
+            else:
+                lines.append(f"[COMPLETED {step_count} steps: {step_list}]")
+            lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat ANY prior step. Say ONE thing, then WAIT.]")
+        # Last 1 exchange only (minimal context)
+        if self._turn_exchanges:
+            exchange = self._turn_exchanges[-1]
             parts = []
             if exchange.get("agent"):
-                parts.append(f"You: {exchange['agent'][:150]}")
+                parts.append(f"You: {exchange['agent'][:100]}")
             if exchange.get("user"):
-                parts.append(f"Customer: {exchange['user'][:150]}")
+                parts.append(f"Customer: {exchange['user'][:80]}")
             if parts:
-                lines.append(f"Turn {turn_num} — {' | '.join(parts)}")
+                lines.append(f"Last turn — {' | '.join(parts)}")
         return "\n".join(lines)
 
     def _extract_step_label(self, text: str) -> str:
