@@ -283,8 +283,8 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 3 second SLA
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 2.0  # Beginning of call: 2s (switches to immediate after greeting)
-        self._silence_sla_immediate = 0.3  # After greeting: near-immediate response
+        self._silence_sla_seconds = 2.0  # Beginning of call: 2s (switches to fast after greeting)
+        self._silence_sla_immediate = 1.0  # After greeting: 1s fast response
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
@@ -2043,11 +2043,11 @@ Rules:
                     self.greeting_audio_complete = True
                     self._turn_count += 1
                     self._current_turn_id += 1
+                    full_agent = ""
+                    full_user = ""
 
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
-                        full_agent = ""
-                        full_user = ""
                         if self._current_turn_agent_text:
                             full_agent = " ".join(self._current_turn_agent_text)
                             self._last_agent_text = full_agent
@@ -2069,7 +2069,8 @@ Rules:
                             if len(self._turn_exchanges) > 5:
                                 self._turn_exchanges = self._turn_exchanges[-5:]
                         # Track completed steps (never capped - survives hot-swaps)
-                        if full_agent:
+                        # Skip short filler/nudge responses — they are not real steps
+                        if full_agent and len(full_agent.split()) > 4:
                             step_label = self._extract_step_label(full_agent)
                             if step_label:
                                 self._completed_steps.append(step_label)
