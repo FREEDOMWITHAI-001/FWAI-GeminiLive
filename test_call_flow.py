@@ -58,10 +58,12 @@ class MockSession:
 
     # Flags
     closing_call: bool = False
+    early_dup_cut_this_turn: bool = False  # Prevent duplicate nudge flood
 
     # Stats
     duplicate_nudges: list = field(default_factory=list)
     audio_cleared: list = field(default_factory=list)
+    audio_dropped: int = 0  # Audio chunks dropped after early dup
     hot_swap_count: int = 0
 
 
@@ -217,26 +219,66 @@ def whatsapp_tool_offered(session):
 # ============================================================
 
 def simulate_agent_turn(session, agent_text, audio_chunks=50):
-    """Simulate: Gemini generates agent speech with audio."""
+    """Simulate: Gemini generates agent speech with audio (bulk — for flow test)."""
     session.current_turn_agent_text = agent_text.split(". ") if agent_text else []
     session.current_turn_audio_chunks = audio_chunks
+    session.early_dup_cut_this_turn = False  # Reset at turn start
     if audio_chunks > 0:
         session.agent_speaking = True
 
-    # Early duplicate check
+    # Early duplicate check (single check for bulk simulation)
     partial = " ".join(session.current_turn_agent_text)
     early_dup = False
-    if len(partial.split()) >= 4 and is_duplicate_text(session, partial):
-        early_dup = True
-        session.audio_cleared.append(partial[:50])
-        session.duplicate_nudges.append(f"Early cut: {partial[:50]}")
+    if not session.early_dup_cut_this_turn:
+        if len(partial.split()) >= 4 and is_duplicate_text(session, partial):
+            early_dup = True
+            session.early_dup_cut_this_turn = True
+            session.audio_cleared.append(partial[:50])
+            session.duplicate_nudges.append(f"Early cut: {partial[:50]}")
     return early_dup
+
+
+def simulate_streaming_agent_turn(session, agent_text):
+    """
+    Simulate: Gemini streams outputTranscription WORD BY WORD.
+    This mirrors real production behavior where each word triggers a check.
+    Returns (nudge_count, audio_dropped_count) to verify the flood guard.
+    """
+    session.current_turn_agent_text = []
+    session.current_turn_audio_chunks = 0
+    session.early_dup_cut_this_turn = False
+    session.agent_speaking = True
+
+    words = agent_text.split()
+    nudge_count = 0
+    audio_dropped = 0
+
+    for i, word in enumerate(words):
+        # Each word arrives as an outputTranscription fragment
+        session.current_turn_agent_text.append(word)
+        session.current_turn_audio_chunks += 1  # Each word has audio
+
+        # Early duplicate check — mirrors production code EXACTLY
+        if not session.early_dup_cut_this_turn:
+            partial = " ".join(session.current_turn_agent_text)
+            if len(partial.split()) >= 4 and is_duplicate_text(session, partial):
+                session.early_dup_cut_this_turn = True
+                nudge_count += 1
+                session.audio_cleared.append(partial[:50])
+                session.duplicate_nudges.append(f"Early cut (word {i+1}): {partial[:50]}")
+        else:
+            # After early dup, audio is DROPPED (not queued to Plivo)
+            audio_dropped += 1
+
+    session.audio_dropped += audio_dropped
+    return nudge_count, audio_dropped
 
 
 def simulate_turn_complete(session):
     """Simulate: Gemini sends turnComplete."""
     session.greeting_audio_complete = True
     session.agent_speaking = False
+    session.early_dup_cut_this_turn = False  # Reset flood guard for next turn
     session.turn_count += 1
 
     full_agent = ""
@@ -703,6 +745,45 @@ def run_test():
         check(not is_bye, f"  '{phrase}' NOT false-positive bye")
 
     # ============================================================
+    # PART 10: STREAMING DUPLICATE FLOOD GUARD (THE REAL BUG)
+    # ============================================================
+    print()
+    print("-" * 70)
+    print("PART 10: STREAMING DUPLICATE FLOOD GUARD")
+    print("  (Tests the bug: word-by-word outputTranscription causing 12+ nudges)")
+    print("-" * 70)
+
+    # Setup: add a step that was already said
+    session.recent_agent_texts = deque(maxlen=10)
+    session.recent_agent_texts.append(
+        "Have you downloaded the Riddhi Deorah app on your phone? We sent the link on WhatsApp earlier."
+    )
+
+    # Simulate: Gemini repeats step 2.1 word-by-word (exactly like the production log)
+    repeat = "Have you downloaded the Riddhi Deorah app on your phone? We sent the link on WhatsApp earlier."
+    nudge_count, audio_dropped = simulate_streaming_agent_turn(session, repeat)
+
+    total_words = len(repeat.split())
+    check(nudge_count == 1, f"  Only 1 nudge sent (was {nudge_count}, bug would be {total_words - 3})")
+    check(audio_dropped > 0, f"  Audio dropped after dup detected ({audio_dropped} chunks)")
+    check(session.early_dup_cut_this_turn, "  Flag set: early_dup_cut_this_turn = True")
+
+    # Verify: the flag blocks ALL subsequent word checks
+    words_after_detection = total_words - 4  # first 4 words pass, then flag fires
+    check(audio_dropped >= words_after_detection - 1,
+          f"  Audio dropped for remaining words ({audio_dropped} >= {words_after_detection - 1})")
+    print()
+
+    # Simulate: non-duplicate text should NOT trigger any nudges
+    session.early_dup_cut_this_turn = False  # Reset for next turn
+    session.recent_agent_texts = deque(maxlen=10)  # Clear so no false matches
+    new_text = "Take your time and let me know whenever you are ready to proceed further."
+    nudge_count, audio_dropped = simulate_streaming_agent_turn(session, new_text)
+    check(nudge_count == 0, f"  No nudge for new text (sent {nudge_count})")
+    check(audio_dropped == 0, f"  No audio dropped for new text ({audio_dropped})")
+    check(not session.early_dup_cut_this_turn, "  Flag NOT set for non-duplicate")
+
+    # ============================================================
     # RESULTS
     # ============================================================
     print()
@@ -722,6 +803,7 @@ def run_test():
     print(f"  Hot-swaps: {session.hot_swap_count} (at turns {hot_swap_turns})")
     print(f"  Duplicates caught: {len(session.duplicate_nudges)}")
     print(f"  Audio cleared (early dup): {len(session.audio_cleared)}")
+    print(f"  Audio dropped (post-dup): {session.audio_dropped}")
     print()
     print(f"--- ALL TRACKED STEPS ---")
     for i, s in enumerate(session.completed_steps):

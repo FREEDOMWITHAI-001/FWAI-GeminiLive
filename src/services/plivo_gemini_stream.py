@@ -292,6 +292,7 @@ class PlivoGeminiSession:
         self._turn_count = 0  # Count turns for latency tracking
         self._current_turn_agent_text = []  # Accumulate agent speech fragments per turn
         self._current_turn_user_text = []  # Accumulate user speech fragments per turn
+        self._early_dup_cut_this_turn = False  # Prevent duplicate nudge flood (fire once per turn)
 
         # Audio send queue and worker
         self._plivo_send_queue = asyncio.Queue(maxsize=500)
@@ -2237,8 +2238,9 @@ Rules:
                             and self.greeting_audio_complete):
                         asyncio.create_task(self._hot_swap_session())
 
-                    # Reset turn audio counter
+                    # Reset turn state
                     self._current_turn_audio_chunks = 0
+                    self._early_dup_cut_this_turn = False
 
                     # Process deferred goodbye detection (agent finished speaking)
                     if self._goodbye_pending and not self._closing_call:
@@ -2315,21 +2317,24 @@ Rules:
                         self._log_conversation("model", ai_text)
                         # Early duplicate detection: check partial agent text against recent
                         # so we can cut off the repeat before it finishes playing
-                        partial_agent = " ".join(self._current_turn_agent_text)
-                        if len(partial_agent.split()) >= 4 and self._is_duplicate_text(partial_agent):
-                            self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
-                            # Drain queued audio to stop the repeat from playing
-                            while not self._plivo_send_queue.empty():
-                                try:
-                                    self._plivo_send_queue.get_nowait()
-                                except asyncio.QueueEmpty:
-                                    break
-                            if self.plivo_ws:
-                                try:
-                                    await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
-                                except Exception:
-                                    pass
-                            asyncio.create_task(self._send_duplicate_nudge())
+                        # CRITICAL: Only fire ONCE per turn to prevent nudge flood
+                        if not self._early_dup_cut_this_turn:
+                            partial_agent = " ".join(self._current_turn_agent_text)
+                            if len(partial_agent.split()) >= 4 and self._is_duplicate_text(partial_agent):
+                                self._early_dup_cut_this_turn = True  # Block further checks this turn
+                                self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
+                                # Drain queued audio to stop the repeat from playing
+                                while not self._plivo_send_queue.empty():
+                                    try:
+                                        self._plivo_send_queue.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        break
+                                if self.plivo_ws:
+                                    try:
+                                        await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
+                                    except Exception:
+                                        pass
+                                asyncio.create_task(self._send_duplicate_nudge())
                         # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
                         if not self._closing_call and self._is_goodbye_message(ai_text):
                             self._goodbye_pending = True
@@ -2368,6 +2373,8 @@ Rules:
                                 self.preloaded_audio.append(audio)
                             elif self._closing_call:
                                 pass  # Drop audio after end_call — call is ending
+                            elif self._early_dup_cut_this_turn:
+                                pass  # Drop audio — duplicate detected, waiting for next turn
                             elif self.plivo_ws:
                                 # Send directly to plivo_send_queue
                                 chunk = AudioChunk(
