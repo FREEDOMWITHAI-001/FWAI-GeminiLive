@@ -1042,8 +1042,8 @@ Rules:
                 self.log.warn(f"Active WS closed: {e.code}")
 
     async def _prewarm_standby_connection(self):
-        """Pre-warm ONLY the WS connection for standby (setup deferred to swap time).
-        This saves ~300ms at swap time while ensuring system_instruction is always current."""
+        """Pre-warm standby: connect WS + send setup + wait for setupComplete + send context.
+        At swap time we only forward the latest turn and swap instantly (~10ms)."""
         if self._standby_ws or self._swap_in_progress:
             return
         try:
@@ -1066,16 +1066,39 @@ Rules:
                 ws_kwargs["additional_headers"] = extra_headers
 
             ws = await websockets.connect(url, **ws_kwargs)
-            self._standby_ws = ws
             connect_ms = (time.time() - t0) * 1000
-            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms, setup deferred)")
+
+            # Send setup with current context immediately (don't defer to swap time)
+            self._setup_sent_time = time.time()
+            await self._send_session_setup_on_ws(ws, is_standby=True)
+
+            # Wait for setupComplete
+            try:
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                resp = json.loads(msg)
+                if "setupComplete" not in resp:
+                    self.log.warn("Standby setup failed during prewarm")
+                    await self._close_ws_quietly(ws)
+                    return
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
+                self.log.warn(f"Standby setup timeout during prewarm: {e}")
+                await self._close_ws_quietly(ws)
+                return
+
+            # Send context nudge (steps completed, voice, language)
+            await self._send_context_to_ws(ws)
+
+            self._standby_ws = ws
+            self._standby_ready.set()
+            ready_ms = (time.time() - t0) * 1000
+            self.log.detail(f"Standby fully ready ({ready_ms:.0f}ms: connect {connect_ms:.0f}ms + setup)")
         except Exception as e:
-            self.log.error(f"Standby connection failed: {e}")
+            self.log.error(f"Standby prewarm failed: {e}")
             self._standby_ws = None
 
     async def _hot_swap_session(self):
-        """Hot-swap: send setup with CURRENT context to pre-connected standby, then swap.
-        Setup is deferred to swap time so system_instruction always has fresh conversation state."""
+        """Hot-swap: standby already has setup + context from prewarm.
+        Just forward the latest turn exchange and swap instantly."""
         if self._swap_in_progress or not self._standby_ws:
             self.log.warn("No standby available, falling back")
             await self._fallback_session_split()
@@ -1085,10 +1108,20 @@ Rules:
         swap_start = time.time()
         ws = self._standby_ws
         try:
-            # Step 1: Send setup with CURRENT conversation summary to standby WS
-            self._setup_sent_time = time.time()
+            # Send latest turn to bring standby up to date (prewarm was 1 turn behind)
             try:
-                await self._send_session_setup_on_ws(ws, is_standby=False)
+                latest_exchange = self._turn_exchanges[-1] if self._turn_exchanges else None
+                if latest_exchange:
+                    agent_text = latest_exchange.get("agent", "")[:100]
+                    user_text = latest_exchange.get("user", "")[:80]
+                    update = (
+                        f'[Latest exchange — You said: "{agent_text}" '
+                        f'Customer replied: "{user_text}" '
+                        f'Continue from next step. Same voice ({self._cached_voice}), same accent.]'
+                    )
+                    msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": update}]}], "turn_complete": False}}
+                    await ws.send(json.dumps(msg))
+                    self.log.detail(f"Swap update: {update[:80]}...")
             except Exception as e:
                 self.log.warn(f"Standby WS dead ({e}), falling back")
                 await self._close_ws_quietly(ws)
@@ -1096,29 +1129,7 @@ Rules:
                 await self._fallback_session_split()
                 return
 
-            # Step 2: Wait for setupComplete (~90ms)
-            setup_ok = False
-            try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                resp = json.loads(msg)
-                if "setupComplete" in resp:
-                    setup_ok = True
-                    ready_ms = (time.time() - self._setup_sent_time) * 1000
-                    self.log.detail(f"Standby ready ({ready_ms:.0f}ms)")
-            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
-                self.log.warn(f"Standby setup failed: {e}")
-
-            if not setup_ok:
-                self.log.warn("Standby setup not ready, falling back")
-                await self._close_ws_quietly(ws)
-                self._standby_ws = None
-                await self._fallback_session_split()
-                return
-
-            # Step 3: Send anti-repetition context (silent, turn_complete=False)
-            await self._send_context_to_ws(ws)
-
-            # Step 4: Atomic swap
+            # Atomic swap
             old_ws = self.goog_live_ws
             old_receive_task = self._active_receive_task
 
@@ -1143,7 +1154,6 @@ Rules:
 
             swap_ms = (time.time() - swap_start) * 1000
             self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count}) ✓ working well")
-            self.log.detail("Setup + context sent at swap time (fresh)")
             self.log.detail("Atomic swap complete")
             self.log.detail_last(f"Old session closed | Swap: {swap_ms:.0f}ms")
             self._save_transcript("SYSTEM", f"Hot-swap session split at turn #{self._turn_count} ({swap_ms:.0f}ms)")
