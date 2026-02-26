@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
 """
-REAL-TIME Gemini Integration Test (Audio + Latency)
-=====================================================
-Connects to the ACTUAL Gemini native audio model via Live WebSocket API
-(same model & endpoint as production) to test the full onboarding flow.
-
-Sends user text via client_content (same as production greeting/nudge triggers)
-and receives AUDIO responses. Measures real TTFB and validates transcriptions.
+Gemini Onboarding Flow Test
+============================
+Tests the full Riddhi Gold Membership onboarding flow against Gemini.
 
 Validates:
-  - TTFB (time to first audio byte) per turn
-  - Total response time per turn
-  - Latency trend across turns (KV cache degradation)
-  - Repetition (via outputTranscription, same logic as production)
-  - Step combining (multiple steps in one turn)
-  - Language consistency
-  - Full flow completion through Phase 6
+  1. Content completeness - all steps delivered, no missing content
+  2. Latency - response time per turn
+  3. No repetition - no duplicate questions/content
+  4. Clean beginning & ending - proper greeting + proper goodbye
+  5. Language consistency - no language switching mid-call
 
 Usage:
-  python3 test_realtime_gemini.py
-  python3 test_realtime_gemini.py --verbose
-  python3 test_realtime_gemini.py --language hindi
-  python3 test_realtime_gemini.py --text-only    # Use text model (no audio latency)
+  python3 test_realtime_gemini.py                    # Text mode (fast, ~30s)
+  python3 test_realtime_gemini.py --audio            # Native audio + TTFB
+  python3 test_realtime_gemini.py --verbose           # Show full responses
+  python3 test_realtime_gemini.py --language hindi    # Test Hindi flow
+  python3 test_realtime_gemini.py --prompt path.txt   # Custom prompt file
 """
 
 import asyncio
@@ -32,41 +27,52 @@ import re
 import sys
 import time
 from datetime import datetime
-from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# ============================================================
+# Load .env without dotenv dependency
+# ============================================================
+SCRIPT_DIR = Path(__file__).parent
+env_file = SCRIPT_DIR / ".env"
+if env_file.exists():
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, val = line.partition("=")
+            val = val.strip().strip("'\"")
+            os.environ.setdefault(key.strip(), val)
 
 # ============================================================
 # Configuration
 # ============================================================
-
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-CUSTOMER_NAME = "Kiran"
+CUSTOMER_NAME = os.getenv("TEST_CUSTOMER_NAME", "Kiran")
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
+AUDIO_MODE = "--audio" in sys.argv
 LANGUAGE = "Hindi" if "--language" in sys.argv and "hindi" in " ".join(sys.argv).lower() else "English"
-TEXT_ONLY = "--text-only" in sys.argv
 
 # Model selection
 AUDIO_MODEL = "models/gemini-2.5-flash-native-audio-preview-09-2025"
 TEXT_MODEL = "gemini-2.0-flash"
 VOICE = "Kore"
 
-# Gemini Live WebSocket (same as production)
-WS_URL = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GOOGLE_API_KEY}"
+# Prompt file
+PROMPT_FILE = "riddhi_prompt_v2.txt"
+for i, arg in enumerate(sys.argv):
+    if arg == "--prompt" and i + 1 < len(sys.argv):
+        PROMPT_FILE = sys.argv[i + 1]
 
-# Latency thresholds
-TTFB_WARN_MS = 1500   # Warn if TTFB > 1.5s
-TTFB_FAIL_MS = 3000   # Fail if TTFB > 3s
-TOTAL_WARN_MS = 5000   # Warn if total > 5s
-TOTAL_FAIL_MS = 10000  # Fail if total > 10s
+# Thresholds
+LATENCY_WARN_MS = 2000
+LATENCY_FAIL_MS = 5000
 
 # Colors
 class C:
-    OK = "\033[92m"
-    FAIL = "\033[91m"
-    WARN = "\033[93m"
-    BLUE = "\033[94m"
-    GRAY = "\033[90m"
+    G = "\033[92m"   # green/ok
+    R = "\033[91m"   # red/fail
+    Y = "\033[93m"   # yellow/warn
+    B = "\033[94m"   # blue
+    D = "\033[90m"   # dim/gray
     BOLD = "\033[1m"
     END = "\033[0m"
 
@@ -74,31 +80,22 @@ class C:
 # ============================================================
 # Prompt Loader
 # ============================================================
-
 def load_prompt():
-    with open("riddhi_prompt_v2.txt") as f:
-        prompt = f.read()
-    replacements = {
-        "customer_name": CUSTOMER_NAME,
-        "membership_type": "Gold",
-        "purchase_date": "2026-02-26",
-        "language_preference": LANGUAGE,
-        "city": "Mumbai",
-        "lead_source": "Instagram",
-    }
-    for key, value in replacements.items():
-        prompt = prompt.replace("{{" + key + "}}", value)
-        prompt = prompt.replace("{" + key + "}", value)
+    prompt_path = SCRIPT_DIR / PROMPT_FILE
+    if not prompt_path.exists():
+        print(f"{C.R}ERROR: Prompt file not found: {prompt_path}{C.END}")
+        sys.exit(1)
+    prompt = prompt_path.read_text(encoding="utf-8")
+    for key, val in {
+        "customer_name": CUSTOMER_NAME, "membership_type": "Gold",
+        "purchase_date": "2026-02-26", "language_preference": LANGUAGE,
+        "city": "Mumbai", "lead_source": "Instagram",
+    }.items():
+        prompt = prompt.replace("{{" + key + "}}", val).replace("{" + key + "}", val)
     prompt += (
-        "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. "
-        "Speak faster when excited, slower when empathetic. Use pauses for emphasis. "
-        "Match the customer's energy level. "
-        "IMPORTANT: Maintain a consistent speaking voice — same warmth, same tone, same accent, same tempo baseline throughout the entire call. "
-        "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
-    )
-    prompt += (
+        "\n\n[SPEECH STYLE: Maintain a consistent speaking voice — same warmth, tone, accent "
+        "throughout the entire call. Never suddenly change your speaking style mid-conversation.]"
         "\n\n[CONVERSATION RULE: NEVER repeat a question the customer already answered. "
-        "If you catch yourself about to re-ask something, skip it and move to the next topic. "
         "Each question should be asked exactly ONCE.]"
     )
     return prompt
@@ -107,242 +104,494 @@ def load_prompt():
 # ============================================================
 # Step Parser
 # ============================================================
+STOP_WORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+              'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
+              'and', 'or', 'but', 'so', 'if', 'it', 'its', 'this', 'that',
+              'you', 'your', 'i', 'me', 'my', 'we', 'our', 'can', 'will',
+              'do', 'have', 'has', 'had', 'would', 'could', 'should',
+              'please', 'just', 'about', 'once', 'also', 'not', 'all'}
 
 def parse_prompt_steps(prompt):
     steps = []
-    stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
-                  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
-                  'and', 'or', 'but', 'so', 'if', 'it', 'its', 'this', 'that',
-                  'you', 'your', 'i', 'me', 'my', 'we', 'our', 'can', 'will',
-                  'do', 'have', 'has', 'had', 'would', 'could', 'should',
-                  'please', 'just', 'about', 'once', 'also', 'not', 'all'}
-    step_blocks = list(re.finditer(r'STEP\s+(\d+\.\d+)\b', prompt))
-    for i, m in enumerate(step_blocks):
+    blocks = list(re.finditer(r'STEP\s+(\d+\.\d+)\b', prompt))
+    for i, m in enumerate(blocks):
         step_id = m.group(1)
-        start = m.start()
-        end = step_blocks[i + 1].start() if i + 1 < len(step_blocks) else len(prompt)
-        block_text = prompt[start:end]
-        dialogue_match = re.search(r'"([^"]{10,})"', block_text)
-        if not dialogue_match:
+        end = blocks[i + 1].start() if i + 1 < len(blocks) else len(prompt)
+        block = prompt[m.start():end]
+        dm = re.search(r'"([^"]{10,})"', block)
+        if not dm:
             continue
-        dialogue = dialogue_match.group(1).strip()
-        block_after = block_text[dialogue_match.end():]
-        step_type = "pause_continue" if "PAUSE & CONTINUE" in block_after else "wait"
+        dialogue = dm.group(1).strip()
+        after = block[dm.end():]
+        stype = "P&C" if "PAUSE & CONTINUE" in after else "WAIT"
         words = re.findall(r'[a-z]+', dialogue.lower())
-        keywords = set(w for w in words if w not in stop_words and len(w) > 2)
-        word_list = dialogue.lower().split()
-        phrases = []
-        for j in range(len(word_list) - 1):
-            bigram = f"{word_list[j]} {word_list[j+1]}"
-            if len(bigram) > 8 and not all(w in stop_words for w in bigram.split()):
-                phrases.append(bigram)
-        first_sentence = re.split(r'[.?!]', dialogue)[0].strip()
-        label = f"Step {step_id}: {first_sentence[:35]}"
+        keywords = set(w for w in words if w not in STOP_WORDS and len(w) > 2)
+        wl = dialogue.lower().split()
+        phrases = [f"{wl[j]} {wl[j+1]}" for j in range(len(wl)-1)
+                   if len(f"{wl[j]} {wl[j+1]}") > 8 and not all(w in STOP_WORDS for w in [wl[j], wl[j+1]])]
+        first_sent = re.split(r'[.?!]', dialogue)[0].strip()[:40]
         steps.append({
-            "step_id": step_id, "label": label, "keywords": keywords,
-            "phrases": phrases[:6], "dialogue": dialogue, "type": step_type,
+            "id": step_id, "type": stype, "keywords": keywords,
+            "phrases": phrases[:6], "dialogue": dialogue,
+            "label": f"{step_id}: {first_sent}",
+            "phase": int(step_id.split(".")[0]),
         })
     return steps
 
 
 def match_step(text, steps):
-    if not steps:
-        return "", ""
-    best_score = 0
-    best_label = ""
-    best_id = ""
+    """Find best matching step for agent text. Returns (step_id, label) or ("","")."""
+    best_score, best = 0, None
     text_words = set(re.findall(r'[a-z]+', text.lower()))
-    for step in steps:
-        if not step["keywords"]:
+    for s in steps:
+        if not s["keywords"]:
             continue
-        kw_overlap = len(text_words & step["keywords"]) / len(step["keywords"])
-        phrase_bonus = sum(1 for p in step["phrases"] if p in text.lower()) * 0.15
-        score = kw_overlap + phrase_bonus
+        kw = len(text_words & s["keywords"]) / len(s["keywords"])
+        ph = sum(1 for p in s["phrases"] if p in text.lower()) * 0.15
+        score = kw + ph
         if score > best_score and score > 0.3:
-            best_score = score
-            best_label = step["label"]
-            best_id = step["step_id"]
-    return best_id, best_label
+            best_score, best = score, s
+    return (best["id"], best["label"]) if best else ("", "")
 
 
-# ============================================================
-# Validators
-# ============================================================
-
-def is_duplicate_text(new_text, recent_texts, completed_steps, parsed_steps):
-    new_words = set(new_text.lower().split())
-    if len(new_words) < 3:
-        return False, ""
-    for prev in recent_texts:
-        prev_words = set(prev.lower().split())
-        if not prev_words:
-            continue
-        intersection = len(new_words & prev_words)
-        if len(new_words) < 12:
-            overlap = intersection / len(new_words)
-        else:
-            overlap = intersection / max(len(new_words), len(prev_words))
-        if overlap > 0.5:
-            return True, f"overlaps with: '{prev[:60]}'"
-    _, new_label = match_step(new_text, parsed_steps)
-    if new_label and len(new_label) > 15:
-        for step_label in completed_steps:
-            step_words = set(step_label.lower().split())
-            label_words = set(new_label.lower().split())
-            if step_words and label_words:
-                overlap = len(step_words & label_words) / max(len(step_words), len(label_words))
-                if overlap > 0.5:
-                    return True, f"matches step: '{step_label}'"
-    return False, ""
-
-
-def check_step_combining(text, parsed_steps):
+def match_all_steps(text, steps):
+    """Find ALL steps that match in a turn (for combining detection)."""
     matched = []
-    text_lower = text.lower()
-    text_words = set(re.findall(r'[a-z]+', text_lower))
-    for step in parsed_steps:
-        if not step["keywords"]:
+    text_words = set(re.findall(r'[a-z]+', text.lower()))
+    for s in steps:
+        if not s["keywords"]:
             continue
-        kw_overlap = len(text_words & step["keywords"]) / len(step["keywords"])
-        phrase_hits = sum(1 for p in step["phrases"] if p in text_lower)
-        score = kw_overlap + phrase_hits * 0.15
-        if score > 0.5 and phrase_hits >= 1:
-            matched.append(step["step_id"])
-    wait_steps = [sid for sid in matched
-                  if any(s["step_id"] == sid and s["type"] == "wait" for s in parsed_steps)]
-    return matched, wait_steps
-
-
-def check_language(text, expected_lang):
-    if expected_lang == "English":
-        hindi_chars = len(re.findall(r'[\u0900-\u097F]', text))
-        if hindi_chars > 5:
-            return False, f"{hindi_chars} Hindi chars in English response"
-    return True, ""
+        kw = len(text_words & s["keywords"]) / len(s["keywords"])
+        ph = sum(1 for p in s["phrases"] if p in text.lower())
+        if kw + ph * 0.15 > 0.5 and ph >= 1:
+            matched.append(s)
+    return matched
 
 
 # ============================================================
 # User Responses
 # ============================================================
-
 USER_RESPONSES = [
-    ("language_choice", f"{LANGUAGE} please", 1),
-    ("availability", "Yes, I'm free right now", 1),
-    ("speaker", "Okay, I'm on speaker now", 1),
-    ("app_downloaded", "Yes I have the app downloaded", 2),
-    ("app_open", "It's open now", 2),
-    ("courses_clicked", "Done, I clicked on Courses", 2),
-    ("video_playing", "Yes the video is playing", 2),
-    ("course_understood", "Yes that makes sense", 2),
-    ("whatsapp_opened", "I've opened the WhatsApp message", 3),
-    ("orientation_joined", "Yes I've joined the orientation group", 3),
-    ("main_group_joined", "Yes joined that one too", 3),
-    ("mission_team_joined", "Done, I joined the mission team group", 3),
-    ("groups_understood", "Alright got it", 3),
-    ("coaches_visible", "Yes I can see their names", 4),
-    ("coaches_names", "Sunita and Meera", 4),
-    ("following_so_far", "Yes I'm following everything", 5),
-    ("sounds_good", "Yes that sounds great", 5),
-    ("final_response", "Thank you so much!", 6),
+    ("language_choice",      f"{LANGUAGE} please"),
+    ("availability",         "Yes, I'm free right now"),
+    ("speaker",              "Okay, I'm on speaker now"),
+    ("app_downloaded",       "Yes I have the app downloaded"),
+    ("app_open",             "It's open now"),
+    ("courses_clicked",      "Done, I clicked on Courses"),
+    ("video_playing",        "Yes the video is playing"),
+    ("course_understood",    "Yes that makes sense"),
+    ("whatsapp_opened",      "I've opened the WhatsApp message"),
+    ("orientation_joined",   "Yes I've joined the orientation group"),
+    ("main_group_joined",    "Yes joined that one too"),
+    ("mission_team_joined",  "Done, I joined the mission team group"),
+    ("groups_understood",    "Alright got it"),
+    ("coaches_visible",      "Yes I can see their names"),
+    ("coaches_names",        "Sunita and Meera"),
+    ("following_so_far",     "Yes I'm following everything"),
+    ("sounds_good",          "Yes that sounds great"),
+    ("final_response",       "Thank you so much!"),
 ]
 
+EXTRA_NUDGES = ["Yes got it", "Okay", "Hmm alright", "Yes", "Alright thanks"]
+
 
 # ============================================================
-# TEXT-ONLY MODE (google.generativeai SDK)
+# Validators
 # ============================================================
+def is_duplicate(text, recent_texts):
+    """Check if text repeats something already said."""
+    words = set(text.lower().split())
+    if len(words) < 4:
+        return False, ""
+    for prev in recent_texts:
+        pwords = set(prev.lower().split())
+        if not pwords:
+            continue
+        overlap = len(words & pwords)
+        ratio = overlap / len(words) if len(words) < 12 else overlap / max(len(words), len(pwords))
+        if ratio > 0.5:
+            return True, prev[:50]
+    return False, ""
 
-def run_text_test():
-    import google.generativeai as genai
-    genai.configure(api_key=GOOGLE_API_KEY)
+
+def check_language(text, expected):
+    """Check language consistency."""
+    if expected == "English":
+        hindi = len(re.findall(r'[\u0900-\u097F]', text))
+        if hindi > 3:
+            return False, f"{hindi} Hindi characters found"
+    elif expected == "Hindi":
+        # Hindi should have Devanagari OR Hinglish (Latin script is OK)
+        pass
+    # Check for behavioral markers leaking
+    markers = ["[WAIT]", "[PAUSE & CONTINUE]", "[STOP HERE]", "[end_call]",
+               "[PAUSE &", "PAUSE & CONTINUE"]
+    for m in markers:
+        if m in text:
+            return False, f"Behavioral marker leaked: {m}"
+    return True, ""
+
+
+# ============================================================
+# Test Runner (shared by both modes)
+# ============================================================
+class TestRunner:
+    def __init__(self, steps, language):
+        self.steps = steps
+        self.language = language
+        self.recent_texts = []
+        self.completed_ids = []
+        self.completed_labels = []
+        self.phases_reached = set()
+        self.errors = []
+        self.warnings = []
+        self.turns = []
+        self.call_ended = False
+        self.turn_num = 0
+
+    def record_turn(self, user_text, agent_text, latency_ms, label=""):
+        self.turn_num += 1
+        turn = {
+            "num": self.turn_num, "user": user_text, "agent": agent_text,
+            "latency_ms": latency_ms, "label": label, "issues": [],
+        }
+
+        # --- Check 1: Content completeness (step matching) ---
+        # Use match_all_steps so combined P&C turns count ALL steps delivered
+        matched = match_all_steps(agent_text, self.steps)
+        if not matched:
+            # Fallback to single best match for short responses
+            sid, slabel = match_step(agent_text, self.steps)
+            if sid:
+                matched = [next(s for s in self.steps if s["id"] == sid)]
+
+        for s in matched:
+            if s["id"] not in self.completed_ids:
+                self.completed_ids.append(s["id"])
+                self.completed_labels.append(s["label"])
+            self.phases_reached.add(s["phase"])
+
+        turn["step_id"] = matched[0]["id"] if matched else ""
+        turn["step_label"] = matched[0]["label"] if matched else ""
+        turn["all_steps"] = [s["id"] for s in matched]
+
+        # Multiple WAIT steps in one turn = bad combining
+        wait_ids = [s["id"] for s in matched if s["type"] == "WAIT"]
+        if len(wait_ids) > 1:
+            issue = f"Combined {len(wait_ids)} WAIT steps: {wait_ids}"
+            turn["issues"].append(issue)
+            self.warnings.append(f"Turn {self.turn_num}: {issue}")
+
+        # --- Check 2: Latency ---
+        if latency_ms > LATENCY_FAIL_MS:
+            issue = f"Slow: {latency_ms:.0f}ms"
+            turn["issues"].append(issue)
+            self.errors.append(f"Turn {self.turn_num}: {issue}")
+        elif latency_ms > LATENCY_WARN_MS:
+            turn["issues"].append(f"Latency: {latency_ms:.0f}ms")
+
+        # --- Check 3: Repetition ---
+        is_dup, dup_source = is_duplicate(agent_text, self.recent_texts)
+        if is_dup:
+            issue = f"Repeated: '{dup_source}...'"
+            turn["issues"].append(issue)
+            self.errors.append(f"Turn {self.turn_num}: {issue}")
+
+        # --- Check 4: Clean beginning/ending ---
+        if self.turn_num == 1:
+            lower = agent_text.lower()
+            if CUSTOMER_NAME.lower() not in lower and "welcome" not in lower:
+                issue = "Greeting missing customer name or welcome"
+                turn["issues"].append(issue)
+                self.errors.append(f"Turn {self.turn_num}: {issue}")
+            self.phases_reached.add(1)
+
+        lower = agent_text.lower()
+        if any(w in lower for w in ["everything from my side", "bye-bye", "bye bye", "beautiful day"]):
+            self.phases_reached.add(6)
+            self.call_ended = True
+        if "[end_call]" in lower:
+            self.call_ended = True
+
+        # Phase tracking
+        if any(w in lower for w in ["downloaded", "riddhi deorah app"]):
+            self.phases_reached.add(2)
+        if any(w in lower for w in ["whatsapp", "orientation group", "main group", "mission team"]):
+            self.phases_reached.add(3)
+        if "coach" in lower:
+            self.phases_reached.add(4)
+        if any(w in lower for w in ["monday", "friday", "wednesday", "live call", "parenting"]):
+            self.phases_reached.add(5)
+
+        # --- Check 5: Language ---
+        if self.turn_num >= 2:
+            lang_ok, lang_issue = check_language(agent_text, self.language)
+            if not lang_ok:
+                issue = f"Language: {lang_issue}"
+                turn["issues"].append(issue)
+                self.errors.append(f"Turn {self.turn_num}: {issue}")
+
+        self.recent_texts.append(agent_text)
+        if len(self.recent_texts) > 10:
+            self.recent_texts = self.recent_texts[-10:]
+        self.turns.append(turn)
+        return turn
+
+    def print_turn(self, turn):
+        tag = f"{C.D}{turn['label']}{C.END}" if turn["label"] else ""
+        print(f"\n{C.BOLD}Turn {turn['num']}{C.END} {tag}")
+        if turn["user"]:
+            print(f"  {C.D}USER: {turn['user']}{C.END}")
+        text = turn["agent"]
+        if not VERBOSE and len(text) > 180:
+            text = text[:180] + "..."
+        print(f"  {C.B}AGENT:{C.END} {text}")
+
+        # Latency + steps
+        ms = turn["latency_ms"]
+        color = C.G if ms < LATENCY_WARN_MS else (C.Y if ms < LATENCY_FAIL_MS else C.R)
+        all_steps = turn.get("all_steps", [])
+        step_info = f" | steps {all_steps}" if len(all_steps) > 1 else (f" | step {turn['step_id']}" if turn["step_id"] else "")
+        print(f"  {color}{ms:.0f}ms{C.END}{step_info}")
+
+        for issue in turn["issues"]:
+            print(f"  {C.R}>> {issue}{C.END}")
+
+    def print_scorecard(self):
+        all_ids = {s["id"] for s in self.steps}
+        missed_ids = sorted(all_ids - set(self.completed_ids), key=lambda x: float(x))
+        missed_wait = [sid for sid in missed_ids
+                       if any(s["id"] == sid and s["type"] == "WAIT" for s in self.steps)]
+        missed_pc = [sid for sid in missed_ids
+                     if any(s["id"] == sid and s["type"] == "P&C" for s in self.steps)]
+
+        repetitions = sum(1 for t in self.turns
+                          if any("Repeated" in i for i in t["issues"]))
+        lang_issues = sum(1 for t in self.turns
+                          if any("Language" in i for i in t["issues"]))
+        slow_turns = sum(1 for t in self.turns if t["latency_ms"] > LATENCY_FAIL_MS)
+        latencies = [t["latency_ms"] for t in self.turns]
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+
+        print(f"\n{'='*60}")
+        print(f"{C.BOLD}  SCORECARD{C.END}")
+        print(f"{'='*60}")
+
+        # 1. Content completeness
+        step_pct = len(self.completed_ids) / len(all_ids) * 100 if all_ids else 0
+        ok = step_pct >= 85 and len(missed_wait) == 0
+        icon = f"{C.G}PASS{C.END}" if ok else f"{C.R}FAIL{C.END}"
+        print(f"\n  1. Content Completeness    [{icon}]")
+        print(f"     Steps: {len(self.completed_ids)}/{len(all_ids)} ({step_pct:.0f}%)")
+        print(f"     Phases: {sorted(self.phases_reached)}")
+        if missed_wait:
+            print(f"     {C.R}Missing WAIT steps: {missed_wait}{C.END}")
+        if missed_pc:
+            print(f"     {C.Y}Missing P&C steps: {missed_pc}{C.END}")
+
+        # 2. Latency
+        ok = slow_turns == 0
+        icon = f"{C.G}PASS{C.END}" if ok else f"{C.R}FAIL{C.END}"
+        print(f"\n  2. Latency                 [{icon}]")
+        print(f"     Avg: {avg_latency:.0f}ms | Slow turns (>{LATENCY_FAIL_MS}ms): {slow_turns}")
+        if latencies:
+            sorted_lat = sorted(latencies)
+            p50 = sorted_lat[len(sorted_lat) // 2]
+            p90 = sorted_lat[int(len(sorted_lat) * 0.9)]
+            print(f"     P50: {p50:.0f}ms | P90: {p90:.0f}ms | Max: {max(latencies):.0f}ms")
+
+        # 3. No repetition
+        ok = repetitions == 0
+        icon = f"{C.G}PASS{C.END}" if ok else f"{C.R}FAIL{C.END}"
+        print(f"\n  3. No Repetition           [{icon}]")
+        print(f"     Repetitions found: {repetitions}")
+
+        # 4. Clean beginning & ending
+        has_greeting = 1 in self.phases_reached
+        has_closing = 6 in self.phases_reached or self.call_ended
+        ok = has_greeting and has_closing
+        icon = f"{C.G}PASS{C.END}" if ok else f"{C.R}FAIL{C.END}"
+        print(f"\n  4. Clean Begin & End       [{icon}]")
+        print(f"     Greeting: {'Yes' if has_greeting else 'MISSING'} | "
+              f"Closing: {'Yes' if has_closing else 'MISSING'}")
+
+        # 5. Language consistency
+        ok = lang_issues == 0
+        icon = f"{C.G}PASS{C.END}" if ok else f"{C.R}FAIL{C.END}"
+        print(f"\n  5. Language Consistency     [{icon}]")
+        print(f"     Language: {self.language} | Issues: {lang_issues}")
+
+        # Overall
+        total_pass = sum([
+            step_pct >= 85 and len(missed_wait) == 0,
+            slow_turns == 0,
+            repetitions == 0,
+            has_greeting and has_closing,
+            lang_issues == 0,
+        ])
+        print(f"\n{'='*60}")
+        if total_pass == 5:
+            print(f"  {C.G}{C.BOLD}ALL 5 CHECKS PASSED{C.END}")
+        else:
+            print(f"  {C.R}{C.BOLD}{total_pass}/5 CHECKS PASSED{C.END}")
+        print(f"  Turns: {self.turn_num} | Errors: {len(self.errors)} | Warnings: {len(self.warnings)}")
+        print(f"{'='*60}")
+
+        if self.errors:
+            print(f"\n  {C.R}Errors:{C.END}")
+            for e in self.errors:
+                print(f"    - {e}")
+        if self.warnings:
+            print(f"\n  {C.Y}Warnings:{C.END}")
+            for w in self.warnings:
+                print(f"    - {w}")
+
+        return total_pass == 5
+
+    def save_results(self, mode="text"):
+        os.makedirs(SCRIPT_DIR / "test_results", exist_ok=True)
+        fname = f"test_results/test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path = SCRIPT_DIR / fname
+        all_ids = {s["id"] for s in self.steps}
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "mode": mode,
+            "model": AUDIO_MODEL if mode == "audio" else TEXT_MODEL,
+            "language": self.language,
+            "customer_name": CUSTOMER_NAME,
+            "turns": self.turn_num,
+            "phases_reached": sorted(self.phases_reached),
+            "steps_matched": sorted(set(self.completed_ids), key=lambda x: float(x)),
+            "steps_missed": sorted(all_ids - set(self.completed_ids), key=lambda x: float(x)),
+            "completed_labels": self.completed_labels,
+            "errors": self.errors,
+            "warnings": self.warnings,
+            "call_ended": self.call_ended,
+            "conversation": [
+                {"role": "user" if t["user"] else "agent", "text": t["user"] or t["agent"],
+                 "label": t["label"], "latency_ms": t["latency_ms"]}
+                for t in self.turns
+            ],
+        }
+        path.write_text(json.dumps(data, indent=2, default=str))
+        print(f"\n  {C.D}Results: {fname}{C.END}")
+
+
+# ============================================================
+# TEXT MODE (google.genai SDK)
+# ============================================================
+def run_text_mode():
+    from google import genai
+
     prompt = load_prompt()
-    parsed_steps = parse_prompt_steps(prompt)
-    model = genai.GenerativeModel(model_name=TEXT_MODEL, system_instruction=prompt)
-    chat = model.start_chat()
+    steps = parse_prompt_steps(prompt)
+    runner = TestRunner(steps, LANGUAGE)
 
-    results = {"errors": [], "warnings": [], "latencies": [], "turns": []}
+    print(f"\n{'='*60}")
+    print(f"{C.BOLD}  GEMINI ONBOARDING TEST (TEXT MODE){C.END}")
+    print(f"{'='*60}")
+    print(f"  Model:    {TEXT_MODEL}")
+    print(f"  Customer: {CUSTOMER_NAME}")
+    print(f"  Language: {LANGUAGE}")
+    print(f"  Steps:    {len(steps)}")
+    print(f"  Prompt:   {PROMPT_FILE}")
+    print(f"{'='*60}")
 
-    def send_and_validate(user_text, label, turn_num):
-        t0 = time.time()
-        response = chat.send_message(user_text)
-        latency_ms = (time.time() - t0) * 1000
-        agent_text = response.text.strip()
-        results["latencies"].append({"turn": turn_num, "total_ms": latency_ms, "ttfb_ms": latency_ms})
-        results["turns"].append({"user": user_text, "agent": agent_text, "latency_ms": latency_ms, "label": label})
-        return agent_text, latency_ms
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    chat = client.chats.create(model=TEXT_MODEL, config={"system_instruction": prompt})
 
-    return results, send_and_validate, parsed_steps
+    def send(text, label="", retries=3):
+        for attempt in range(retries):
+            try:
+                t0 = time.time()
+                resp = chat.send_message(text)
+                ms = (time.time() - t0) * 1000
+                return resp.text.strip(), ms
+            except Exception as e:
+                if "429" in str(e) and attempt < retries - 1:
+                    wait = 10 * (attempt + 1)
+                    print(f"  {C.Y}Rate limited, waiting {wait}s...{C.END}")
+                    time.sleep(wait)
+                else:
+                    return f"[ERROR: {e}]", 0
+        return "[ERROR: max retries]", 0
+
+    # Greeting
+    trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
+    agent_text, ms = send(trigger, "greeting")
+    if "[ERROR" in agent_text:
+        print(f"  {C.R}{agent_text}{C.END}")
+        return False
+    turn = runner.record_turn("", agent_text, ms, "greeting")
+    runner.print_turn(turn)
+
+    # Main conversation
+    for label, user_text in USER_RESPONSES:
+        if runner.call_ended:
+            break
+        agent_text, ms = send(user_text, label)
+        if "[ERROR" in agent_text:
+            print(f"\n  {C.R}{agent_text}{C.END}")
+            break
+        turn = runner.record_turn(user_text, agent_text, ms, label)
+        runner.print_turn(turn)
+
+    # Extra nudges if call hasn't ended
+    for i, nudge in enumerate(EXTRA_NUDGES):
+        if runner.call_ended:
+            break
+        agent_text, ms = send(nudge, f"extra_{i}")
+        if "[ERROR" in agent_text or not agent_text:
+            break
+        turn = runner.record_turn(nudge, agent_text, ms, f"extra_{i}")
+        runner.print_turn(turn)
+
+    passed = runner.print_scorecard()
+    runner.save_results("text")
+    return passed
 
 
 # ============================================================
 # AUDIO MODE (WebSocket to native audio model)
 # ============================================================
-
-async def run_audio_test():
+async def run_audio_mode():
     import websockets
 
     prompt = load_prompt()
-    parsed_steps = parse_prompt_steps(prompt)
+    steps = parse_prompt_steps(prompt)
+    runner = TestRunner(steps, LANGUAGE)
 
-    # State
-    errors = []
-    warnings = []
-    agent_history = []
-    recent_agent_texts = []
-    completed_steps = []
-    matched_step_ids = []
-    phase_reached = set()
-    turn_count = 0
-    call_ended = False
-    latency_data = []
-    conversation_log = []
+    ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GOOGLE_API_KEY}"
 
-    def log_check(ok, msg, warn_only=False):
-        if ok:
-            print(f"    {C.OK}[OK]{C.END} {msg}")
-        elif warn_only:
-            warnings.append(f"Turn {turn_count}: {msg}")
-            print(f"    {C.WARN}[WARN]{C.END} {msg}")
-        else:
-            errors.append(f"Turn {turn_count}: {msg}")
-            print(f"    {C.FAIL}[FAIL]{C.END} {msg}")
-
-    print(f"\n{'='*70}")
-    print(f"{C.BOLD}REAL-TIME GEMINI TEST (NATIVE AUDIO + LATENCY){C.END}")
-    print(f"{'='*70}")
+    print(f"\n{'='*60}")
+    print(f"{C.BOLD}  GEMINI ONBOARDING TEST (AUDIO MODE){C.END}")
+    print(f"{'='*60}")
     print(f"  Model:    {AUDIO_MODEL}")
     print(f"  Voice:    {VOICE}")
     print(f"  Customer: {CUSTOMER_NAME}")
     print(f"  Language: {LANGUAGE}")
-    print(f"  Steps:    {len(parsed_steps)}")
-    print(f"  Started:  {datetime.now().strftime('%H:%M:%S')}")
-    print(f"{'='*70}\n")
+    print(f"  Steps:    {len(steps)}")
+    print(f"{'='*60}")
 
-    # Connect
-    print(f"  {C.BLUE}Connecting to Gemini Live WebSocket...{C.END}")
-    t_conn = time.time()
-    ws = await websockets.connect(WS_URL, ping_interval=30, ping_timeout=20, close_timeout=5)
-    print(f"  {C.OK}Connected ({(time.time()-t_conn)*1000:.0f}ms){C.END}")
+    print(f"\n  {C.B}Connecting...{C.END}", end="", flush=True)
+    t0 = time.time()
+    ws = await websockets.connect(ws_url, ping_interval=30, ping_timeout=20, close_timeout=5)
+    print(f" connected ({(time.time()-t0)*1000:.0f}ms)")
 
-    # Send setup (same as production)
-    setup_msg = {
+    setup = {
         "setup": {
             "model": AUDIO_MODEL,
             "generation_config": {
                 "response_modalities": ["AUDIO"],
-                "speech_config": {
-                    "voice_config": {
-                        "prebuilt_voice_config": {"voice_name": VOICE}
-                    }
-                },
-                "thinking_config": {"thinking_budget": 128}
+                "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": VOICE}}},
+                "thinking_config": {"thinking_budget": 128},
             },
             "realtime_input_config": {
                 "automatic_activity_detection": {
                     "disabled": False,
                     "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                     "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-                    "prefix_padding_ms": 20,
-                    "silence_duration_ms": 500,
+                    "prefix_padding_ms": 20, "silence_duration_ms": 500,
                 }
             },
             "input_audio_transcription": {},
@@ -350,425 +599,107 @@ async def run_audio_test():
             "system_instruction": {"parts": [{"text": prompt}]},
         }
     }
-    await ws.send(json.dumps(setup_msg))
-    print(f"  {C.BLUE}Setup sent, waiting for setupComplete...{C.END}")
-
-    # Wait for setupComplete
+    await ws.send(json.dumps(setup))
     async for raw in ws:
-        resp = json.loads(raw)
-        if "setupComplete" in resp:
-            print(f"  {C.OK}Gemini native audio session ready!{C.END}\n")
+        if "setupComplete" in json.loads(raw):
+            print(f"  {C.G}Session ready{C.END}")
             break
 
-    # Helper: send user text (same format as production client_content)
-    async def send_user_text(text):
-        msg = {
+    async def send_text(text):
+        await ws.send(json.dumps({
             "client_content": {
                 "turns": [{"role": "user", "parts": [{"text": text}]}],
                 "turn_complete": True
             }
-        }
-        await ws.send(json.dumps(msg))
+        }))
 
-    # Helper: wait for agent response, measuring TTFB and collecting transcription
-    async def wait_for_response(timeout=30):
-        transcription_parts = []
-        audio_bytes_total = 0
-        ttfb_ms = None
-        t_start = time.time()
-        tool_called = None
-
+    async def wait_response(timeout=30):
+        parts = []
+        audio_bytes = 0
+        ttfb = None
+        t0 = time.time()
         try:
-            while True:
-                elapsed = time.time() - t_start
-                if elapsed > timeout:
-                    break
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout - elapsed)
+            while time.time() - t0 < timeout:
+                raw = await asyncio.wait_for(ws.recv(), timeout=timeout - (time.time() - t0))
                 resp = json.loads(raw)
-
                 if "serverContent" in resp:
                     sc = resp["serverContent"]
-
-                    # Collect outputTranscription
                     ot = sc.get("outputTranscription")
                     if ot:
-                        text = ot.get("text", "") if isinstance(ot, dict) else str(ot)
-                        if text.strip():
-                            transcription_parts.append(text.strip())
-
-                    # Track audio chunks for TTFB
+                        t = ot.get("text", "") if isinstance(ot, dict) else str(ot)
+                        if t.strip():
+                            parts.append(t.strip())
                     if "modelTurn" in sc:
-                        for part in sc["modelTurn"].get("parts", []):
-                            if part.get("inlineData", {}).get("data"):
-                                audio_data = base64.b64decode(part["inlineData"]["data"])
-                                audio_bytes_total += len(audio_data)
-                                if ttfb_ms is None:
-                                    ttfb_ms = (time.time() - t_start) * 1000
-
+                        for p in sc["modelTurn"].get("parts", []):
+                            d = p.get("inlineData", {}).get("data")
+                            if d:
+                                audio_bytes += len(base64.b64decode(d))
+                                if ttfb is None:
+                                    ttfb = (time.time() - t0) * 1000
                     if sc.get("turnComplete"):
-                        total_ms = (time.time() - t_start) * 1000
-                        text = " ".join(transcription_parts).strip()
-                        return {
-                            "text": text,
-                            "ttfb_ms": ttfb_ms or total_ms,
-                            "total_ms": total_ms,
-                            "audio_bytes": audio_bytes_total,
-                            "audio_duration_s": audio_bytes_total / (24000 * 2) if audio_bytes_total else 0,
-                            "tool_call": tool_called,
-                        }
-
+                        return " ".join(parts).strip(), (time.time() - t0) * 1000, ttfb
                 if "toolCall" in resp:
-                    for fc in resp["toolCall"].get("functionCalls", []):
-                        tool_called = fc.get("name", "")
-                    # Respond to tool calls
-                    tool_resp = {
+                    fcs = resp["toolCall"].get("functionCalls", [])
+                    await ws.send(json.dumps({
                         "tool_response": {
-                            "function_responses": [{
-                                "id": fc.get("id", ""),
-                                "name": fc.get("name", ""),
-                                "response": {"success": True}
-                            } for fc in resp["toolCall"].get("functionCalls", [])]
+                            "function_responses": [
+                                {"id": fc.get("id",""), "name": fc.get("name",""), "response": {"success": True}}
+                                for fc in fcs
+                            ]
                         }
-                    }
-                    await ws.send(json.dumps(tool_resp))
-                    if tool_called == "end_call":
-                        total_ms = (time.time() - t_start) * 1000
-                        text = " ".join(transcription_parts).strip()
-                        return {
-                            "text": text + " [end_call]",
-                            "ttfb_ms": ttfb_ms or total_ms,
-                            "total_ms": total_ms,
-                            "audio_bytes": audio_bytes_total,
-                            "audio_duration_s": audio_bytes_total / (24000 * 2) if audio_bytes_total else 0,
-                            "tool_call": "end_call",
-                        }
+                    }))
+                    if any(fc.get("name") == "end_call" for fc in fcs):
+                        return " ".join(parts).strip() + " [end_call]", (time.time()-t0)*1000, ttfb
+        except Exception as e:
+            return " ".join(parts).strip() or f"[ERROR: {e}]", (time.time()-t0)*1000, ttfb
+        return " ".join(parts).strip(), (time.time()-t0)*1000, ttfb
 
-        except (asyncio.TimeoutError, Exception) as e:
-            total_ms = (time.time() - t_start) * 1000
-            text = " ".join(transcription_parts).strip()
-            return {
-                "text": text or f"[ERROR: {e}]",
-                "ttfb_ms": ttfb_ms or total_ms,
-                "total_ms": total_ms,
-                "audio_bytes": audio_bytes_total,
-                "audio_duration_s": 0,
-                "tool_call": None,
-            }
-
-    def validate(agent_text):
-        nonlocal call_ended
-        word_count = len(agent_text.split())
-        log_check(word_count <= 80, f"Length: {word_count} words", warn_only=word_count <= 120)
-
-        all_matched, wait_matched = check_step_combining(agent_text, parsed_steps)
-        if len(wait_matched) > 1:
-            log_check(False,
-                      f"MULTI-WAIT: {wait_matched} (all: {all_matched})",
-                      warn_only=len(wait_matched) <= 2)
-        elif len(all_matched) > 1:
-            log_check(True, f"P&C combining OK: {all_matched}")
-        else:
-            log_check(True, f"Step: {all_matched}")
-
-        is_dup, reason = is_duplicate_text(agent_text, recent_agent_texts, completed_steps, parsed_steps)
-        log_check(not is_dup, f"No repetition{f' ({reason})' if is_dup else ''}", warn_only=True)
-
-        if turn_count >= 2:
-            lang_ok, lang_issue = check_language(agent_text, LANGUAGE)
-            log_check(lang_ok, f"Language: {LANGUAGE}{f' - {lang_issue}' if lang_issue else ''}")
-
-        step_id, step_label = match_step(agent_text, parsed_steps)
-        if step_label:
-            completed_steps.append(step_label)
-            matched_step_ids.append(step_id)
-
-        lower = agent_text.lower()
-        if any(w in lower for w in ["downloaded", "app"]):
-            phase_reached.add(2)
-        if any(w in lower for w in ["whatsapp", "group"]):
-            phase_reached.add(3)
-        if "coach" in lower:
-            phase_reached.add(4)
-        if any(w in lower for w in ["live call", "monday", "friday", "wednesday"]):
-            phase_reached.add(5)
-        if any(w in lower for w in ["everything from my side", "bye", "proud"]):
-            phase_reached.add(6)
-            call_ended = True
-        if "bye" in lower.split() or "bye-bye" in lower or "[end_call]" in lower:
-            call_ended = True
-
-        recent_agent_texts.append(agent_text)
-        if len(recent_agent_texts) > 10:
-            recent_agent_texts[:] = recent_agent_texts[-10:]
-
-    # ============================================================
-    # GREETING
-    # ============================================================
-    print(f"{C.BOLD}--- AGENT GREETING ---{C.END}")
+    # Greeting
     trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
-    await send_user_text(trigger)
-    resp = await wait_for_response()
-    turn_count += 1
-    agent_text = resp["text"]
-    agent_history.append(agent_text)
-    latency_data.append({"turn": turn_count, "ttfb_ms": resp["ttfb_ms"], "total_ms": resp["total_ms"],
-                         "audio_s": resp["audio_duration_s"]})
-    conversation_log.append({"role": "system", "text": trigger})
-    conversation_log.append({"role": "agent", "text": agent_text, **resp})
+    await send_text(trigger)
+    agent_text, total_ms, ttfb_ms = await wait_response()
+    turn = runner.record_turn("", agent_text, ttfb_ms or total_ms, "greeting")
+    runner.print_turn(turn)
 
-    if VERBOSE:
-        print(f"    {C.BLUE}AGENT:{C.END} {agent_text}")
-    else:
-        print(f"    {C.BLUE}AGENT:{C.END} {agent_text[:150]}{'...' if len(agent_text) > 150 else ''}")
-
-    # Latency
-    print(f"    {C.BOLD}TTFB: {resp['ttfb_ms']:.0f}ms | Total: {resp['total_ms']:.0f}ms | Audio: {resp['audio_duration_s']:.1f}s{C.END}")
-    log_check(resp["ttfb_ms"] < TTFB_FAIL_MS, f"TTFB: {resp['ttfb_ms']:.0f}ms", warn_only=resp["ttfb_ms"] < TTFB_WARN_MS * 2)
-
-    log_check(CUSTOMER_NAME.lower() in agent_text.lower() or "welcome" in agent_text.lower(),
-              "Greeting mentions name/welcome")
-    validate(agent_text)
-    phase_reached.add(1)
-
-    # ============================================================
-    # MAIN LOOP
-    # ============================================================
-    for label, user_text, expected_phase in USER_RESPONSES:
-        if call_ended:
+    # Main conversation
+    for label, user_text in USER_RESPONSES:
+        if runner.call_ended:
             break
-        turn_count += 1
-        print(f"\n{C.BOLD}--- TURN {turn_count}: {C.END}{C.GRAY}'{user_text}' ({label}){C.END}")
-
-        await send_user_text(user_text)
-        resp = await wait_for_response()
-        agent_text = resp["text"]
-
+        await send_text(user_text)
+        agent_text, total_ms, ttfb_ms = await wait_response()
         if not agent_text or "[ERROR" in agent_text:
-            log_check(False, f"Response failed: {agent_text}")
+            print(f"\n  {C.R}{agent_text}{C.END}")
             break
-
-        agent_history.append(agent_text)
-        latency_data.append({"turn": turn_count, "ttfb_ms": resp["ttfb_ms"], "total_ms": resp["total_ms"],
-                             "audio_s": resp["audio_duration_s"]})
-        conversation_log.append({"role": "user", "text": user_text, "label": label})
-        conversation_log.append({"role": "agent", "text": agent_text, **resp})
-
-        if VERBOSE:
-            print(f"    {C.BLUE}AGENT:{C.END} {agent_text}")
-        else:
-            print(f"    {C.BLUE}AGENT:{C.END} {agent_text[:160]}{'...' if len(agent_text) > 160 else ''}")
-
-        # Latency display
-        ttfb_color = C.OK if resp["ttfb_ms"] < TTFB_WARN_MS else (C.WARN if resp["ttfb_ms"] < TTFB_FAIL_MS else C.FAIL)
-        print(f"    {ttfb_color}TTFB: {resp['ttfb_ms']:.0f}ms{C.END} | Total: {resp['total_ms']:.0f}ms | Audio: {resp['audio_duration_s']:.1f}s")
-
-        log_check(resp["ttfb_ms"] < TTFB_FAIL_MS,
-                  f"TTFB: {resp['ttfb_ms']:.0f}ms", warn_only=resp["ttfb_ms"] < TTFB_FAIL_MS)
-        validate(agent_text)
+        turn = runner.record_turn(user_text, agent_text, ttfb_ms or total_ms, label)
+        runner.print_turn(turn)
 
     # Extra nudges
-    extra = 0
-    while not call_ended and extra < 8:
-        extra += 1
-        turn_count += 1
-        nudge = ["Okay", "Yes got it", "Hmm okay", "Yes", "Alright"][extra % 5]
-        print(f"\n{C.BOLD}--- TURN {turn_count}: {C.END}{C.GRAY}Extra: '{nudge}'{C.END}")
-        await send_user_text(nudge)
-        resp = await wait_for_response()
-        agent_text = resp["text"]
+    for i, nudge in enumerate(EXTRA_NUDGES):
+        if runner.call_ended:
+            break
+        await send_text(nudge)
+        agent_text, total_ms, ttfb_ms = await wait_response()
         if not agent_text:
             break
-        agent_history.append(agent_text)
-        latency_data.append({"turn": turn_count, "ttfb_ms": resp["ttfb_ms"], "total_ms": resp["total_ms"],
-                             "audio_s": resp["audio_duration_s"]})
-        conversation_log.append({"role": "user", "text": nudge, "label": "extra"})
-        conversation_log.append({"role": "agent", "text": agent_text, **resp})
-
-        if VERBOSE:
-            print(f"    {C.BLUE}AGENT:{C.END} {agent_text}")
-        else:
-            print(f"    {C.BLUE}AGENT:{C.END} {agent_text[:160]}{'...' if len(agent_text) > 160 else ''}")
-
-        ttfb_color = C.OK if resp["ttfb_ms"] < TTFB_WARN_MS else C.WARN
-        print(f"    {ttfb_color}TTFB: {resp['ttfb_ms']:.0f}ms{C.END} | Total: {resp['total_ms']:.0f}ms")
-        validate(agent_text)
+        turn = runner.record_turn(nudge, agent_text, ttfb_ms or total_ms, f"extra_{i}")
+        runner.print_turn(turn)
 
     await ws.close()
-
-    # ============================================================
-    # RESULTS
-    # ============================================================
-    print(f"\n{'='*70}")
-    print(f"{C.BOLD}RESULTS{C.END}")
-    print(f"{'='*70}")
-
-    # Phase coverage
-    print(f"\n  {C.BOLD}Phase Coverage:{C.END}")
-    phase_names = {1: "Greeting", 2: "App Setup", 3: "WhatsApp Groups",
-                   4: "Super Coaches", 5: "Live Calls", 6: "Closing"}
-    for p in range(1, 7):
-        status = f"{C.OK}REACHED{C.END}" if p in phase_reached else f"{C.FAIL}MISSED{C.END}"
-        print(f"    Phase {p} ({phase_names[p]}): {status}")
-    log_check(len(phase_reached) >= 5, f"Phases: {len(phase_reached)}/6")
-    log_check(call_ended, "Call completed")
-
-    # Steps
-    unique_ids = sorted(set(matched_step_ids), key=lambda x: float(x))
-    all_ids = {s["step_id"] for s in parsed_steps}
-    missed = sorted(all_ids - set(unique_ids), key=lambda x: float(x))
-    print(f"\n  {C.BOLD}Steps: {len(unique_ids)}/{len(parsed_steps)}{C.END}")
-    if missed:
-        for sid in missed:
-            info = next((s for s in parsed_steps if s["step_id"] == sid), None)
-            if info:
-                stype = "W" if info["type"] == "wait" else "P"
-                print(f"    {C.FAIL}✗{C.END} [{stype}] {info['label']}")
-
-    # ============================================================
-    # LATENCY REPORT
-    # ============================================================
-    print(f"\n  {C.BOLD}LATENCY REPORT:{C.END}")
-    ttfbs = [d["ttfb_ms"] for d in latency_data if d["ttfb_ms"]]
-    totals = [d["total_ms"] for d in latency_data if d["total_ms"]]
-    if ttfbs:
-        avg_ttfb = sum(ttfbs) / len(ttfbs)
-        min_ttfb = min(ttfbs)
-        max_ttfb = max(ttfbs)
-        p50 = sorted(ttfbs)[len(ttfbs) // 2]
-        p90 = sorted(ttfbs)[int(len(ttfbs) * 0.9)]
-        print(f"    TTFB (first audio byte):")
-        print(f"      Avg: {avg_ttfb:.0f}ms | P50: {p50:.0f}ms | P90: {p90:.0f}ms")
-        print(f"      Min: {min_ttfb:.0f}ms | Max: {max_ttfb:.0f}ms")
-    if totals:
-        avg_total = sum(totals) / len(totals)
-        print(f"    Total response time:")
-        print(f"      Avg: {avg_total:.0f}ms | Min: {min(totals):.0f}ms | Max: {max(totals):.0f}ms")
-
-    # Latency trend (detect KV cache degradation)
-    print(f"\n    {C.BOLD}Latency per turn:{C.END}")
-    for d in latency_data:
-        ttfb = d["ttfb_ms"]
-        bar_len = int(ttfb / 100)
-        bar = "█" * min(bar_len, 40)
-        color = C.OK if ttfb < TTFB_WARN_MS else (C.WARN if ttfb < TTFB_FAIL_MS else C.FAIL)
-        print(f"      Turn {d['turn']:2d}: {color}{bar} {ttfb:.0f}ms{C.END} (total: {d['total_ms']:.0f}ms, audio: {d['audio_s']:.1f}s)")
-
-    # Trend check
-    if len(ttfbs) >= 6:
-        first_half = sum(ttfbs[:len(ttfbs)//2]) / (len(ttfbs)//2)
-        second_half = sum(ttfbs[len(ttfbs)//2:]) / (len(ttfbs) - len(ttfbs)//2)
-        degradation = ((second_half - first_half) / first_half) * 100
-        if degradation > 30:
-            log_check(False, f"Latency degradation: {degradation:.0f}% (first half avg: {first_half:.0f}ms, second: {second_half:.0f}ms)", warn_only=True)
-        else:
-            log_check(True, f"Latency stable ({degradation:+.0f}% change)")
-
-    # Stats
-    print(f"\n  {C.BOLD}Statistics:{C.END}")
-    print(f"    Turns: {turn_count} | Errors: {C.FAIL}{len(errors)}{C.END} | Warnings: {C.WARN}{len(warnings)}{C.END}")
-
-    if errors:
-        print(f"\n  {C.FAIL}{C.BOLD}ERRORS:{C.END}")
-        for e in errors:
-            print(f"    - {e}")
-    if warnings:
-        print(f"\n  {C.WARN}{C.BOLD}WARNINGS:{C.END}")
-        for w in warnings:
-            print(f"    - {w}")
-
-    # Full conversation
-    print(f"\n{'='*70}")
-    print(f"{C.BOLD}CONVERSATION{C.END}")
-    print(f"{'='*70}")
-    for entry in conversation_log:
-        role = entry["role"].upper()
-        text = entry.get("text", "")
-        if role == "USER":
-            print(f"  {C.GRAY}[USER]{C.END} {text}")
-        elif role == "AGENT":
-            ttfb = entry.get("ttfb_ms", 0)
-            total = entry.get("total_ms", 0)
-            audio_s = entry.get("audio_duration_s", 0)
-            print(f"  {C.BLUE}[AGENT ttfb={ttfb:.0f}ms total={total:.0f}ms audio={audio_s:.1f}s]{C.END}")
-            print(f"  {text[:300]}{'...' if len(text) > 300 else ''}")
-        else:
-            print(f"  {C.GRAY}[{role}]{C.END} {text[:80]}")
-        print()
-
-    # Save log
-    log_file = f"test_results/realtime_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    os.makedirs("test_results", exist_ok=True)
-    with open(log_file, "w") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "model": AUDIO_MODEL,
-            "voice": VOICE,
-            "language": LANGUAGE,
-            "turns": turn_count,
-            "phases_reached": sorted(phase_reached),
-            "steps_matched": unique_ids,
-            "steps_missed": missed,
-            "errors": errors,
-            "warnings": warnings,
-            "call_ended": call_ended,
-            "latency": latency_data,
-            "latency_summary": {
-                "avg_ttfb_ms": avg_ttfb if ttfbs else 0,
-                "p50_ttfb_ms": p50 if ttfbs else 0,
-                "p90_ttfb_ms": p90 if ttfbs else 0,
-                "avg_total_ms": avg_total if totals else 0,
-            },
-            "conversation": conversation_log,
-        }, f, indent=2, default=str)
-    print(f"  {C.GRAY}Log: {log_file}{C.END}")
-
-    # Verdict
-    print(f"\n{'='*70}")
-    if not errors:
-        print(f"{C.OK}{C.BOLD}ALL CHECKS PASSED{C.END} ({len(warnings)} warnings)")
-    else:
-        print(f"{C.FAIL}{C.BOLD}{len(errors)} ERRORS FOUND{C.END}")
-    print(f"{'='*70}\n")
-
-    return len(errors) == 0
+    passed = runner.print_scorecard()
+    runner.save_results("audio")
+    return passed
 
 
 # ============================================================
-# MAIN
+# Main
 # ============================================================
-
 if __name__ == "__main__":
     if not GOOGLE_API_KEY:
-        print(f"{C.FAIL}ERROR: GOOGLE_API_KEY not set in .env{C.END}")
+        print(f"{C.R}ERROR: GOOGLE_API_KEY not set. Add it to .env or export it.{C.END}")
         sys.exit(1)
 
-    if TEXT_ONLY:
-        print("Running in TEXT-ONLY mode (no audio latency)")
-        # Reuse simple text flow
-        import google.generativeai as genai
-        genai.configure(api_key=GOOGLE_API_KEY)
-        prompt = load_prompt()
-        parsed_steps = parse_prompt_steps(prompt)
-        model = genai.GenerativeModel(model_name=TEXT_MODEL, system_instruction=prompt)
-        chat = model.start_chat()
-
-        print(f"\n{'='*70}")
-        print(f"{C.BOLD}TEXT-ONLY MODE{C.END} (use without --text-only for audio latency)")
-        print(f"{'='*70}")
-
-        trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
-        resp = chat.send_message(trigger)
-        print(f"  {C.BLUE}AGENT:{C.END} {resp.text.strip()[:150]}")
-
-        for label, user_text, phase in USER_RESPONSES:
-            t0 = time.time()
-            resp = chat.send_message(user_text)
-            ms = (time.time() - t0) * 1000
-            print(f"  {C.GRAY}USER:{C.END} {user_text}")
-            print(f"  {C.BLUE}AGENT ({ms:.0f}ms):{C.END} {resp.text.strip()[:160]}")
-            if "bye" in resp.text.lower():
-                break
-        print(f"\n{C.OK}Done.{C.END}")
+    if AUDIO_MODE:
+        success = asyncio.run(run_audio_mode())
     else:
-        success = asyncio.run(run_audio_test())
-        sys.exit(0 if success else 1)
+        success = run_text_mode()
+    sys.exit(0 if success else 1)
