@@ -160,6 +160,16 @@ def is_duplicate_text(session, new_text):
             overlap = intersection / max(len(new_words), len(prev_words))
         if overlap > 0.5:
             return True
+    # Check against completed step labels (catches rephrased repeats across hot-swaps)
+    new_label = extract_step_label(session.prompt_step_keywords, new_text).lower()
+    if new_label and len(new_label) > 15:
+        for step in session.completed_steps:
+            step_words = set(step.lower().split())
+            label_words = set(new_label.split())
+            if step_words and label_words:
+                overlap = len(step_words & label_words) / max(len(step_words), len(label_words))
+                if overlap > 0.5:
+                    return True
     return False
 
 
@@ -556,8 +566,8 @@ def run_test():
         ("क्या आप अभी फ्री हैं?", False, "Hindi translation (different tokens)"),
         ("Please open Course Number 4", True, "Partial repeat of step 2.4"),
         ("Please open Course Number 4 - the G1 Gold Launchpad Course. Click on Day 1, Video 1", True, "Full repeat of step 2.4"),
-        ("Have you downloaded the Riddhi Deorah app?", False, "Different step entirely"),
-        ("Perfect. Since we'll be checking things on your phone.", False, "New content"),
+        ("Have you downloaded the Riddhi Deorah app?", True, "Step 2.1 repeat (caught via completed_steps)"),
+        ("Perfect. Since we'll be checking things on your phone.", True, "Step 1.3 repeat (caught via completed_steps)"),
         ("Hmm", False, "Too short (< 3 words)"),
         ("Weekly Parenting Q&A Calls every Monday", True, "Partial repeat of step 5.1"),
     ]
@@ -640,24 +650,39 @@ def run_test():
     print("PART 8: POST-HOT-SWAP REPEAT DETECTION")
     print("-" * 70)
 
-    # Simulate: after hot-swap, new session repeats a step that was already said
-    # Reset recent_agent_texts to mimic hot-swap (but completed_steps persist)
+    # Test A: repeat caught via recent_agent_texts (normal case)
     session.recent_agent_texts = deque(maxlen=10)
-    # Re-add some of what was said before swap
     session.recent_agent_texts.append(
         "Now about the live calls. We have Weekly Parenting Q&A Calls every Monday and Friday at 6 PM Indian Time."
     )
-    session.recent_agent_texts.append(
-        "The course code for this is G6 - Supermom Revolution Mission. You can watch previous recordings anytime. Does all of that sound good?"
-    )
-
     repeat_text = "We have Weekly Parenting Q&A Calls every Monday and Friday at 6 PM Indian Time."
     early_dup = simulate_agent_turn(session, repeat_text)
-    check(early_dup, f"  Early dup CUT fires for repeated step 5.1")
+    check(early_dup, f"  Repeat caught via recent_agent_texts")
 
-    new_text = "That's everything from my side! If you have any questions later, reach out."
-    early_dup = simulate_agent_turn(session, new_text)
-    check(not early_dup, f"  New text NOT flagged as duplicate")
+    # Test B: new text not flagged
+    # Step 6.1 is in completed_steps, so even "new" text matching it gets caught
+    step_6_1_text = "That's everything from my side! If you have any questions later, reach out."
+    early_dup = simulate_agent_turn(session, step_6_1_text)
+    check(early_dup, f"  Step 6.1 repeat caught via completed_steps (even with empty recent_agent_texts)")
+
+    # Truly new text that doesn't share keywords with any completed step
+    truly_new = "Take your time and let me know whenever you are ready to continue."
+    early_dup = simulate_agent_turn(session, truly_new)
+    check(not early_dup, f"  Truly new text NOT flagged")
+
+    # Test C: CROSS-HOT-SWAP repeat - recent_agent_texts cleared but completed_steps persists
+    # This tests the _completed_steps fallback in production code
+    session.recent_agent_texts = deque(maxlen=10)  # cleared after hot-swap
+    # completed_steps still has all 30 steps from the full call
+    # Try to repeat step 2.4 which is only in completed_steps now (not in recent_agent_texts)
+    cross_swap_repeat = "Please open Course Number 4 - the G1 Gold Launchpad Course. Click on Day 1, Video 1 and see if it's playing."
+    result = is_duplicate_text(session, cross_swap_repeat)
+    check(result, f"  Cross-hot-swap repeat caught via completed_steps")
+
+    # Test D: rephrased version of completed step
+    rephrased = "Open Course Number 4, the G1 Gold Launchpad Course."
+    result = is_duplicate_text(session, rephrased)
+    check(result, f"  Rephrased repeat caught via completed_steps")
 
     # ============================================================
     # PART 9: BYE DETECTION
