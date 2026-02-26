@@ -1115,9 +1115,9 @@ Rules:
                     agent_text = latest_exchange.get("agent", "")[:100]
                     user_text = latest_exchange.get("user", "")[:80]
                     update = (
-                        f'[Latest exchange — You said: "{agent_text}" '
-                        f'Customer replied: "{user_text}" '
-                        f'Continue from next step. Same voice ({self._cached_voice}), same accent.]'
+                        f'[Latest — You: "{agent_text}" '
+                        f'Customer: "{user_text}" '
+                        f'Say ONLY the next step (1-2 sentences). Same voice ({self._cached_voice}).]'
                     )
                     msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": update}]}], "turn_complete": False}}
                     await ws.send(json.dumps(msg))
@@ -1172,7 +1172,8 @@ Rules:
             trigger = (
                 f'[You completed {step_count} steps. CONTINUE from step {step_count + 1}. '
                 f'Same voice ({self._cached_voice}), same accent.{lang_note}'
-                f' Wait for customer to speak, then move FORWARD.{whatsapp_note}]'
+                f' Say only ONE step (1-2 sentences), then STOP and WAIT for customer response.'
+                f' NEVER combine multiple steps into one response.{whatsapp_note}]'
             )
         else:
             trigger = f"[Continue the conversation. Same voice ({self._cached_voice}), same accent.{lang_note} Wait for the customer to speak.{whatsapp_note}]"
@@ -1902,8 +1903,9 @@ Rules:
                 self._save_transcript("SYSTEM", f"AI ready ({setup_ms:.0f}ms)")
                 if self._is_first_connection:
                     self._is_first_connection = False
-                    # Brief delay so the user has time to bring the phone to their ear
-                    await asyncio.sleep(2.0)
+                    # Brief delay so the user has time to pick up and bring phone to ear
+                    self.log.detail("Waiting 2.5s for user to pick up...")
+                    await asyncio.sleep(2.5)
                     self._greeting_trigger_time = time.time()
                     await self._send_initial_greeting()
                 elif self._is_reconnecting:
@@ -2082,22 +2084,33 @@ Rules:
                     if not is_empty_turn:
                         self._turns_since_reconnect += 1
 
-                    # Pre-warm standby at turn N-1 (skip if call is ending)
+                    # Detect closing phase — skip hot-swap to avoid chopping goodbye
+                    _agent_closing = full_agent and any(
+                        w in full_agent.lower() for w in
+                        ["bye", "take care", "have a wonderful", "have a beautiful",
+                         "have a great", "that's everything", "that covers everything"]
+                    )
+                    if _agent_closing:
+                        self.log.detail("Closing phase detected — skipping hot-swap")
+
+                    # Pre-warm standby at turn N-1 (skip if call is ending or closing)
                     prewarm_turn = self._session_split_interval - 1
                     if (self._turns_since_reconnect == prewarm_turn
                             and not self._standby_ws
                             and not self._prewarm_task
                             and not self._closing_call
                             and not self.agent_said_goodbye
+                            and not _agent_closing
                             and self.greeting_audio_complete):
                         self._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
 
-                    # Hot-swap at turn N (skip if call is ending)
+                    # Hot-swap at turn N (skip if call is ending or in closing phase)
                     if (self._turns_since_reconnect >= self._session_split_interval
                             and not is_empty_turn
                             and not self._closing_call
                             and not self._goodbye_pending
                             and not self.agent_said_goodbye
+                            and not _agent_closing
                             and self.greeting_audio_complete):
                         asyncio.create_task(self._hot_swap_session())
 
