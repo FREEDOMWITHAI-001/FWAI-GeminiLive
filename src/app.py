@@ -1259,6 +1259,8 @@ async def plivo_hangup(request: Request):
     body = await request.form()
     plivo_uuid = body.get("CallUUID", "")
     duration = body.get("Duration", "0")
+    call_status = body.get("CallStatus", "")
+    hangup_cause = body.get("HangupCause", "")
 
     # Look up internal UUID for cleanup
     async with _call_data_lock:
@@ -1266,16 +1268,28 @@ async def plivo_hangup(request: Request):
         _pending_call_data.pop(internal_uuid, None)
         _internal_to_plivo_uuid.pop(internal_uuid, None)
 
-    logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s")
+    # Determine final status based on Plivo's hangup cause
+    dur = float(duration) if duration else 0
+    if hangup_cause in ("NO_ANSWER", "ORIGINATOR_CANCEL", "NO_USER_RESPONSE"):
+        final_status = "no_answer"
+    elif hangup_cause in ("USER_BUSY", "CALL_REJECTED"):
+        final_status = "busy"
+    elif hangup_cause == "UNALLOCATED_NUMBER":
+        final_status = "failed"
+    elif dur == 0 and call_status != "completed":
+        final_status = "no_answer"
+    else:
+        final_status = "completed"
 
-    # Immediately mark call as completed so status is visible to UI/webhooks
-    # (post-call processing in background thread will update transcript later)
+    logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s, status: {final_status}, cause: {hangup_cause}")
+
+    # Update call status in DB
     try:
         session_db.update_call(
             internal_uuid,
-            status="completed",
+            status=final_status,
             ended_at=datetime.now().isoformat(),
-            duration_seconds=float(duration),
+            duration_seconds=dur,
         )
     except Exception as e:
         logger.warning(f"Failed to update call status on hangup: {e}")
