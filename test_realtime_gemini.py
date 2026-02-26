@@ -20,7 +20,6 @@ Usage:
 """
 
 import asyncio
-import base64
 import json
 import os
 import re
@@ -552,16 +551,15 @@ def run_text_mode():
 
 
 # ============================================================
-# AUDIO MODE (WebSocket to native audio model)
+# AUDIO MODE (google.genai Live API — no websockets dependency)
 # ============================================================
 async def run_audio_mode():
-    import websockets
+    from google import genai
+    from google.genai import types
 
     prompt = load_prompt()
     steps = parse_prompt_steps(prompt)
     runner = TestRunner(steps, LANGUAGE)
-
-    ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GOOGLE_API_KEY}"
 
     print(f"\n{'='*60}")
     print(f"{C.BOLD}  GEMINI ONBOARDING TEST (AUDIO MODE){C.END}")
@@ -573,118 +571,103 @@ async def run_audio_mode():
     print(f"  Steps:    {len(steps)}")
     print(f"{'='*60}")
 
-    print(f"\n  {C.B}Connecting...{C.END}", end="", flush=True)
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+
+    config = types.LiveConnectConfig(
+        responseModalities=["AUDIO"],
+        speechConfig=types.SpeechConfig(
+            voiceConfig=types.VoiceConfig(
+                prebuiltVoiceConfig=types.PrebuiltVoiceConfig(voiceName=VOICE)
+            )
+        ),
+        thinkingConfig=types.ThinkingConfig(thinkingBudget=128),
+        systemInstruction=prompt,
+        inputAudioTranscription=types.AudioTranscriptionConfig(),
+        outputAudioTranscription=types.AudioTranscriptionConfig(),
+    )
+
+    print(f"\n  {C.B}Connecting to Gemini Live...{C.END}", end="", flush=True)
     t0 = time.time()
-    ws = await websockets.connect(ws_url, ping_interval=30, ping_timeout=20, close_timeout=5)
-    print(f" connected ({(time.time()-t0)*1000:.0f}ms)")
 
-    setup = {
-        "setup": {
-            "model": AUDIO_MODEL,
-            "generation_config": {
-                "response_modalities": ["AUDIO"],
-                "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": VOICE}}},
-                "thinking_config": {"thinking_budget": 128},
-            },
-            "realtime_input_config": {
-                "automatic_activity_detection": {
-                    "disabled": False,
-                    "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
-                    "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-                    "prefix_padding_ms": 20, "silence_duration_ms": 500,
-                }
-            },
-            "input_audio_transcription": {},
-            "output_audio_transcription": {},
-            "system_instruction": {"parts": [{"text": prompt}]},
-        }
-    }
-    await ws.send(json.dumps(setup))
-    async for raw in ws:
-        if "setupComplete" in json.loads(raw):
-            print(f"  {C.G}Session ready{C.END}")
-            break
+    async with client.aio.live.connect(model=AUDIO_MODEL, config=config) as session:
+        print(f" ready ({(time.time()-t0)*1000:.0f}ms)")
 
-    async def send_text(text):
-        await ws.send(json.dumps({
-            "client_content": {
-                "turns": [{"role": "user", "parts": [{"text": text}]}],
-                "turn_complete": True
-            }
-        }))
+        async def send_and_receive(text, timeout=30):
+            """Send text via client_content and collect audio response with transcription."""
+            t_start = time.time()
+            await session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=text)]),
+                turn_complete=True,
+            )
+            transcription_parts = []
+            ttfb = None
+            audio_bytes = 0
+            try:
+                async for msg in session.receive():
+                    if time.time() - t_start > timeout:
+                        break
+                    sc = msg.server_content
+                    if sc:
+                        # Collect output transcription
+                        if sc.output_transcription and sc.output_transcription.text:
+                            transcription_parts.append(sc.output_transcription.text.strip())
+                        # Track audio for TTFB
+                        if sc.model_turn and sc.model_turn.parts:
+                            for part in sc.model_turn.parts:
+                                if part.inline_data and part.inline_data.data:
+                                    audio_bytes += len(part.inline_data.data)
+                                    if ttfb is None:
+                                        ttfb = (time.time() - t_start) * 1000
+                        if sc.turn_complete:
+                            break
+                    # Handle tool calls
+                    tc = msg.tool_call
+                    if tc and tc.function_calls:
+                        responses = []
+                        is_end_call = False
+                        for fc in tc.function_calls:
+                            responses.append(types.FunctionResponse(
+                                id=fc.id, name=fc.name, response={"success": True}
+                            ))
+                            if fc.name == "end_call":
+                                is_end_call = True
+                        await session.send_tool_response(function_responses=responses)
+                        if is_end_call:
+                            text_out = " ".join(transcription_parts).strip() + " [end_call]"
+                            return text_out, (time.time()-t_start)*1000, ttfb
+            except Exception as e:
+                text_out = " ".join(transcription_parts).strip()
+                return text_out or f"[ERROR: {e}]", (time.time()-t_start)*1000, ttfb
 
-    async def wait_response(timeout=30):
-        parts = []
-        audio_bytes = 0
-        ttfb = None
-        t0 = time.time()
-        try:
-            while time.time() - t0 < timeout:
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout - (time.time() - t0))
-                resp = json.loads(raw)
-                if "serverContent" in resp:
-                    sc = resp["serverContent"]
-                    ot = sc.get("outputTranscription")
-                    if ot:
-                        t = ot.get("text", "") if isinstance(ot, dict) else str(ot)
-                        if t.strip():
-                            parts.append(t.strip())
-                    if "modelTurn" in sc:
-                        for p in sc["modelTurn"].get("parts", []):
-                            d = p.get("inlineData", {}).get("data")
-                            if d:
-                                audio_bytes += len(base64.b64decode(d))
-                                if ttfb is None:
-                                    ttfb = (time.time() - t0) * 1000
-                    if sc.get("turnComplete"):
-                        return " ".join(parts).strip(), (time.time() - t0) * 1000, ttfb
-                if "toolCall" in resp:
-                    fcs = resp["toolCall"].get("functionCalls", [])
-                    await ws.send(json.dumps({
-                        "tool_response": {
-                            "function_responses": [
-                                {"id": fc.get("id",""), "name": fc.get("name",""), "response": {"success": True}}
-                                for fc in fcs
-                            ]
-                        }
-                    }))
-                    if any(fc.get("name") == "end_call" for fc in fcs):
-                        return " ".join(parts).strip() + " [end_call]", (time.time()-t0)*1000, ttfb
-        except Exception as e:
-            return " ".join(parts).strip() or f"[ERROR: {e}]", (time.time()-t0)*1000, ttfb
-        return " ".join(parts).strip(), (time.time()-t0)*1000, ttfb
+            return " ".join(transcription_parts).strip(), (time.time()-t_start)*1000, ttfb
 
-    # Greeting
-    trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
-    await send_text(trigger)
-    agent_text, total_ms, ttfb_ms = await wait_response()
-    turn = runner.record_turn("", agent_text, ttfb_ms or total_ms, "greeting")
-    runner.print_turn(turn)
-
-    # Main conversation
-    for label, user_text in USER_RESPONSES:
-        if runner.call_ended:
-            break
-        await send_text(user_text)
-        agent_text, total_ms, ttfb_ms = await wait_response()
-        if not agent_text or "[ERROR" in agent_text:
-            print(f"\n  {C.R}{agent_text}{C.END}")
-            break
-        turn = runner.record_turn(user_text, agent_text, ttfb_ms or total_ms, label)
+        # Greeting
+        trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
+        agent_text, total_ms, ttfb_ms = await send_and_receive(trigger)
+        turn = runner.record_turn("", agent_text, ttfb_ms or total_ms, "greeting")
         runner.print_turn(turn)
 
-    # Extra nudges
-    for i, nudge in enumerate(EXTRA_NUDGES):
-        if runner.call_ended:
-            break
-        await send_text(nudge)
-        agent_text, total_ms, ttfb_ms = await wait_response()
-        if not agent_text:
-            break
-        turn = runner.record_turn(nudge, agent_text, ttfb_ms or total_ms, f"extra_{i}")
-        runner.print_turn(turn)
+        # Main conversation
+        for label, user_text in USER_RESPONSES:
+            if runner.call_ended:
+                break
+            agent_text, total_ms, ttfb_ms = await send_and_receive(user_text)
+            if not agent_text or "[ERROR" in agent_text:
+                print(f"\n  {C.R}{agent_text}{C.END}")
+                break
+            turn = runner.record_turn(user_text, agent_text, ttfb_ms or total_ms, label)
+            runner.print_turn(turn)
 
-    await ws.close()
+        # Extra nudges
+        for i, nudge in enumerate(EXTRA_NUDGES):
+            if runner.call_ended:
+                break
+            agent_text, total_ms, ttfb_ms = await send_and_receive(nudge)
+            if not agent_text:
+                break
+            turn = runner.record_turn(nudge, agent_text, ttfb_ms or total_ms, f"extra_{i}")
+            runner.print_turn(turn)
+
     passed = runner.print_scorecard()
     runner.save_results("audio")
     return passed
