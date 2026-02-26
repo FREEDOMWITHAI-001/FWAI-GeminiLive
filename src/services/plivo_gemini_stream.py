@@ -1422,14 +1422,21 @@ Rules:
         """Check if new_text is similar to a recent agent utterance (>50% word overlap)
         or matches a completed step label."""
         new_words = set(new_text.lower().split())
-        if len(new_words) < 4:
+        if len(new_words) < 3:
             return False
         # Check against recent full agent texts
         for prev in self._recent_agent_texts:
             prev_words = set(prev.lower().split())
             if not prev_words:
                 continue
-            overlap = len(new_words & prev_words) / max(len(new_words), len(prev_words))
+            intersection = len(new_words & prev_words)
+            # For short/medium texts (< 12 words): check if most words come from a previous text
+            # This catches "No problem at all! Are you free right now?" as a repeat
+            # For longer texts: use symmetric overlap against the larger set
+            if len(new_words) < 12:
+                overlap = intersection / len(new_words)
+            else:
+                overlap = intersection / max(len(new_words), len(prev_words))
             if overlap > 0.5:
                 return True
         # Check against completed step labels (catches rephrased repeats)
@@ -2284,6 +2291,23 @@ Rules:
                         self._current_turn_agent_text.append(ai_text)
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
+                        # Early duplicate detection: check partial agent text against recent
+                        # so we can cut off the repeat before it finishes playing
+                        partial_agent = " ".join(self._current_turn_agent_text)
+                        if len(partial_agent.split()) >= 4 and self._is_duplicate_text(partial_agent):
+                            self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
+                            # Drain queued audio to stop the repeat from playing
+                            while not self._plivo_send_queue.empty():
+                                try:
+                                    self._plivo_send_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            if self.plivo_ws:
+                                try:
+                                    await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
+                                except Exception:
+                                    pass
+                            asyncio.create_task(self._send_duplicate_nudge())
                         # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
                         if not self._closing_call and self._is_goodbye_message(ai_text):
                             self._goodbye_pending = True
