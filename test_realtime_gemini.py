@@ -99,27 +99,43 @@ def load_prompt():
 # ============================================================
 
 def parse_prompt_steps(prompt):
-    """Parse STEP markers from prompt (same logic as production)."""
+    """Parse STEP markers from prompt. Also detects [WAIT] vs [PAUSE & CONTINUE] type."""
     steps = []
-    step_pattern = re.compile(
-        r'STEP\s+(\d+\.\d+)\b.*?(?:\"([^\"]{10,})\")',
-        re.DOTALL
-    )
     stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
                   'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
                   'and', 'or', 'but', 'so', 'if', 'it', 'its', 'this', 'that',
                   'you', 'your', 'i', 'me', 'my', 'we', 'our', 'can', 'will',
                   'do', 'have', 'has', 'had', 'would', 'could', 'should',
                   'please', 'just', 'about', 'once', 'also', 'not', 'all'}
-    for match in step_pattern.finditer(prompt):
-        step_id = match.group(1)
-        dialogue = match.group(2).strip()
+
+    # Find each STEP X.Y block and the text between it and the next STEP
+    step_blocks = list(re.finditer(r'STEP\s+(\d+\.\d+)\b', prompt))
+    for i, m in enumerate(step_blocks):
+        step_id = m.group(1)
+        # Get full block text until next STEP or end
+        start = m.start()
+        end = step_blocks[i + 1].start() if i + 1 < len(step_blocks) else len(prompt)
+        block_text = prompt[start:end]
+
+        # Extract dialogue from quotes
+        dialogue_match = re.search(r'"([^"]{10,})"', block_text)
+        if not dialogue_match:
+            continue
+        dialogue = dialogue_match.group(1).strip()
+
+        # Determine step type: WAIT vs PAUSE & CONTINUE
+        block_after_quote = block_text[dialogue_match.end():]
+        if "PAUSE & CONTINUE" in block_after_quote or "PAUSE &amp; CONTINUE" in block_after_quote:
+            step_type = "pause_continue"
+        else:
+            step_type = "wait"  # Default: WAIT, STOP HERE, etc.
+
         words = re.findall(r'[a-z]+', dialogue.lower())
         keywords = set(w for w in words if w not in stop_words and len(w) > 2)
         word_list = dialogue.lower().split()
         phrases = []
-        for i in range(len(word_list) - 1):
-            bigram = f"{word_list[i]} {word_list[i+1]}"
+        for j in range(len(word_list) - 1):
+            bigram = f"{word_list[j]} {word_list[j+1]}"
             if len(bigram) > 8 and not all(w in stop_words for w in bigram.split()):
                 phrases.append(bigram)
         first_sentence = re.split(r'[.?!]', dialogue)[0].strip()
@@ -130,6 +146,7 @@ def parse_prompt_steps(prompt):
             "keywords": keywords,
             "phrases": phrases[:6],
             "dialogue": dialogue,
+            "type": step_type,
         })
     return steps
 
@@ -191,7 +208,8 @@ def is_duplicate_text(new_text, recent_texts, completed_steps, parsed_steps):
 
 def check_step_combining(text, parsed_steps):
     """Check if multiple script steps appear in a single turn.
-    Uses stricter matching (>50% + phrase match) to reduce false positives."""
+    Returns (all_matched_ids, wait_step_ids) so caller can distinguish
+    valid P&C combining from invalid multi-WAIT combining."""
     matched_steps = []
     text_lower = text.lower()
     text_words = set(re.findall(r'[a-z]+', text_lower))
@@ -202,10 +220,12 @@ def check_step_combining(text, parsed_steps):
         phrase_hits = sum(1 for p in step["phrases"] if p in text_lower)
         phrase_bonus = phrase_hits * 0.15
         score = keyword_overlap + phrase_bonus
-        # Require at least 50% keyword match AND at least 1 phrase match for confidence
         if score > 0.5 and phrase_hits >= 1:
             matched_steps.append(step["step_id"])
-    return matched_steps
+    # Identify which matched steps are [WAIT] type
+    wait_steps = [sid for sid in matched_steps
+                  if any(s["step_id"] == sid and s["type"] == "wait" for s in parsed_steps)]
+    return matched_steps, wait_steps
 
 
 def check_language(text, expected_lang):
@@ -334,14 +354,17 @@ def run_test():
             warn_only=word_count <= 120
         )
 
-        # 2. Step combining (CRITICAL - main issue we're hunting)
-        combined = check_step_combining(agent_text, parsed_steps)
-        if len(combined) > 1:
+        # 2. Step combining - only flag if multiple [WAIT] steps are combined
+        # Combining P&C steps with the next WAIT step is CORRECT per prompt
+        all_matched, wait_matched = check_step_combining(agent_text, parsed_steps)
+        if len(wait_matched) > 1:
             log_check(False,
-                      f"STEP COMBINING: {len(combined)} steps in one turn: {combined}",
-                      warn_only=len(combined) <= 2)
+                      f"MULTI-WAIT COMBINING: {len(wait_matched)} WAIT steps in one turn: {wait_matched} (all: {all_matched})",
+                      warn_only=len(wait_matched) <= 2)
+        elif len(all_matched) > 1:
+            log_check(True, f"P&C combining OK: {all_matched} ({len(wait_matched)} wait)")
         else:
-            log_check(True, f"One step at a time (steps: {combined})")
+            log_check(True, f"Single step: {all_matched}")
 
         # 3. Repetition check (mirrors production _is_duplicate_text)
         is_dup, dup_reason = is_duplicate_text(
@@ -507,7 +530,8 @@ def run_test():
     for sid in unique_ids:
         step_info = next((s for s in parsed_steps if s["step_id"] == sid), None)
         if step_info:
-            print(f"    {C.OK}✓{C.END} {step_info['label']}")
+            stype = "W" if step_info["type"] == "wait" else "P"
+            print(f"    {C.OK}✓{C.END} [{stype}] {step_info['label']}")
     # Show missed steps
     all_ids = {s["step_id"] for s in parsed_steps}
     missed = sorted(all_ids - set(unique_ids), key=lambda x: float(x))
@@ -516,7 +540,8 @@ def run_test():
         for sid in missed:
             step_info = next((s for s in parsed_steps if s["step_id"] == sid), None)
             if step_info:
-                print(f"    {C.FAIL}✗{C.END} {step_info['label']}")
+                stype = "W" if step_info["type"] == "wait" else "P"
+                print(f"    {C.FAIL}✗{C.END} [{stype}] {step_info['label']}")
 
     # Stats
     print(f"\n  {C.BOLD}Statistics:{C.END}")
