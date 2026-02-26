@@ -1281,12 +1281,14 @@ Rules:
             else:
                 lines.append(f"[COMPLETED {step_count} steps: {step_list}]")
             lines.append(f"[CONTINUE from step {step_count + 1}. DO NOT repeat ANY prior step. Say ONE thing, then WAIT.]")
-        # Last 1 exchange only (minimal context)
+        # Last 1 exchange only — customer text matters more than agent text
         if self._turn_exchanges:
             exchange = self._turn_exchanges[-1]
             parts = []
             if exchange.get("agent"):
-                parts.append(f"You: {exchange['agent'][:100]}")
+                # Use step label (short) instead of full text to avoid priming repetition
+                agent_label = self._extract_step_label(exchange['agent'])
+                parts.append(f"You said (DO NOT REPEAT): {agent_label}")
             if exchange.get("user"):
                 parts.append(f"Customer: {exchange['user'][:80]}")
             if parts:
@@ -1294,27 +1296,52 @@ Rules:
         return "\n".join(lines)
 
     def _extract_step_label(self, text: str) -> str:
-        """Extract a ~40 char label from agent text for _completed_steps.
-        Takes first sentence, strips fillers, truncates on word boundary."""
+        """Extract a short action label from agent text for _completed_steps.
+        Returns a brief description, not the actual text (to avoid priming repetition)."""
         if not text:
             return ""
-        # Strip conversational fillers from start
+        lower = text.lower()
+        # Map known step content to short labels (avoids feeding repeatable text back)
+        if "welcome" in lower and ("membership" in lower or "team" in lower):
+            return "Greeting+language choice"
+        if "downloaded" in lower and "app" in lower:
+            return "Asked about app download"
+        if "open the app" in lower or "install the app" in lower:
+            return "Asked to open/install app"
+        if "courses" in lower and ("bottom" in lower or "click" in lower):
+            return "Navigate to Courses tab"
+        if "gold launchpad" in lower or "g1" in lower.replace(" ", ""):
+            return "Open G1 Gold Launchpad course"
+        if "finish it today" in lower or "most important course" in lower:
+            return "Finish course today/tomorrow"
+        if "whatsapp" in lower and ("open" in lower or "sent you" in lower or "message" in lower):
+            return "Open WhatsApp message"
+        if "orientation group" in lower:
+            return "Orientation Group (24hr)"
+        if "main group" in lower:
+            return "Main Group (permanent)"
+        if "mission team" in lower or "supermom revolution" in lower:
+            return "Supermom Mission Team group"
+        if "super coach" in lower:
+            return "Super Coaches info"
+        if "live call" in lower or "monday" in lower or "friday" in lower:
+            return "Live calls schedule"
+        if "speaker" in lower or "earphone" in lower:
+            return "Put on speaker/earphones"
+        if "bye" in lower and ("wonderful day" in lower or "beautiful day" in lower):
+            return "Closing goodbye"
+        # Fallback: strip fillers, take first sentence, keep short
         fillers = r'^(?:Great|Okay|Perfect|Sure|Absolutely|Right|Alright|Wonderful|Excellent|Fantastic|Of course|No worries|No problem|Got it|I see|I understand)[,!.\s]*'
         cleaned = re.sub(fillers, '', text, flags=re.IGNORECASE).strip()
         if not cleaned:
             cleaned = text.strip()
-        # Find first sentence end after 10 chars
         for i, ch in enumerate(cleaned):
             if i >= 10 and ch in '.?!':
                 cleaned = cleaned[:i+1]
                 break
-        # Truncate at 50 chars on word boundary
-        if len(cleaned) > 50:
-            cut = cleaned[:50].rfind(' ')
-            if cut > 20:
-                cleaned = cleaned[:cut]
-            else:
-                cleaned = cleaned[:50]
+        if len(cleaned) > 40:
+            cut = cleaned[:40].rfind(' ')
+            cleaned = cleaned[:cut] if cut > 15 else cleaned[:40]
         return cleaned.strip()
 
     def _extract_question(self, text: str) -> str:
