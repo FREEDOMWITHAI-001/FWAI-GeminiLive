@@ -283,7 +283,8 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 3 second SLA
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 1.5  # Must respond within 1.5 seconds
+        self._silence_sla_seconds = 2.0  # Beginning of call: 2s (switches to immediate after greeting)
+        self._silence_sla_immediate = 0.3  # After greeting: near-immediate response
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
@@ -902,8 +903,11 @@ Rules:
 
                 silence_duration = time.time() - self._last_user_speech_time
 
+                # Dynamic SLA: 2s during greeting phase, immediate after
+                sla = self._silence_sla_seconds if not self.greeting_audio_complete else self._silence_sla_immediate
+
                 # If silence exceeds SLA, nudge the AI to respond
-                if silence_duration >= self._silence_sla_seconds:
+                if silence_duration >= sla:
                     self.log.warn(f"{silence_duration:.1f}s silence - nudging AI")
                     await self._send_silence_nudge()
                     # Reset timer to avoid repeated nudges
