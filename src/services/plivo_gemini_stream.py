@@ -2320,7 +2320,7 @@ Rules:
                         # CRITICAL: Only fire ONCE per turn to prevent nudge flood
                         if not self._early_dup_cut_this_turn:
                             partial_agent = " ".join(self._current_turn_agent_text)
-                            if len(partial_agent.split()) >= 4 and self._is_duplicate_text(partial_agent):
+                            if len(partial_agent.split()) >= 8 and self._is_duplicate_text(partial_agent):
                                 self._early_dup_cut_this_turn = True  # Block further checks this turn
                                 self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
                                 # Drain queued audio to stop the repeat from playing
