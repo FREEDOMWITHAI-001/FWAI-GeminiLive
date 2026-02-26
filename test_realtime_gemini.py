@@ -477,11 +477,43 @@ class TestRunner:
 
 
 # ============================================================
-# TEXT MODE (google.genai SDK)
+# TEXT MODE (pure stdlib — zero dependencies)
 # ============================================================
-def run_text_mode():
-    from google import genai
+def _gemini_chat(api_key, model, system_instruction):
+    """Minimal Gemini chat using stdlib urllib. No SDK needed."""
+    import urllib.request
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    history = []
 
+    def send(text, retries=3):
+        history.append({"role": "user", "parts": [{"text": text}]})
+        body = json.dumps({
+            "system_instruction": {"parts": [{"text": system_instruction}]},
+            "contents": history,
+        }).encode()
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+                t0 = time.time()
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    ms = (time.time() - t0) * 1000
+                    data = json.loads(resp.read())
+                agent_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                history.append({"role": "model", "parts": [{"text": agent_text}]})
+                return agent_text.strip(), ms
+            except Exception as e:
+                err = str(e)
+                if "429" in err and attempt < retries - 1:
+                    wait = 15 * (attempt + 1)
+                    print(f"  {C.Y}Rate limited, waiting {wait}s...{C.END}")
+                    time.sleep(wait)
+                else:
+                    return f"[ERROR: {e}]", 0
+        return "[ERROR: max retries]", 0
+    return send
+
+
+def run_text_mode():
     prompt = load_prompt()
     steps = parse_prompt_steps(prompt)
     runner = TestRunner(steps, LANGUAGE)
@@ -496,28 +528,11 @@ def run_text_mode():
     print(f"  Prompt:   {PROMPT_FILE}")
     print(f"{'='*60}")
 
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    chat = client.chats.create(model=TEXT_MODEL, config={"system_instruction": prompt})
-
-    def send(text, label="", retries=3):
-        for attempt in range(retries):
-            try:
-                t0 = time.time()
-                resp = chat.send_message(text)
-                ms = (time.time() - t0) * 1000
-                return resp.text.strip(), ms
-            except Exception as e:
-                if "429" in str(e) and attempt < retries - 1:
-                    wait = 10 * (attempt + 1)
-                    print(f"  {C.Y}Rate limited, waiting {wait}s...{C.END}")
-                    time.sleep(wait)
-                else:
-                    return f"[ERROR: {e}]", 0
-        return "[ERROR: max retries]", 0
+    send = _gemini_chat(GOOGLE_API_KEY, TEXT_MODEL, prompt)
 
     # Greeting
     trigger = f"[Start the conversation now. Greet {CUSTOMER_NAME} naturally using your opening line from the instructions.]"
-    agent_text, ms = send(trigger, "greeting")
+    agent_text, ms = send(trigger)
     if "[ERROR" in agent_text:
         print(f"  {C.R}{agent_text}{C.END}")
         return False
@@ -528,7 +543,7 @@ def run_text_mode():
     for label, user_text in USER_RESPONSES:
         if runner.call_ended:
             break
-        agent_text, ms = send(user_text, label)
+        agent_text, ms = send(user_text)
         if "[ERROR" in agent_text:
             print(f"\n  {C.R}{agent_text}{C.END}")
             break
@@ -539,7 +554,7 @@ def run_text_mode():
     for i, nudge in enumerate(EXTRA_NUDGES):
         if runner.call_ended:
             break
-        agent_text, ms = send(nudge, f"extra_{i}")
+        agent_text, ms = send(nudge)
         if "[ERROR" in agent_text or not agent_text:
             break
         turn = runner.record_turn(nudge, agent_text, ms, f"extra_{i}")
@@ -554,8 +569,14 @@ def run_text_mode():
 # AUDIO MODE (google.genai Live API — no websockets dependency)
 # ============================================================
 async def run_audio_mode():
-    from google import genai
-    from google.genai import types
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        print(f"{C.R}ERROR: Audio mode requires google-genai. Install with:{C.END}")
+        print(f"  pip3 install google-genai")
+        print(f"\n  Text mode works without any dependencies: python3 test_realtime_gemini.py")
+        sys.exit(1)
 
     prompt = load_prompt()
     steps = parse_prompt_steps(prompt)

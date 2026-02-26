@@ -958,13 +958,12 @@ Rules:
             if self._last_agent_question:
                 q_short = self._last_agent_question[:80]
                 nudge_text = (
-                    f'[Customer is silent. You already asked: "{q_short}" '
-                    f'— do NOT repeat that question. Instead say something like '
-                    f'"Take your time, no rush" or "Are you still there?" '
-                    f'and WAIT. Do NOT re-ask the same question.{vl}]'
+                    f'[Customer is silent after you asked: "{q_short}" '
+                    f'— do NOT repeat that question. Just WAIT patiently for their response. '
+                    f'If you must say something, keep it to 3-4 words max.{vl}]'
                 )
             else:
-                nudge_text = f"[Customer is silent. Gently check if they are still there. Do NOT repeat anything you already said.{vl}]"
+                nudge_text = f"[Customer hasn't spoken yet. WAIT patiently. Do NOT repeat anything you already said.{vl}]"
             msg = {
                 "client_content": {
                     "turns": [{
@@ -1453,37 +1452,65 @@ Rules:
                 return s.strip()
         return ""
 
+    # ── Duplicate detection via content-trigrams ──────────────────────────
+    # Instead of counting individual word overlap (which false-fires on common
+    # fillers like "Wonderful"), we compare 3-word *content phrases* (trigrams).
+    # Phrases are naturally adaptive: short text → few trigrams → nothing to
+    # compare; real repeat → many shared trigrams → detected.  No hardcoded
+    # word-count thresholds needed.
+
+    _DUP_STOP_WORDS = frozenset({
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "it", "its",
+        "this", "that", "you", "your", "i", "me", "my", "we", "our", "can", "will",
+        "do", "have", "has", "had", "would", "could", "should", "to", "of", "in",
+        "for", "on", "with", "at", "by", "from", "and", "or", "but", "so", "if",
+        "not", "all", "just", "about", "once", "also", "let", "know", "now", "right",
+        "please", "sure", "okay", "ok", "alright", "thank", "thanks", "yes", "no",
+        "wonderful", "great", "perfect", "hi", "hello", "bye", "well", "very",
+        "really", "much", "many", "some", "any", "done", "here", "there",
+    })
+
+    _TRIGRAM_N = 3           # phrase length (content words)
+    _MIN_TRIGRAMS = 3        # need at least this many phrases to judge
+    _TRIGRAM_THRESHOLD = 0.4 # 40% of new phrases found in a previous turn → duplicate
+
+    @staticmethod
+    def _content_trigrams(text: str) -> set:
+        """Extract set of content-word trigrams from text.
+
+        1. Lowercase, strip punctuation  →  only [a-z]+ tokens
+        2. Drop stop/filler words        →  only meaning-carrying words
+        3. Build sliding-window trigrams  →  ('downloaded','riddhi','app'), etc.
+
+        Two texts share many trigrams only if the same *sequence* of content
+        words appears, which is far more specific than bag-of-words overlap.
+        """
+        import re as _re
+        n = PlivoGeminiService._TRIGRAM_N
+        words = [w for w in _re.findall(r'[a-z]+', text.lower())
+                 if len(w) > 2 and w not in PlivoGeminiService._DUP_STOP_WORDS]
+        if len(words) < n:
+            return set()
+        return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
+
     def _is_duplicate_text(self, new_text: str) -> bool:
-        """Check if new_text is similar to a recent agent utterance (>50% word overlap)
-        or matches a completed step label."""
-        new_words = set(new_text.lower().split())
-        if len(new_words) < 3:
-            return False
-        # Check against recent full agent texts
+        """Trigram-based duplicate detector.
+
+        Returns True when ≥40% of the new text's content-trigrams already
+        appeared in a recent agent utterance.  Naturally adaptive:
+          • Short filler ("Wonderful!") → 0 trigrams → never flagged
+          • Real repeat of a step      → many shared trigrams → flagged
+        """
+        new_grams = self._content_trigrams(new_text)
+        if len(new_grams) < self._MIN_TRIGRAMS:
+            return False  # not enough content to judge
         for prev in self._recent_agent_texts:
-            prev_words = set(prev.lower().split())
-            if not prev_words:
+            prev_grams = self._content_trigrams(prev)
+            if not prev_grams:
                 continue
-            intersection = len(new_words & prev_words)
-            # For short/medium texts (< 12 words): check if most words come from a previous text
-            # This catches "No problem at all! Are you free right now?" as a repeat
-            # For longer texts: use symmetric overlap against the larger set
-            if len(new_words) < 12:
-                overlap = intersection / len(new_words)
-            else:
-                overlap = intersection / max(len(new_words), len(prev_words))
-            if overlap > 0.5:
+            common = len(new_grams & prev_grams)
+            if common / len(new_grams) > self._TRIGRAM_THRESHOLD:
                 return True
-        # Check against completed step labels (catches rephrased repeats)
-        new_label = self._extract_step_label(new_text).lower()
-        if new_label and len(new_label) > 15:
-            for step in self._completed_steps:
-                step_words = set(step.lower().split())
-                label_words = set(new_label.split())
-                if step_words and label_words:
-                    overlap = len(step_words & label_words) / max(len(step_words), len(label_words))
-                    if overlap > 0.5:
-                        return True
         return False
 
     async def _send_duplicate_nudge(self):
@@ -2351,11 +2378,14 @@ Rules:
                         self._save_transcript("AGENT", ai_text)
                         self._log_conversation("model", ai_text)
                         # Early duplicate detection: check partial agent text against recent
-                        # so we can cut off the repeat before it finishes playing
-                        # CRITICAL: Only fire ONCE per turn to prevent nudge flood
+                        # so we can cut off the repeat before it finishes playing.
+                        # CRITICAL: Only fire ONCE per turn to prevent nudge flood.
+                        # Uses trigram comparison — self-adapts to text length (short
+                        # text produces < MIN_TRIGRAMS so _is_duplicate_text returns
+                        # False automatically; no hardcoded word-count needed).
                         if not self._early_dup_cut_this_turn:
                             partial_agent = " ".join(self._current_turn_agent_text)
-                            if len(partial_agent.split()) >= 12 and self._is_duplicate_text(partial_agent):
+                            if self._is_duplicate_text(partial_agent):
                                 self._early_dup_cut_this_turn = True  # Block further checks this turn
                                 self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
                                 # Drain queued audio to stop the repeat from playing
