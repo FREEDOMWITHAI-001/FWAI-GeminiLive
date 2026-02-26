@@ -232,6 +232,9 @@ class PlivoGeminiSession:
         self._cached_voice = self.context.get("_voice_override") or detect_voice_from_prompt(self.prompt)
         logger.info(f"[{call_uuid[:8]}] Voice locked: {self._cached_voice}")
 
+        # Parse prompt for STEP markers to build dynamic step-label matching
+        self._prompt_step_keywords = self._parse_prompt_steps(self.prompt)
+
         self.webhook_url = webhook_url  # URL to call when call ends (for n8n integration)
         self.ghl_webhook_url = self.context.pop("ghl_webhook_url", "")  # GHL WhatsApp workflow (per-call from API)
         self.ghl_api_key = self.context.pop("ghl_api_key", "")  # GHL API key for contact lookup
@@ -280,7 +283,7 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 3 second SLA
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 3.0  # Must respond within 3 seconds
+        self._silence_sla_seconds = 5.0  # Must respond within 5 seconds (3 was too aggressive for scripted [WAIT] steps)
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
@@ -331,7 +334,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns to keep latency low
+        self._session_split_interval = 5  # Split every 5 turns (3 was too aggressive, split mid-greeting)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -917,11 +920,22 @@ Rules:
             return
 
         try:
+            # Context-aware nudge: if we asked a question, gently re-prompt instead of generic nudge
+            if self._last_agent_question:
+                q_short = self._last_agent_question[:80]
+                nudge_text = (
+                    f'[Customer is silent. You already asked: "{q_short}" '
+                    f'— do NOT repeat that question. Instead say something like '
+                    f'"Take your time, no rush" or "Are you still there?" '
+                    f'and WAIT. Do NOT re-ask the same question.]'
+                )
+            else:
+                nudge_text = "[Customer is silent. Gently check if they are still there. Do NOT repeat anything you already said.]"
             msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "[Respond to the customer]"}]
+                        "parts": [{"text": nudge_text}]
                     }],
                     "turn_complete": True
                 }
@@ -1112,11 +1126,16 @@ Rules:
             try:
                 latest_exchange = self._turn_exchanges[-1] if self._turn_exchanges else None
                 if latest_exchange:
-                    agent_text = latest_exchange.get("agent", "")[:100]
-                    user_text = latest_exchange.get("user", "")[:80]
+                    agent_text = latest_exchange.get("agent", "")[:250]
+                    user_text = latest_exchange.get("user", "")[:100]
                     lang_lock = f" Speak {self._detected_language} ONLY." if self._detected_language else ""
+                    # Include full step history so new session knows exactly where we are
+                    step_history = ""
+                    if self._completed_steps:
+                        step_list = ", ".join(f"{i+1}.{s}" for i, s in enumerate(self._completed_steps[-8:]))
+                        step_history = f" Steps ALREADY DONE (do NOT repeat any): [{step_list}]."
                     update = (
-                        f'[You ALREADY said: "{agent_text}" — do NOT repeat this or anything before it. '
+                        f'[You ALREADY said: "{agent_text}" — do NOT repeat this or anything before it.{step_history}'
                         f'Customer replied: "{user_text}" '
                         f'Say ONLY the NEXT step (1-2 sentences), then STOP and WAIT.'
                         f' Same voice ({self._cached_voice}).{lang_lock}]'
@@ -1295,41 +1314,82 @@ Rules:
                 lines.append(f"Last turn — {' | '.join(parts)}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _parse_prompt_steps(prompt: str) -> list:
+        """Parse STEP markers from prompt and extract keywords for dynamic step matching.
+        Works for any prompt that uses 'STEP X.Y' patterns with quoted dialogue."""
+        steps = []
+        if not prompt:
+            return steps
+        # Find all STEP X.Y blocks and extract the quoted dialogue text
+        step_pattern = re.compile(
+            r'STEP\s+(\d+\.\d+)\b.*?(?:\"([^\"]{10,})\")',
+            re.DOTALL
+        )
+        for match in step_pattern.finditer(prompt):
+            step_id = match.group(1)
+            dialogue = match.group(2).strip()
+            # Extract significant words (skip common fillers and short words)
+            stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+                          'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
+                          'and', 'or', 'but', 'so', 'if', 'it', 'its', 'this', 'that',
+                          'you', 'your', 'i', 'me', 'my', 'we', 'our', 'can', 'will',
+                          'do', 'have', 'has', 'had', 'would', 'could', 'should',
+                          'please', 'just', 'about', 'once', 'also', 'not', 'all'}
+            words = re.findall(r'[a-z]+', dialogue.lower())
+            keywords = [w for w in words if w not in stop_words and len(w) > 2]
+            # Also extract 2-3 word phrases that are distinctive
+            phrases = []
+            lower_dialogue = dialogue.lower()
+            # Take 3-word chunks that are likely distinctive
+            word_list = lower_dialogue.split()
+            for i in range(len(word_list) - 1):
+                bigram = f"{word_list[i]} {word_list[i+1]}"
+                if len(bigram) > 8 and not all(w in stop_words for w in bigram.split()):
+                    phrases.append(bigram)
+            # Build short label from first sentence (max 40 chars)
+            first_sentence = re.split(r'[.?!]', dialogue)[0].strip()
+            label = f"Step {step_id}: {first_sentence[:35]}"
+            if len(first_sentence) > 35:
+                label = label[:label.rfind(' ')] if ' ' in label[10:] else label[:40]
+            steps.append({
+                "step_id": step_id,
+                "label": label,
+                "keywords": set(keywords[:12]),  # Top 12 keywords
+                "phrases": phrases[:6],  # Top 6 bigram phrases
+            })
+        return steps
+
+    def _match_prompt_step(self, lower_text: str) -> str:
+        """Match agent text against parsed prompt steps. Returns label if confident match."""
+        if not self._prompt_step_keywords:
+            return ""
+        best_score = 0
+        best_label = ""
+        text_words = set(re.findall(r'[a-z]+', lower_text))
+        for step in self._prompt_step_keywords:
+            # Score: keyword overlap + phrase match bonus
+            if not step["keywords"]:
+                continue
+            keyword_overlap = len(text_words & step["keywords"]) / len(step["keywords"])
+            phrase_bonus = sum(1 for p in step["phrases"] if p in lower_text) * 0.15
+            score = keyword_overlap + phrase_bonus
+            if score > best_score and score > 0.3:  # Minimum 30% keyword match
+                best_score = score
+                best_label = step["label"]
+        return best_label
+
     def _extract_step_label(self, text: str) -> str:
         """Extract a short action label from agent text for _completed_steps.
         Returns a brief description, not the actual text (to avoid priming repetition)."""
         if not text:
             return ""
         lower = text.lower()
-        # Map known step content to short labels (avoids feeding repeatable text back)
-        if "welcome" in lower and ("membership" in lower or "team" in lower):
-            return "Greeting+language choice"
-        if "downloaded" in lower and "app" in lower:
-            return "Asked about app download"
-        if "open the app" in lower or "install the app" in lower:
-            return "Asked to open/install app"
-        if "courses" in lower and ("bottom" in lower or "click" in lower):
-            return "Navigate to Courses tab"
-        if "gold launchpad" in lower or "g1" in lower.replace(" ", ""):
-            return "Open G1 Gold Launchpad course"
-        if "finish it today" in lower or "most important course" in lower:
-            return "Finish course today/tomorrow"
-        if "whatsapp" in lower and ("open" in lower or "sent you" in lower or "message" in lower):
-            return "Open WhatsApp message"
-        if "orientation group" in lower:
-            return "Orientation Group (24hr)"
-        if "main group" in lower:
-            return "Main Group (permanent)"
-        if "mission team" in lower or "supermom revolution" in lower:
-            return "Supermom Mission Team group"
-        if "super coach" in lower:
-            return "Super Coaches info"
-        if "live call" in lower or "monday" in lower or "friday" in lower:
-            return "Live calls schedule"
-        if "speaker" in lower or "earphone" in lower:
-            return "Put on speaker/earphones"
-        if "bye" in lower and ("wonderful day" in lower or "beautiful day" in lower):
-            return "Closing goodbye"
+        # Dynamic step matching: check against steps parsed from prompt at init time
+        if self._prompt_step_keywords:
+            best_match = self._match_prompt_step(lower)
+            if best_match:
+                return best_match
         # Fallback: strip fillers, take first sentence, keep short
         fillers = r'^(?:Great|Okay|Perfect|Sure|Absolutely|Right|Alright|Wonderful|Excellent|Fantastic|Of course|No worries|No problem|Got it|I see|I understand)[,!.\s]*'
         cleaned = re.sub(fillers, '', text, flags=re.IGNORECASE).strip()
