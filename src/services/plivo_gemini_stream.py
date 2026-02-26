@@ -108,19 +108,26 @@ def detect_voice_from_prompt(prompt: str) -> str:
         logger.info("Explicit 'Male Voice' directive in prompt - using Puck")
         return "Puck"
 
-    # Extract only the IDENTITY line (first line or line containing "IDENTITY:")
-    # to avoid matching customer names like "Priya" in the rest of the prompt
+    # Extract the IDENTITY section to find the agent name.
+    # Scan first 30 lines for: "identity:" header, "- name:" field, or "name:" prefix.
+    # Skip separator lines (===, ---) and blank lines.
     identity_line = ""
-    for line in prompt_lower.split("\n"):
-        line = line.strip()
-        if line.startswith("identity:") or line.startswith("identity :"):
-            identity_line = line
+    lines = prompt_lower.split("\n")[:30]
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("identity:") or stripped.startswith("identity :"):
+            identity_line = stripped
+            break
+        # Match "- Name: Priya" or "Name: Priya" patterns
+        if stripped.startswith("- name:") or stripped.startswith("name:"):
+            identity_line = stripped
             break
     if not identity_line:
-        # Fallback: use just the first non-empty line
-        for line in prompt_lower.split("\n"):
-            if line.strip():
-                identity_line = line.strip()
+        # Fallback: use first non-empty line that isn't a separator
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not all(c in "=-_#*" for c in stripped):
+                identity_line = stripped
                 break
 
     # Check agent name in identity line only

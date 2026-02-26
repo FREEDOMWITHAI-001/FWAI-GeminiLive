@@ -989,13 +989,9 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         context = request.context or {}
         context.setdefault("customer_name", request.contactName)
 
-        # Load default prompt if none provided — enable persona engine for FWAI
+        # Prompt is required — must be provided in the API request
         if not request.prompt:
-            default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
-            if default_prompt_file.exists():
-                request.prompt = default_prompt_file.read_text(encoding="utf-8")
-                # context["_persona_engine"] = True  # DISABLED — enable when per-org persona is ready
-                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars)")
+            raise HTTPException(status_code=400, detail="prompt is required — no default prompt; pass it in the API request")
 
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
