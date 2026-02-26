@@ -1114,10 +1114,12 @@ Rules:
                 if latest_exchange:
                     agent_text = latest_exchange.get("agent", "")[:100]
                     user_text = latest_exchange.get("user", "")[:80]
+                    lang_lock = f" Speak {self._detected_language} ONLY." if self._detected_language else ""
                     update = (
-                        f'[You ALREADY said: "{agent_text}" — do NOT repeat this. '
+                        f'[You ALREADY said: "{agent_text}" — do NOT repeat this or anything before it. '
                         f'Customer replied: "{user_text}" '
-                        f'Say ONLY the NEXT step (1-2 sentences). Same voice ({self._cached_voice}).]'
+                        f'Say ONLY the NEXT step (1-2 sentences), then STOP and WAIT.'
+                        f' Same voice ({self._cached_voice}).{lang_lock}]'
                     )
                     msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": update}]}], "turn_complete": True}}
                     await ws.send(json.dumps(msg))
@@ -1326,26 +1328,39 @@ Rules:
         return ""
 
     def _is_duplicate_text(self, new_text: str) -> bool:
-        """Check if new_text is similar to a recent agent utterance (>60% word overlap)."""
+        """Check if new_text is similar to a recent agent utterance (>50% word overlap)
+        or matches a completed step label."""
         new_words = set(new_text.lower().split())
         if len(new_words) < 4:
             return False
+        # Check against recent full agent texts
         for prev in self._recent_agent_texts:
             prev_words = set(prev.lower().split())
             if not prev_words:
                 continue
             overlap = len(new_words & prev_words) / max(len(new_words), len(prev_words))
-            if overlap > 0.6:
+            if overlap > 0.5:
                 return True
+        # Check against completed step labels (catches rephrased repeats)
+        new_label = self._extract_step_label(new_text).lower()
+        if new_label and len(new_label) > 15:
+            for step in self._completed_steps:
+                step_words = set(step.lower().split())
+                label_words = set(new_label.split())
+                if step_words and label_words:
+                    overlap = len(step_words & label_words) / max(len(step_words), len(label_words))
+                    if overlap > 0.5:
+                        return True
         return False
 
     async def _send_duplicate_nudge(self):
         """Send a client_content nudge telling AI to move to the next topic."""
         if not self.goog_live_ws or self._closing_call:
             return
+        lang_lock = f" Speak {self._detected_language} ONLY." if self._detected_language else ""
         msg = {"client_content": {"turns": [{
             "role": "user",
-            "parts": [{"text": "[You just repeated something you already said. SKIP this and move to the NEXT step immediately. Do NOT say it again.]"}]
+            "parts": [{"text": f"[STOP. You just repeated something you already said. Do NOT say it again. Move to the NEXT NEW step immediately. ONE step only, then WAIT for customer.{lang_lock}]"}]
         }], "turn_complete": True}}
         try:
             await self.goog_live_ws.send(json.dumps(msg))
@@ -1971,10 +1986,10 @@ Rules:
                         # Language detection (one-time, from early turns)
                         if not self._detected_language and full_user and self._turn_count <= 5:
                             lower = full_user.lower()
-                            if any(w in lower for w in ["english", "inglish", "angrezi"]):
+                            if any(w in lower for w in ["english", "inglish", "angrezi", "इंग्लिश", "अंग्रेज़ी", "अंग्रेजी"]):
                                 self._detected_language = "English"
                                 self.log.detail("Language detected: English")
-                            elif any(w in lower for w in ["hindi", "हिंदी", "हिन्दी"]):
+                            elif any(w in lower for w in ["hindi", "हिंदी", "हिन्दी", "हिंदी"]):
                                 self._detected_language = "Hindi"
                                 self.log.detail("Language detected: Hindi")
                             elif full_agent and self._turn_count >= 2:
