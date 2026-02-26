@@ -283,8 +283,8 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 3 second SLA
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 2.0  # Beginning of call: 2s (switches to fast after greeting)
-        self._silence_sla_immediate = 1.0  # After greeting: 1s fast response
+        self._silence_sla_seconds = 2.0  # Beginning of call: 2s
+        self._silence_sla_immediate = 3.0  # After greeting: 3s (1.0 was too fast, caused voice overlap)
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
@@ -441,6 +441,10 @@ class PlivoGeminiSession:
         """Build tool declarations dynamically based on session capabilities."""
         tools = list(TOOL_DECLARATIONS)  # Always include end_call
         # Only offer send_whatsapp if GHL is configured AND not yet sent this call
+        if not self.ghl_api_key or not self.ghl_location_id:
+            logger.debug(f"[{self.call_uuid[:8]}] send_whatsapp tool NOT offered (api_key={'set' if self.ghl_api_key else 'MISSING'}, location_id={'set' if self.ghl_location_id else 'MISSING'})")
+        elif self._whatsapp_sent:
+            logger.debug(f"[{self.call_uuid[:8]}] send_whatsapp tool NOT offered (already sent)")
         if self.ghl_api_key and self.ghl_location_id and not self._whatsapp_sent:
             tools.append({
                 "name": "send_whatsapp",
@@ -896,14 +900,18 @@ Rules:
         """Monitor for silence - nudge AI if no response after user speaks"""
         try:
             while self.is_active and not self._closing_call:
-                await asyncio.sleep(0.3)  # Check every 0.3 seconds for faster response
+                await asyncio.sleep(0.5)  # Check every 0.5 seconds
 
                 if self._last_user_speech_time is None:
                     continue
 
+                # NEVER nudge while AI is actively speaking — causes voice overlap
+                if self._agent_speaking:
+                    continue
+
                 silence_duration = time.time() - self._last_user_speech_time
 
-                # Dynamic SLA: 2s during greeting phase, immediate after
+                # Dynamic SLA: 2s during greeting phase, 3s after
                 sla = self._silence_sla_seconds if not self.greeting_audio_complete else self._silence_sla_immediate
 
                 # If silence exceeds SLA, nudge the AI to respond
@@ -1865,19 +1873,20 @@ Rules:
             # Handle send_whatsapp tool - trigger GHL workflow
             if tool_name == "send_whatsapp":
                 reason = tool_args.get("reason", "")
-                self.log.detail(f"Send WhatsApp: {reason}")
+                self.log.phase(f"WhatsApp tool called: {reason}")
                 self._save_transcript("TOOL", f"send_whatsapp: {reason}")
 
                 if self._whatsapp_sent:
                     msg = "WhatsApp already sent this call"
-                    self.log.detail(msg)
+                    self.log.warn(msg)
                 elif not self.ghl_api_key or not self.ghl_location_id:
                     msg = "WhatsApp not configured - GHL API key or location ID missing"
-                    self.log.warn(msg)
+                    self.log.warn(f"{msg} (api_key={'set' if self.ghl_api_key else 'MISSING'}, location_id={'set' if self.ghl_location_id else 'MISSING'})")
                 else:
                     self._whatsapp_sent = True
                     from src.services.ghl_whatsapp import tag_ghl_contact
                     try:
+                        self.log.phase(f"Adding GHL tag to {self.caller_phone}")
                         tag_result = await tag_ghl_contact(
                             phone=self.caller_phone,
                             email=self.context.get("email", ""),
@@ -1887,9 +1896,10 @@ Rules:
                         )
                         if tag_result.get("success"):
                             msg = "WhatsApp triggered via GHL contact tag"
+                            self.log.phase(f"GHL tag SUCCESS: {tag_result}")
                         else:
                             msg = f"GHL tagging failed: {tag_result.get('error', 'unknown')}"
-                        self.log.detail(f"GHL tag result: {tag_result}")
+                            self.log.warn(f"GHL tag FAILED: {tag_result}")
                     except Exception as e:
                         msg = f"GHL tagging failed: {e}"
                         self.log.warn(msg)
@@ -2048,6 +2058,7 @@ Rules:
                 if sc.get("turnComplete"):
                     self._preload_complete.set()
                     self.greeting_audio_complete = True
+                    self._agent_speaking = False  # AI finished its turn
                     self._turn_count += 1
                     self._current_turn_id += 1
                     full_agent = ""
@@ -2238,6 +2249,7 @@ Rules:
 
                 if sc.get("interrupted"):
                     logger.debug(f"[{self.call_uuid[:8]}] AI interrupted")
+                    self._agent_speaking = False  # AI was cut off
                     # Drain queued audio that hasn't been sent yet
                     while not self._plivo_send_queue.empty():
                         try:
@@ -2262,7 +2274,17 @@ Rules:
 
                         # Filter out noise/silence markers - NOT real speech
                         is_noise = user_text.startswith('<') and user_text.endswith('>')
-                        if not is_noise:
+                        # Filter echo: if user text matches recent agent text, it's audio feedback
+                        is_echo = False
+                        if not is_noise and self._last_agent_text and len(user_text.split()) >= 3:
+                            user_words = set(user_text.lower().split())
+                            agent_words = set(self._last_agent_text.lower().split())
+                            if agent_words:
+                                echo_overlap = len(user_words & agent_words) / len(user_words)
+                                if echo_overlap > 0.5:
+                                    is_echo = True
+                                    logger.debug(f"[{self.call_uuid[:8]}] Echo filtered: '{user_text[:40]}'")
+                        if not is_noise and not is_echo:
                             self._last_user_speech_time = time.time()  # Track for latency
                             self._last_user_transcript_time = time.time()
                             # Micro-moment: capture when user FIRST speaks this turn
