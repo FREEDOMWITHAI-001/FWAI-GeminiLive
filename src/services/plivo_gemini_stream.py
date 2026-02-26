@@ -432,6 +432,10 @@ class PlivoGeminiSession:
     async def _inject_situation_hint(self, hint: str):
         """Inject a short situation hint via client_content (no audio pause)."""
         try:
+            # Append voice+language enforcement to every hint
+            vl = self._voice_lang_tag()
+            if vl:
+                hint = f"{hint}{vl}"
             msg = {
                 "client_content": {
                     "turns": [{"role": "user", "parts": [{"text": hint}]}],
@@ -893,7 +897,7 @@ Rules:
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.]"}]
+                        "parts": [{"text": f"[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.{self._voice_lang_tag()}]"}]
                     }],
                     "turn_complete": True
                 }
@@ -934,11 +938,21 @@ Rules:
         except Exception as e:
             logger.error(f"Error in silence monitor: {e}")
 
+    def _voice_lang_tag(self) -> str:
+        """Return a compact voice+language enforcement tag for client_content messages."""
+        parts = []
+        if self._cached_voice:
+            parts.append(f"Voice: {self._cached_voice}")
+        if self._detected_language:
+            parts.append(f"Speak {self._detected_language} ONLY")
+        return f" [{', '.join(parts)}]" if parts else ""
+
     async def _send_silence_nudge(self):
         """Send a nudge to AI when silence detected"""
         if not self.goog_live_ws or self._closing_call:
             return
 
+        vl = self._voice_lang_tag()
         try:
             # Context-aware nudge: if we asked a question, gently re-prompt instead of generic nudge
             if self._last_agent_question:
@@ -947,10 +961,10 @@ Rules:
                     f'[Customer is silent. You already asked: "{q_short}" '
                     f'— do NOT repeat that question. Instead say something like '
                     f'"Take your time, no rush" or "Are you still there?" '
-                    f'and WAIT. Do NOT re-ask the same question.]'
+                    f'and WAIT. Do NOT re-ask the same question.{vl}]'
                 )
             else:
-                nudge_text = "[Customer is silent. Gently check if they are still there. Do NOT repeat anything you already said.]"
+                nudge_text = f"[Customer is silent. Gently check if they are still there. Do NOT repeat anything you already said.{vl}]"
             msg = {
                 "client_content": {
                     "turns": [{
@@ -1192,6 +1206,11 @@ Rules:
             self._standby_ready = asyncio.Event()
             self._prewarm_task = None
             self._is_reconnecting = False
+            # Clear stale text accumulators from old session to prevent false duplicates
+            self._current_turn_agent_text = []
+            self._current_turn_user_text = []
+            self._current_turn_audio_chunks = 0
+            self._early_dup_cut_this_turn = False
 
             swap_ms = (time.time() - swap_start) * 1000
             self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count}) ✓ working well")
@@ -1471,10 +1490,10 @@ Rules:
         """Send a client_content nudge telling AI to move to the next topic."""
         if not self.goog_live_ws or self._closing_call:
             return
-        lang_lock = f" Speak {self._detected_language} ONLY." if self._detected_language else ""
+        vl = self._voice_lang_tag()
         msg = {"client_content": {"turns": [{
             "role": "user",
-            "parts": [{"text": f"[STOP. You just repeated something you already said. Do NOT say it again. Move to the NEXT NEW step immediately. ONE step only, then WAIT for customer.{lang_lock}]"}]
+            "parts": [{"text": f"[STOP. You just repeated something you already said. Do NOT say it again. Move to the NEXT NEW step immediately. ONE step only, then WAIT for customer.{vl}]"}]
         }], "turn_complete": True}}
         try:
             await self.goog_live_ws.send(json.dumps(msg))
@@ -1734,6 +1753,11 @@ Rules:
             else:
                 trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
 
+        # Append voice enforcement to greeting trigger
+        vl = self._voice_lang_tag()
+        if vl:
+            trigger_text += f" {vl}"
+
         msg = {
             "client_content": {
                 "turns": [{"role": "user", "parts": [{"text": trigger_text}]}],
@@ -1748,7 +1772,7 @@ Rules:
         if not self.goog_live_ws:
             return
 
-        reconnect_text = "[Continue the conversation]"
+        reconnect_text = f"[Continue the conversation naturally from where you left off.{self._voice_lang_tag()}]"
 
         msg = {
             "client_content": {
@@ -2245,9 +2269,13 @@ Rules:
                             and self.greeting_audio_complete):
                         asyncio.create_task(self._hot_swap_session())
 
-                    # Reset turn state
+                    # Reset turn state — ALWAYS clear text accumulators to prevent
+                    # stale fragments from empty turns contaminating the next turn
                     self._current_turn_audio_chunks = 0
                     self._early_dup_cut_this_turn = False
+                    if is_empty_turn:
+                        self._current_turn_agent_text = []
+                        self._current_turn_user_text = []
 
                     # Process deferred goodbye detection (agent finished speaking)
                     if self._goodbye_pending and not self._closing_call:
@@ -2327,7 +2355,7 @@ Rules:
                         # CRITICAL: Only fire ONCE per turn to prevent nudge flood
                         if not self._early_dup_cut_this_turn:
                             partial_agent = " ".join(self._current_turn_agent_text)
-                            if len(partial_agent.split()) >= 8 and self._is_duplicate_text(partial_agent):
+                            if len(partial_agent.split()) >= 12 and self._is_duplicate_text(partial_agent):
                                 self._early_dup_cut_this_turn = True  # Block further checks this turn
                                 self.log.warn(f"Early duplicate cut: '{partial_agent[:50]}'")
                                 # Drain queued audio to stop the repeat from playing
