@@ -18,6 +18,7 @@
       "word_count_maintain_factor": 0.8
     },
     "interest_spike": {
+      "enabled": false,
       "word_count_spike_factor": 1.4,
       "response_time_faster_factor": 0.8,
       "min_signals": 2

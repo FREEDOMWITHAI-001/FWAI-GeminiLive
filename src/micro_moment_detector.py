@@ -356,8 +356,9 @@ class MicroMomentDetector:
             return "buying_signal"
         if self._detect_resistance(current, prev, window):
             return "resistance"
-        if self._detect_interest_spike(current, prev, window):
-            return "interest_spike"
+        if self._cfg.get("thresholds", {}).get("interest_spike", {}).get("enabled", True) is not False:
+            if self._detect_interest_spike(current, prev, window):
+                return "interest_spike"
 
         return None
 
