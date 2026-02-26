@@ -283,7 +283,7 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 3 second SLA
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 5.0  # Must respond within 5 seconds (3 was too aggressive for scripted [WAIT] steps)
+        self._silence_sla_seconds = 1.5  # Must respond within 1.5 seconds
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
