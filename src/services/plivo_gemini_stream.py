@@ -335,7 +335,7 @@ class PlivoGeminiSession:
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
-        self._recent_agent_questions = deque(maxlen=10)  # Recent questions for duplicate detection
+        self._recent_agent_texts = deque(maxlen=10)  # Recent agent utterances for duplicate detection
         self._detected_language = ""  # User's chosen language (detected from early turns)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
         self._completed_steps = []  # Compact label per agent utterance (never capped)
@@ -1115,11 +1115,11 @@ Rules:
                     agent_text = latest_exchange.get("agent", "")[:100]
                     user_text = latest_exchange.get("user", "")[:80]
                     update = (
-                        f'[Latest — You: "{agent_text}" '
-                        f'Customer: "{user_text}" '
-                        f'Say ONLY the next step (1-2 sentences). Same voice ({self._cached_voice}).]'
+                        f'[You ALREADY said: "{agent_text}" — do NOT repeat this. '
+                        f'Customer replied: "{user_text}" '
+                        f'Say ONLY the NEXT step (1-2 sentences). Same voice ({self._cached_voice}).]'
                     )
-                    msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": update}]}], "turn_complete": False}}
+                    msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": update}]}], "turn_complete": True}}
                     await ws.send(json.dumps(msg))
                     self.log.detail(f"Swap update: {update[:80]}...")
             except Exception as e:
@@ -1325,17 +1325,17 @@ Rules:
                 return s.strip()
         return ""
 
-    def _is_duplicate_question(self, new_text: str) -> bool:
-        """Check if new_text is similar to a recently asked question (>70% word overlap)."""
+    def _is_duplicate_text(self, new_text: str) -> bool:
+        """Check if new_text is similar to a recent agent utterance (>60% word overlap)."""
         new_words = set(new_text.lower().split())
         if len(new_words) < 4:
             return False
-        for prev in self._recent_agent_questions:
+        for prev in self._recent_agent_texts:
             prev_words = set(prev.lower().split())
             if not prev_words:
                 continue
             overlap = len(new_words & prev_words) / max(len(new_words), len(prev_words))
-            if overlap > 0.7:
+            if overlap > 0.6:
                 return True
         return False
 
@@ -1345,7 +1345,7 @@ Rules:
             return
         msg = {"client_content": {"turns": [{
             "role": "user",
-            "parts": [{"text": "[You just repeated a question you already asked. Move to the NEXT topic immediately.]"}]
+            "parts": [{"text": "[You just repeated something you already said. SKIP this and move to the NEXT step immediately. Do NOT say it again.]"}]
         }], "turn_complete": True}}
         try:
             await self.goog_live_ws.send(json.dumps(msg))
@@ -1947,13 +1947,11 @@ Rules:
                             self._last_agent_text = full_agent
                             if "?" in full_agent:
                                 self._last_agent_question = full_agent
-                                # Anti-repetition: detect and nudge if duplicate question
-                                question = self._extract_question(full_agent)
-                                if question:
-                                    if self._is_duplicate_question(question):
-                                        self.log.warn(f"Duplicate question detected: '{question[:50]}'")
-                                        asyncio.create_task(self._send_duplicate_nudge())
-                                    self._recent_agent_questions.append(question)
+                            # Anti-repetition: detect duplicate against ALL recent agent text
+                            if self._is_duplicate_text(full_agent):
+                                self.log.warn(f"Duplicate detected: '{full_agent[:60]}'")
+                                asyncio.create_task(self._send_duplicate_nudge())
+                            self._recent_agent_texts.append(full_agent)
                             self._current_turn_agent_text = []
                         if self._current_turn_user_text:
                             full_user = " ".join(self._current_turn_user_text)
